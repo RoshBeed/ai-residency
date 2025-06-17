@@ -74,7 +74,7 @@ num_epochs = 3
 for epoch in range(num_epochs):
     total_loss = 0
     count = 0
-    for triple in triples_data['train'][:50]:  # Use a small subset for speed
+    for triple in triples_data['train']:  # Use all triples
         qry_tokens = triple['query_tokens']
         pos_tokens = triple['positive_document_tokens']
         neg_tokens = triple['negative_document_tokens']

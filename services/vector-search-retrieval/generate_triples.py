@@ -3,7 +3,7 @@ import random
 import json
 from tqdm import tqdm
 
-def generate_triples(max_examples_per_split=100):  # Added parameter to limit examples
+def generate_triples():  # Remove max_examples_per_split
     # Load the dataset
     print("Loading MS MARCO dataset...")
     dataset = load_dataset("ms_marco", "v1.1")
@@ -18,9 +18,7 @@ def generate_triples(max_examples_per_split=100):  # Added parameter to limit ex
     # Process each split
     for split in ['train', 'validation', 'test']:
         print(f"\nProcessing {split} split...")
-        
-        # Take only a subset of examples for testing
-        split_data = dataset[split].select(range(min(max_examples_per_split, len(dataset[split]))))
+        split_data = dataset[split]  # Use all data
         
         # First, collect all passages for negative sampling
         all_passages = []
@@ -76,5 +74,4 @@ def generate_triples(max_examples_per_split=100):  # Added parameter to limit ex
             print(f"\nNegative document: {sample['negative_doc'][:200]}...")
 
 if __name__ == "__main__":
-    # Process only 100 examples per split for testing
-    generate_triples(max_examples_per_split=100) 
+    generate_triples()  # Use all data 

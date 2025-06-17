@@ -5,6 +5,22 @@ import torch.nn as nn
 from tqdm import tqdm
 import glob
 import os
+import redis
+import numpy as np
+
+# Redis Cloud connection (replace with your actual credentials or use environment variables)
+REDIS_HOST = 'your-redis-host'
+REDIS_PORT = 12345  # your-redis-port
+REDIS_PASSWORD = 'your-redis-password'
+INDEX_NAME = 'doc_index'
+VECTOR_DIM = 128  # Change if your embedding size is different
+
+r = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    password=REDIS_PASSWORD,
+    decode_responses=False  # binary-safe
+)
 
 def load_latest_checkpoint():
     """Load the latest CBOW model checkpoint."""
@@ -55,14 +71,25 @@ def average_pool(tokens, embedding_layer):
     # Average the embeddings
     return torch.mean(embeddings, dim=0).detach().numpy()
 
+def save_doc_embedding_to_redis(doc_id, embedding, text):
+    # Save as a Redis hash for vector search
+    r.hset(doc_id, mapping={
+        'embedding': embedding.astype(np.float32).tobytes(),
+        'text': text,
+        'doc_id': doc_id
+    })
+
+    # Optionally, you can print or log
+    # print(f"Saved doc {doc_id} to Redis.")
+
 def process_triples(data, embedding_layer):
-    """Process triples and create average pooled vectors."""
+    """Process triples and create average pooled vectors. Save positive doc embeddings to Redis."""
     processed_data = {
         'train': [],
         'validation': [],
         'test': []
     }
-    
+    doc_counter = 0
     for split in ['train', 'validation', 'test']:
         print(f"\nProcessing {split} split...")
         for triple in tqdm(data[split]):
@@ -70,7 +97,12 @@ def process_triples(data, embedding_layer):
             query_vector = average_pool(triple['query_tokens'], embedding_layer)
             pos_doc_vector = average_pool(triple['positive_document_tokens'], embedding_layer)
             neg_doc_vector = average_pool(triple['negative_document_tokens'], embedding_layer)
-            
+
+            # Save positive doc embedding to Redis
+            doc_id = f"doc:{doc_counter}"
+            save_doc_embedding_to_redis(doc_id, pos_doc_vector, triple['positive_document'])
+            doc_counter += 1
+
             processed_data[split].append({
                 'query_vector': query_vector.tolist(),
                 'positive_document_vector': pos_doc_vector.tolist(),
@@ -79,7 +111,6 @@ def process_triples(data, embedding_layer):
                 'positive_document': triple['positive_document'],
                 'negative_document': triple['negative_document']
             })
-    
     return processed_data
 
 def main():

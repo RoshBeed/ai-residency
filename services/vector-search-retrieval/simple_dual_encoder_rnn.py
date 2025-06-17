@@ -68,13 +68,12 @@ def train(config=None):
         params = list(qryTower.rnn.parameters()) + list(docTower.rnn.parameters())
         optimizer = torch.optim.Adam(params, lr=config.learning_rate)
         num_epochs = config.num_epochs
-        num_triples = config.num_triples
         margin = config.margin
-        print(f"\nTraining on first {num_triples} real triples from the train split with RNN towers for {num_epochs} epochs:\n")
+        print(f"\nTraining on all real triples from the train split with RNN towers for {num_epochs} epochs:\n")
         for epoch in range(num_epochs):
             total_loss = 0
             count = 0
-            for triple in triples_data['train'][:num_triples]:
+            for triple in triples_data['train']:  # Use all triples
                 qry_tokens = triple['query_tokens']
                 pos_tokens = triple['positive_document_tokens']
                 neg_tokens = triple['negative_document_tokens']
