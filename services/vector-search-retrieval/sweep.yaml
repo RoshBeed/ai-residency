@@ -2,11 +2,11 @@ method: random
 parameters:
   learning_rate:
     values: [0.001, 0.0005, 0.0001, 0.00005]
-  hidden_size:
-    values: [64, 128, 256, 384]
   margin:
     values: [0.1, 0.15, 0.2, 0.25, 0.3]
   num_epochs:
     value: 10
   num_triples:
-    values: [500, 1000, 2000] 
+    values: [500, 1000, 2000]
+  hidden_size:
+    values: [64, 128, 256] 
