@@ -8,11 +8,66 @@ import os
 import time
 from tqdm import tqdm
 import sys
-sys.path.append('..')
+import math
 
-from transformer import Seq2SeqVisionTransformer
-from datasets import MultiDigitMNISTDataset
+# Ensure project root is in sys.path for local imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from transformer.seq2seq_vit import Seq2SeqVisionTransformer
+from datasets.multi_digit_dataset import MultiDigitMNISTDataset
 from config import MODEL_CONFIG, TRAINING_CONFIG, DATASET_CONFIG, MODEL_PATHS
+
+class WarmupCosineScheduler:
+    """Learning rate scheduler with warmup and cosine annealing"""
+    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=1e-6):
+        self.optimizer = optimizer
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.min_lr = min_lr
+        self.base_lr = optimizer.param_groups[0]['lr']
+        self.step_count = 0
+        
+    def step(self):
+        self.step_count += 1
+        
+        if self.step_count <= self.warmup_steps:
+            # Linear warmup
+            lr = self.base_lr * (self.step_count / self.warmup_steps)
+        else:
+            # Cosine annealing
+            progress = (self.step_count - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+            lr = self.min_lr + (self.base_lr - self.min_lr) * 0.5 * (1 + math.cos(math.pi * progress))
+        
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
+            
+    def get_last_lr(self):
+        return [self.optimizer.param_groups[0]['lr']]
+
+def label_smoothing_loss(predictions, targets, smoothing=0.1, num_classes=None):
+    """
+    Compute label smoothing loss
+    
+    Args:
+        predictions: (batch_size, num_classes)
+        targets: (batch_size,)
+        smoothing: Label smoothing factor
+        num_classes: Number of classes
+    """
+    if num_classes is None:
+        num_classes = predictions.size(-1)
+    
+    # Create one-hot encoded targets
+    one_hot = torch.zeros_like(predictions).scatter_(1, targets.unsqueeze(1), 1)
+    
+    # Apply label smoothing
+    smooth_targets = one_hot * (1 - smoothing) + smoothing / num_classes
+    
+    # Compute cross-entropy loss
+    log_probs = torch.log_softmax(predictions, dim=-1)
+    loss = -torch.sum(smooth_targets * log_probs, dim=-1)
+    
+    return loss.mean()
 
 def create_seq2seq_config():
     """Create config for Seq2SeqVisionTransformer from global config"""
@@ -89,6 +144,12 @@ def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, s
     model.to(device)
     best_acc = 0.0
     
+    # Label smoothing for better generalization
+    label_smoothing = TRAINING_CONFIG.get("label_smoothing", 0.0)
+    
+    # Gradient accumulation for memory efficiency
+    gradient_accumulation_steps = TRAINING_CONFIG.get("gradient_accumulation_steps", 1)
+    
     for epoch in range(epochs):
         # Training phase
         model.train()
@@ -102,45 +163,77 @@ def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, s
             images = images.to(device)
             labels = labels.to(device)
             
-            # Simple normalization
-            images = (images - images.mean()) / (images.std() + 1e-8)
+            # Remove redundant normalization - dataset already normalizes
+            # images = (images - images.mean()) / (images.std() + 1e-8)
+            
+            # Data augmentation during training
+            if model.training:
+                # Random rotation (small angles)
+                if torch.rand(1, device=images.device) < 0.3:
+                    angle = torch.rand(1, device=images.device) * 10 - 5  # -5 to +5 degrees
+                    images = torch.rot90(images, k=int(angle.item() // 90), dims=[2, 3])
+                
+                # Random brightness adjustment
+                if torch.rand(1, device=images.device) < 0.3:
+                    brightness_factor = 0.8 + torch.rand(1, device=images.device) * 0.4  # 0.8 to 1.2
+                    images = images * brightness_factor
+                    images = torch.clamp(images, -1, 1)
             
             # Convert labels to digit sequences
-            target_sequences = create_digit_sequences(labels, max_digits=TRAINING_CONFIG["max_digits"], vocab_size=MODEL_CONFIG["vocab_size"]).to(device)
+            target_sequences = labels.to(device)  # Labels are already digit sequences
             
             # Forward pass
-            optimizer.zero_grad()
             outputs = model(images, target_sequences)
             
-            # Calculate loss for each position
-            loss = 0
-            seq_len = outputs.size(1)
+            # Calculate loss for each position with label smoothing
+            if label_smoothing > 0:
+                # Apply label smoothing using custom function
+                loss = 0
+                seq_len = outputs.size(1)
+                for pos in range(seq_len):
+                    pos_output = outputs[:, pos, :]
+                    pos_target = target_sequences[:, pos]
+                    pos_loss = label_smoothing_loss(pos_output, pos_target, label_smoothing, MODEL_CONFIG["vocab_size"])
+                    loss += pos_loss
+                loss = loss / seq_len
+            else:
+                # Use efficient cross-entropy with reduction='none'
+                # Reshape outputs: (batch_size, seq_len, vocab_size) -> (batch_size * seq_len, vocab_size)
+                outputs_flat = outputs.view(-1, outputs.size(-1))
+                targets_flat = target_sequences.view(-1)
+                
+                # Compute loss for all positions at once
+                loss = torch.nn.functional.cross_entropy(outputs_flat, targets_flat, reduction='mean')
             
-            for pos in range(seq_len):
-                pos_output = outputs[:, pos, :]
-                pos_target = target_sequences[:, pos]
-                pos_loss = criterion(pos_output, pos_target)
-                loss += pos_loss
-            
-            # Average loss over sequence length
-            loss = loss / seq_len
+            # Scale loss for gradient accumulation
+            loss = loss / gradient_accumulation_steps
             
             # Backward pass
             loss.backward()
             
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Gradient accumulation
+            if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=TRAINING_CONFIG["gradient_clip_norm"])
+                
+                optimizer.step()
+                optimizer.zero_grad()
             
-            optimizer.step()
-            
-            running_loss += loss.item()
+            running_loss += loss.item() * gradient_accumulation_steps
             
             # Update progress bar
-            train_pbar.set_postfix({'Loss': f'{loss.item():.4f}'})
+            train_pbar.set_postfix({'Loss': f'{loss.item() * gradient_accumulation_steps:.4f}'})
+        
+        # Ensure gradients are applied at the end of epoch if needed
+        if len(train_loader) % gradient_accumulation_steps != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=TRAINING_CONFIG["gradient_clip_norm"])
+            optimizer.step()
+            optimizer.zero_grad()
         
         # Validation phase
         model.eval()
-        correct = 0
+        correct_autoregressive = 0
+        correct_teacher_forcing = 0
         total = 0
         
         # Progress bar for validation batches
@@ -151,14 +244,20 @@ def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, s
                 images = images.to(device)
                 labels = labels.to(device)
                 
-                # Simple normalization
-                images = (images - images.mean()) / (images.std() + 1e-8)
+                # Remove redundant normalization - dataset already normalizes
+                # images = (images - images.mean()) / (images.std() + 1e-8)
                 
                 # Convert labels to digit sequences
-                target_sequences = create_digit_sequences(labels, max_digits=TRAINING_CONFIG["max_digits"], vocab_size=MODEL_CONFIG["vocab_size"]).to(device)
+                target_sequences = labels.to(device)  # Labels are already digit sequences
                 
-                # Use autoregressive generation for validation
-                start_token = 10  # START token
+                # Teacher forcing validation (for comparison)
+                outputs_teacher = model(images, target_sequences)
+                outputs_flat = outputs_teacher.view(-1, outputs_teacher.size(-1))
+                targets_flat = target_sequences.view(-1)
+                _, predicted_teacher = torch.max(outputs_flat, 1)
+                
+                # Autoregressive generation validation
+                start_token = MODEL_CONFIG["start_token"]  # START token
                 max_length = TRAINING_CONFIG["max_digits"] + 2  # +2 for START and EOS tokens
                 generated_sequences = model.generate(images, start_token=start_token, max_length=max_length)
                 
@@ -167,28 +266,39 @@ def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, s
                     pred_num = sequence_to_number(generated_sequences[i].unsqueeze(0))[0]
                     target_num = sequence_to_number(target_sequences[i].unsqueeze(0))[0]
                     if pred_num == target_num:
-                        correct += 1
+                        correct_autoregressive += 1
                     total += 1
                 
+                # Teacher forcing accuracy (per-token)
+                correct_tokens = (predicted_teacher == targets_flat).sum().item()
+                correct_teacher_forcing += correct_tokens
+                
                 # Update validation progress bar
-                current_acc = 100 * correct / total
-                val_pbar.set_postfix({'Val Acc': f'{current_acc:.1f}%'})
+                current_acc_auto = 100 * correct_autoregressive / total
+                current_acc_teacher = 100 * correct_teacher_forcing / (total * (TRAINING_CONFIG["max_digits"] + 2))
+                val_pbar.set_postfix({
+                    'Auto Acc': f'{current_acc_auto:.1f}%',
+                    'Teacher Acc': f'{current_acc_teacher:.1f}%'
+                })
         
         epoch_loss = running_loss / len(train_loader)
-        epoch_acc = 100 * correct / total
+        epoch_acc_auto = 100 * correct_autoregressive / total
+        epoch_acc_teacher = 100 * correct_teacher_forcing / (total * (TRAINING_CONFIG["max_digits"] + 2))
         epoch_time = time.time() - start_time
         
         print(f'Epoch {epoch+1}/{epochs} completed in {epoch_time:.2f}s')
-        print(f'Training Loss: {epoch_loss:.4f}, Validation Accuracy: {epoch_acc:.2f}%')
+        print(f'Training Loss: {epoch_loss:.4f}')
+        print(f'Validation Accuracy (Autoregressive): {epoch_acc_auto:.2f}%')
+        print(f'Validation Accuracy (Teacher Forcing): {epoch_acc_teacher:.2f}%')
         
-        # Step the scheduler based on validation accuracy
-        scheduler.step(epoch_acc)
+        # Step the scheduler based on autoregressive validation accuracy
+        scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
         print(f'Learning Rate: {current_lr:.6f}')
         
-        # Save best model
-        if epoch_acc > best_acc:
-            best_acc = epoch_acc
+        # Save best model based on autoregressive accuracy
+        if epoch_acc_auto > best_acc:
+            best_acc = epoch_acc_auto
             torch.save(model.state_dict(), MODEL_PATHS["best_seq2seq_model"])
             print(f'New best model saved with accuracy: {best_acc:.2f}%')
         
@@ -214,16 +324,16 @@ def evaluate_seq2seq_model(model, test_loader, device='cpu'):
             images = images.to(device)
             labels = labels.to(device)
             
-            # Normalize images to prevent numerical instability
-            if images.max() > 1.0 or images.min() < -1.0:
-                images = torch.clamp(images, -3.0, 3.0)  # Clamp extreme values
-                images = (images - images.mean()) / (images.std() + 1e-8)  # Normalize
+            # Remove redundant normalization - dataset already normalizes
+            # if images.max() > 1.0 or images.min() < -1.0:
+            #     images = torch.clamp(images, -3.0, 3.0)  # Clamp extreme values
+            #     images = (images - images.mean()) / (images.std() + 1e-8)  # Normalize
             
             # Convert labels to sequences
-            target_sequences = create_digit_sequences(labels, max_digits=TRAINING_CONFIG["max_digits"], vocab_size=MODEL_CONFIG["vocab_size"]).to(device)
+            target_sequences = labels.to(device)  # Labels are already digit sequences
             
             # Use autoregressive generation for evaluation
-            start_token = 10  # START token
+            start_token = MODEL_CONFIG["start_token"]  # START token
             max_length = TRAINING_CONFIG["max_digits"] + 2  # +2 for START and EOS tokens
             generated_sequences = model.generate(images, start_token=start_token, max_length=max_length)
             
@@ -255,10 +365,12 @@ if __name__ == "__main__":
         image_size=DATASET_CONFIG["image_size"],
         max_digits=DATASET_CONFIG["max_digits"],
         train_split=DATASET_CONFIG["train_split"],
-        samples_per_class=10,  # Balanced dataset
+        samples_per_class=100,  # Increased from 10 to 100 for paper ratios
         batch_size=TRAINING_CONFIG["batch_size"],
         num_workers=4,
-        download=True
+        download=True,
+        return_digit_sequence=True,
+        add_start_eos=True
     )
     
     # Get data loaders
@@ -274,7 +386,23 @@ if __name__ == "__main__":
     config = create_seq2seq_config()
     model = Seq2SeqVisionTransformer(config)
     
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # Calculate and print model statistics
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print(f"Model Statistics:")
+    print(f"  Total parameters: {total_params:,}")
+    print(f"  Trainable parameters: {trainable_params:,}")
+    print(f"  Model size: {total_params * 4 / 1024 / 1024:.2f} MB (float32)")
+    
+    # Estimate memory usage for a batch
+    sample_batch_size = TRAINING_CONFIG["batch_size"]
+    sample_seq_len = TRAINING_CONFIG["max_digits"] + 2
+    estimated_memory = (total_params * 4 +  # Model parameters
+                       sample_batch_size * MODEL_CONFIG["img_size"]**2 * 4 +  # Input images
+                       sample_batch_size * sample_seq_len * MODEL_CONFIG["d_model"] * 4 * 3) / 1024 / 1024  # Activations
+    print(f"  Estimated memory per batch: {estimated_memory:.2f} MB")
+    print()
     
     # Create optimizer and loss function
     optimizer = optim.AdamW(
@@ -285,9 +413,14 @@ if __name__ == "__main__":
     
     criterion = nn.CrossEntropyLoss()
     
+    # Calculate total training steps for scheduler
+    total_steps = len(train_loader) * TRAINING_CONFIG["epochs"]
+    
     # Create scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3
+    scheduler = WarmupCosineScheduler(
+        optimizer,
+        warmup_steps=TRAINING_CONFIG["warmup_steps"],
+        total_steps=total_steps
     )
     
     # Train model

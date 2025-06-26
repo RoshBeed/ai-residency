@@ -54,7 +54,8 @@ class VisionTransformer(nn.Module):
         # Final layer norm
         self.layer_norm = nn.LayerNorm(self.d_model)
         
-        # Classification head
+        # Classification head with dropout
+        self.dropout = nn.Dropout(self.dropout)
         self.classifier = nn.Linear(self.d_model, self.num_classes)
         
         # Initialize weights
@@ -68,6 +69,17 @@ class VisionTransformer(nn.Module):
         nn.init.zeros_(self.classifier.bias)
         
     def forward(self, x):
+        # Input validation
+        if x.dim() != 4:
+            raise ValueError(f"Expected 4D input tensor, got {x.dim()}D")
+        
+        expected_size = (self.img_size, self.img_size)
+        if x.size(-2) != expected_size[0] or x.size(-1) != expected_size[1]:
+            raise ValueError(f"Expected input size {expected_size}, got {x.size(-2)}x{x.size(-1)}")
+        
+        if x.size(1) != self.in_channels:
+            raise ValueError(f"Expected {self.in_channels} channels, got {x.size(1)}")
+        
         batch_size = x.size(0)
         
         # Patch embedding
@@ -89,6 +101,9 @@ class VisionTransformer(nn.Module):
         
         # Extract CLS token for classification
         cls_output = x[:, 0]
+        
+        # Apply dropout before classification for better regularization
+        cls_output = self.dropout(cls_output)
         
         # Classification
         logits = self.classifier(cls_output)

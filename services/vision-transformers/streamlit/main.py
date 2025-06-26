@@ -19,8 +19,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def predict_multi_digit(image_array, model_url):
-    """Predict multiple digits using the entire canvas with patch-based ViT."""
+def get_available_models():
+    """Get available models from the API"""
+    try:
+        models_url = os.environ.get("MODELS_URL", "http://model-serve:8000/models")
+        response = requests.get(models_url)
+        if response.status_code == 200:
+            return response.json()["available_models"]
+        else:
+            return []
+    except Exception as e:
+        st.error(f"Error fetching models: {e}")
+        return []
+
+def predict_multi_digit(image_array, model_url, model_type="vit"):
+    """Predict multiple digits using the specified model."""
     # Convert numpy array to PIL Image
     image = Image.fromarray(image_array.astype('uint8'), 'L')
     
@@ -31,13 +44,13 @@ def predict_multi_digit(image_array, model_url):
     
     # Make prediction request
     try:
-        response = requests.post(model_url, json={"image_data": b64})
+        response = requests.post(model_url, json={"image_data": b64, "model_type": model_type})
         data = response.json()
         # Return prediction and confidence
-        return data["pred"], data.get("confidence", 0.0)
+        return data["pred"], data.get("confidence", 0.0), data.get("model_type", model_type)
     except Exception as e:
         st.error(f"Error making prediction: {e}")
-        return None, 0.0
+        return None, 0.0, model_type
 
 def visualize_patches_detailed(image_array, patch_size=8):
     """Create detailed patch visualization with numbering"""
@@ -151,8 +164,36 @@ This interactive demo shows how Vision Transformers process images step-by-step.
 Draw digits on the canvas below and watch how the model processes your input!
 """)
 
-# Sidebar with educational content
+# Sidebar with model selection and educational content
 with st.sidebar:
+    st.header("🤖 Model Selection")
+    
+    # Get available models
+    available_models = get_available_models()
+    
+    if available_models:
+        model_options = {model["id"]: model["name"] for model in available_models if model["loaded"]}
+        if model_options:
+            selected_model = st.selectbox(
+                "Choose Model:",
+                options=list(model_options.keys()),
+                format_func=lambda x: model_options[x],
+                index=0
+            )
+            
+            # Get model info
+            model_info = next((m for m in available_models if m["id"] == selected_model), None)
+            if model_info:
+                st.info(f"**Model Type:** {model_info['type'].title()}")
+                st.info(f"**Status:** ✅ Loaded")
+        else:
+            st.error("No models are currently loaded")
+            selected_model = "vit"
+    else:
+        st.warning("Could not fetch model information")
+        selected_model = "vit"
+    
+    st.markdown("---")
     st.header("📚 Learning Resources")
     
     st.subheader("What is a Vision Transformer?")
@@ -164,15 +205,28 @@ with st.sidebar:
     into patches and process them using self-attention mechanisms.
     """)
     
+    st.subheader("Model Types")
+    st.markdown("""
+    **Classification ViT:**
+    - Direct classification of multi-digit numbers
+    - Outputs a single number (0-999)
+    - Faster inference
+    
+    **Seq2Seq ViT:**
+    - Sequence-to-sequence approach
+    - Generates digits one by one
+    - More flexible for variable-length numbers
+    """)
+    
     st.subheader("Model Architecture")
     st.markdown("""
     **Our Model:**
     - **Input:** 84×84 grayscale images
-    - **Patches:** 8×8 pixel patches (11×11 = 121 patches)
-    - **Embedding:** 64-dimensional patch embeddings
-    - **Layers:** 3 transformer encoder layers
-    - **Heads:** 4 attention heads
-    - **Output:** Classification (0-999 for multi-digit numbers)
+    - **Patches:** 16×16 pixel patches (5×5 = 25 patches)
+    - **Embedding:** 256-dimensional patch embeddings
+    - **Layers:** 6 transformer encoder layers
+    - **Heads:** 8 attention heads
+    - **Output:** Classification or sequence generation
     """)
     
     st.subheader("Key Concepts")
@@ -205,12 +259,21 @@ with col1:
 
 with col2:
     st.subheader("📊 Model Statistics")
-    st.metric("Model Parameters", "169,768")
-    st.metric("Patch Size", "8×8 pixels")
-    st.metric("Total Patches", "121")
-    st.metric("Embedding Dim", "64")
-    st.metric("Attention Heads", "4")
-    st.metric("Encoder Layers", "3")
+    st.metric("Model Parameters", "~2.1M")
+    st.metric("Patch Size", "16×16 pixels")
+    st.metric("Total Patches", "25")
+    st.metric("Embedding Dim", "256")
+    st.metric("Attention Heads", "8")
+    st.metric("Encoder Layers", "6")
+    
+    # Show selected model info
+    if available_models:
+        model_info = next((m for m in available_models if m["id"] == selected_model), None)
+        if model_info:
+            st.markdown("---")
+            st.subheader("🤖 Selected Model")
+            st.info(f"**{model_info['name']}**")
+            st.info(f"Type: {model_info['type'].title()}")
 
 # Process the image if drawn
 if canvas_result.image_data is not None:
@@ -261,15 +324,15 @@ if canvas_result.image_data is not None:
     
     with tab2:
         st.subheader("Step 2: Patch Division")
-        st.markdown("The image is divided into 8×8 pixel patches:")
+        st.markdown("The image is divided into 16×16 pixel patches:")
         
         # Create patch visualization
-        fig = visualize_patches_detailed(resized_image, patch_size=8)
+        fig = visualize_patches_detailed(resized_image, patch_size=16)
         st.pyplot(fig)
         
         st.info("""
-        **What's happening:** The 84×84 image is divided into 121 patches (11×11 grid). 
-        Each patch is 8×8 pixels. This allows the model to process the image as a sequence 
+        **What's happening:** The 84×84 image is divided into 25 patches (5×5 grid). 
+        Each patch is 16×16 pixels. This allows the model to process the image as a sequence 
         of smaller, manageable pieces rather than as a single large image.
         """)
         
@@ -278,9 +341,9 @@ if canvas_result.image_data is not None:
         with col1:
             st.metric("Image Size", "84×84")
         with col2:
-            st.metric("Patch Size", "8×8")
+            st.metric("Patch Size", "16×16")
         with col3:
-            st.metric("Total Patches", "121")
+            st.metric("Total Patches", "25")
     
     with tab3:
         st.subheader("Step 3: Model Architecture")
@@ -292,11 +355,11 @@ if canvas_result.image_data is not None:
         
         st.info("""
         **Key Components:**
-        1. **Patch Embedding:** Each 8×8 patch is flattened and projected to 64 dimensions
+        1. **Patch Embedding:** Each 16×16 patch is flattened and projected to 256 dimensions
         2. **Position Embedding:** Learnable position information is added to preserve spatial relationships
-        3. **CLS Token:** A special token that aggregates information from all patches
-        4. **Transformer Encoder:** 3 layers of self-attention and feed-forward processing
-        5. **Classification Head:** Final layer that outputs the predicted number
+        3. **Transformer Encoder:** 6 layers of self-attention and feed-forward processing
+        4. **Multi-Head Attention:** 8 attention heads process different aspects of the input
+        5. **Output Head:** Final layer that outputs classification or generates sequences
         """)
     
     with tab4:
@@ -304,7 +367,7 @@ if canvas_result.image_data is not None:
         st.markdown("Multi-head attention shows how the model focuses on different parts of the image:")
         
         # Create attention visualization
-        attention_fig = create_attention_visualization(121, num_heads=4)
+        attention_fig = create_attention_visualization(25, num_heads=8)
         st.pyplot(attention_fig)
         
         st.info("""
@@ -316,9 +379,14 @@ if canvas_result.image_data is not None:
     with tab5:
         st.subheader("Step 5: Prediction Results")
         
+        # Determine model URL based on selection
+        if selected_model == "seq2seq":
+            model_url = os.environ.get("SEQ2SEQ_URL", "http://model-serve:8000/predict/seq2seq")
+        else:
+            model_url = os.environ.get("VIT_URL", "http://model-serve:8000/predict/vit")
+        
         # Make prediction
-        model_url = os.environ.get("MODEL_URL", "http://model-serve:8000/predict")
-        pred, confidence = predict_multi_digit(resized_image, model_url)
+        pred, confidence, model_type = predict_multi_digit(resized_image, model_url, selected_model)
         
         if pred is not None:
             col1, col2 = st.columns(2)
@@ -327,22 +395,35 @@ if canvas_result.image_data is not None:
                 st.markdown("**Model Prediction**")
                 st.metric("Predicted Number", pred)
                 st.metric("Confidence", f"{confidence:.2%}")
+                st.metric("Model Type", model_type.upper())
             
             with col2:
                 st.markdown("**Input Image**")
                 st.image(resized_image, caption="Processed input", width=200)
             
-            # Show detailed explanation
-            st.markdown("### How the Model Made This Decision")
-            st.markdown(f"""
-            1. **Patch Processing:** Your image was divided into 121 patches
-            2. **Feature Extraction:** Each patch was converted to a 64-dimensional vector
-            3. **Attention Computation:** The model computed attention weights between all patches
-            4. **Information Aggregation:** The CLS token gathered information from all patches
-            5. **Classification:** The final layer mapped the aggregated features to number **{pred}**
-            
-            **Confidence Level:** {confidence:.2%} - This indicates how certain the model is about its prediction.
-            """)
+            # Show detailed explanation based on model type
+            if model_type == "seq2seq":
+                st.markdown("### How the Seq2Seq Model Made This Decision")
+                st.markdown(f"""
+                1. **Patch Processing:** Your image was divided into 25 patches
+                2. **Feature Extraction:** Each patch was converted to a 256-dimensional vector
+                3. **Encoder Processing:** The encoder processed all patches using self-attention
+                4. **Sequence Generation:** The decoder generated digits one by one: **{pred}**
+                5. **End Detection:** The model stopped when it generated an end-of-sequence token
+                
+                **Confidence Level:** {confidence:.2%} - This indicates how certain the model is about its prediction.
+                """)
+            else:
+                st.markdown("### How the Classification Model Made This Decision")
+                st.markdown(f"""
+                1. **Patch Processing:** Your image was divided into 25 patches
+                2. **Feature Extraction:** Each patch was converted to a 256-dimensional vector
+                3. **Attention Computation:** The model computed attention weights between all patches
+                4. **Global Pooling:** Information from all patches was aggregated
+                5. **Classification:** The final layer mapped the aggregated features to number **{pred}**
+                
+                **Confidence Level:** {confidence:.2%} - This indicates how certain the model is about its prediction.
+                """)
             
             # Show what the model learned
             st.markdown("### What the Model Learned")

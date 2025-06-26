@@ -1,5 +1,9 @@
-torchvision
 torch
+torchvision
+torchaudio
 pydantic
 uvicorn
 fastapi
+pillow
+numpy
+matplotlib

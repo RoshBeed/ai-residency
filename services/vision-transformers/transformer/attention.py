@@ -11,7 +11,6 @@ class MultiHeadAttention(nn.Module):
         self.output_dim = heads * head_dim
 
         assert d_model % heads == 0, f"d_model ({d_model}) must be divisible by heads ({heads})"
-        self.head_dim = d_model // heads
 
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
@@ -38,16 +37,19 @@ class MultiHeadAttention(nn.Module):
         attn_scores = torch.clamp(attn_scores, min=-100, max=100)
         
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+            # Handle boolean masks (True = mask, don't attend)
+            if mask.dtype == torch.bool:
+                attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+            else:
+                # Handle traditional masks (0 = mask, don't attend)
+                attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
         
         # Apply softmax with numerical stability
         attn_probs = torch.softmax(attn_scores, dim=-1)
         
-        # Ensure probabilities are valid
-        attn_probs = torch.clamp(attn_probs, min=1e-8, max=1.0)
-        attn_probs = attn_probs / attn_probs.sum(dim=-1, keepdim=True)
-        
+        # Apply attention dropout
         attn_probs = self.dropout(attn_probs)
+        
         out = torch.matmul(attn_probs, V)
         out = out.transpose(1, 2).contiguous().view(batch_size, q_len, self.d_model)
         out = self.W_o(out)

@@ -1,32 +1,63 @@
 services:
-  db:
-    image: postgres:13
-    restart: always
-    environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - db-data:/var/lib/postgresql/data
-
   model-train:
     profiles:
       - train
     build:
-      context: model
+      context: transformer
       dockerfile: Dockerfile.train
     image: mnist-digit-transformer-model-train:latest
     volumes:
       - model-data:/app/model_data  # Shared volume for model.pth
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+  s2s-train:
+    profiles:
+      - train
+    build:
+      context: .
+      dockerfile: s2s_vit/Dockerfile
+    image: mnist-digit-seq2seq-train:latest
+    volumes:
+      - model-data:/app/model_data  # Shared volume for seq2seq model.pth
+    environment:
+      - PYTHONPATH=/app
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   model-serve:
     build:
-      context: model
+      context: transformer
       dockerfile: Dockerfile.serve
     image: mnist-digit-classifier-transformer-serve:latest
     restart: always
     ports:
       - "8000:8000"
+    volumes:
+      - model-data:/app/model_data  # Access to both ViT and seq2seq models
+    # Optional GPU support for inference (uncomment if needed)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   streamlit:
     build:
@@ -38,7 +69,9 @@ services:
       - "8501:8501"
     environment:
       MODEL_URL: "http://model-serve:8000/predict"
+      VIT_URL: "http://model-serve:8000/predict/vit"
+      SEQ2SEQ_URL: "http://model-serve:8000/predict/seq2seq"
+      MODELS_URL: "http://model-serve:8000/models"
 
 volumes:
-  db-data:
-  model-data:  # Shared volume for model.pth
+  model-data:  # Shared volume for both ViT and seq2seq models

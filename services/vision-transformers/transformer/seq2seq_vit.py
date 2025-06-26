@@ -23,6 +23,10 @@ class Seq2SeqVisionTransformer(nn.Module):
         self.vocab_size = config["vocab_size"]
         self.max_seq_length = config["max_seq_length"]
         
+        # Token configuration
+        self.start_token = config.get("start_token", 10)  # START token
+        self.eos_token = config.get("eos_token", 11)      # EOS token
+        
         self.n_patches = (self.img_size // self.patch_size) ** 2
         
         # Patch embedding for encoder
@@ -122,11 +126,12 @@ class Seq2SeqVisionTransformer(nn.Module):
         nn.init.constant_(self.decoder_norm.bias, 0.0)
         
     def create_causal_mask(self, seq_length, device):
-        """Create a lower-triangular causal mask for decoder self-attention"""
-        # 1s in allowed positions, 0s in masked (future) positions
-        mask = torch.tril(torch.ones(seq_length, seq_length, device=device)).unsqueeze(0).unsqueeze(0)
-        # Shape: (1, 1, seq_len, seq_len) for broadcasting
-        return mask
+        """Create a causal mask for decoder self-attention"""
+        # Create upper triangular mask where 1 means "mask" (don't attend)
+        # This creates a mask where each position can only attend to previous positions
+        mask = torch.triu(torch.ones(seq_length, seq_length, device=device), diagonal=1)
+        # Convert to boolean mask where True means "mask" (don't attend)
+        return mask.bool()
         
     def encode(self, x):
         """Encode the input image"""
@@ -181,6 +186,20 @@ class Seq2SeqVisionTransformer(nn.Module):
             target_sequences: (batch_size, seq_length)
             target_mask: Optional mask for target sequences
         """
+        # Input validation
+        if images.dim() != 4:
+            raise ValueError(f"Expected 4D input tensor, got {images.dim()}D")
+        
+        if target_sequences.dim() != 2:
+            raise ValueError(f"Expected 2D target tensor, got {target_sequences.dim()}D")
+        
+        if images.size(0) != target_sequences.size(0):
+            raise ValueError(f"Batch size mismatch: images {images.size(0)}, targets {target_sequences.size(0)}")
+        
+        # Check for invalid tokens
+        if target_sequences.max() >= self.vocab_size:
+            raise ValueError(f"Target contains invalid token: {target_sequences.max().item()} >= {self.vocab_size}")
+        
         # Encode images
         encoder_output = self.encode(images)
         
@@ -215,13 +234,8 @@ class Seq2SeqVisionTransformer(nn.Module):
             # Get next token probabilities
             next_token_logits = logits[:, -1, :] / temperature
             
-            # Apply softmax with numerical stability
-            next_token_logits = torch.clamp(next_token_logits, min=-100, max=100)
-            probs = torch.softmax(next_token_logits, dim=-1)
-            
-            # Ensure probabilities are valid
-            probs = torch.clamp(probs, min=1e-8, max=1.0)
-            probs = probs / probs.sum(dim=-1, keepdim=True)
+            # Apply softmax with temperature
+            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
             
             # Sample next token
             next_token = torch.multinomial(probs, num_samples=1)
@@ -230,7 +244,7 @@ class Seq2SeqVisionTransformer(nn.Module):
             generated = torch.cat([generated, next_token], dim=1)
             
             # Stop if EOS token is generated
-            if (next_token == 1).any():  # Assuming EOS token is 1
+            if (next_token == self.eos_token).any():
                 break
                 
         return generated 
