@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:13
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  model-train:
+    profiles:
+      - train
+    build:
+      context: model
+      dockerfile: Dockerfile.train
+    image: mnist-digit-transformer-model-train:latest
+    volumes:
+      - model-data:/app/model_data  # Shared volume for model.pth
+
+  model-serve:
+    build:
+      context: model
+      dockerfile: Dockerfile.serve
+    image: mnist-digit-classifier-transformer-serve:latest
+    restart: always
+    ports:
+      - "8000:8000"
+
+  streamlit:
+    build:
+      context: streamlit
+      dockerfile: Dockerfile
+    image: mnist-digit-transformer-streamlit:latest
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      MODEL_URL: "http://model-serve:8000/predict"
+
+volumes:
+  db-data:
+  model-data:  # Shared volume for model.pth
