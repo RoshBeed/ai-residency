@@ -15,11 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 import sys
+import time
 
 # Add parent directory to path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import MODEL_CONFIG, MODEL_PATHS
+from config import CLASSIFIER_CONFIG, SEQ2SEQ_CONFIG, MODEL_PATHS
 from models.classifier.classifier import VisionTransformer
 from models.seq2seq.seq2seq import Seq2SeqVisionTransformer
 
@@ -43,6 +44,11 @@ class PredictionResponse(BaseModel):
     confidence: float
     model_type: str
 
+class BothModelsResponse(BaseModel):
+    vit_prediction: dict
+    seq2seq_prediction: dict
+    processing_time: float
+
 # Global model instances
 vit_model = None
 seq2seq_model = None
@@ -64,8 +70,12 @@ def load_models():
     try:
         # Load regular ViT model
         if os.path.exists(MODEL_PATHS["best_model"]):
-            vit_model = VisionTransformer(**MODEL_CONFIG)
-            vit_model.load_state_dict(torch.load(MODEL_PATHS["best_model"], map_location=device))
+            vit_model = VisionTransformer(CLASSIFIER_CONFIG)
+            checkpoint = torch.load(MODEL_PATHS["best_model"], map_location=device)
+            if "model_state_dict" in checkpoint:
+                vit_model.load_state_dict(checkpoint["model_state_dict"])
+            else:
+                vit_model.load_state_dict(checkpoint)
             vit_model.to(device)
             vit_model.eval()
             print(f"✅ Loaded ViT model from {MODEL_PATHS['best_model']}")
@@ -74,8 +84,12 @@ def load_models():
         
         # Load seq2seq model
         if os.path.exists(MODEL_PATHS["best_seq2seq_model"]):
-            seq2seq_model = Seq2SeqVisionTransformer(**MODEL_CONFIG)
-            seq2seq_model.load_state_dict(torch.load(MODEL_PATHS["best_seq2seq_model"], map_location=device))
+            seq2seq_model = Seq2SeqVisionTransformer(SEQ2SEQ_CONFIG)
+            checkpoint = torch.load(MODEL_PATHS["best_seq2seq_model"], map_location=device)
+            if "model_state_dict" in checkpoint:
+                seq2seq_model.load_state_dict(checkpoint["model_state_dict"])
+            else:
+                seq2seq_model.load_state_dict(checkpoint)
             seq2seq_model.to(device)
             seq2seq_model.eval()
             print(f"✅ Loaded Seq2Seq model from {MODEL_PATHS['best_seq2seq_model']}")
@@ -97,7 +111,7 @@ def preprocess_image(image_data: str) -> torch.Tensor:
             image = image.convert('L')
         
         # Resize to model input size
-        image = image.resize((MODEL_CONFIG["img_size"], MODEL_CONFIG["img_size"]))
+        image = image.resize((CLASSIFIER_CONFIG["img_size"], CLASSIFIER_CONFIG["img_size"]))
         
         # Convert to numpy array and normalize
         image_array = np.array(image, dtype=np.float32) / 255.0
@@ -138,15 +152,19 @@ def predict_seq2seq(image_tensor: torch.Tensor) -> tuple[str, float]:
     try:
         with torch.no_grad():
             # Get model prediction
-            output_sequence = seq2seq_model.generate(image_tensor, max_length=5)
+            output_sequence = seq2seq_model.generate(
+                image_tensor,
+                start_token=SEQ2SEQ_CONFIG["start_token"],
+                max_length=SEQ2SEQ_CONFIG["max_seq_length"]
+            )
             
             # Convert sequence to string (remove START token and everything after EOS)
             digits = []
             for token in output_sequence[0]:  # Remove batch dimension
                 token_int = int(token.item())
-                if token_int == MODEL_CONFIG["start_token"]:
+                if token_int == SEQ2SEQ_CONFIG["start_token"]:
                     continue
-                elif token_int == MODEL_CONFIG["eos_token"]:
+                elif token_int == SEQ2SEQ_CONFIG["eos_token"]:
                     break
                 else:
                     digits.append(str(token_int))
@@ -230,6 +248,84 @@ async def predict_seq2seq_endpoint(request: ImageRequest):
     """Predict using seq2seq model specifically"""
     request.model_type = "seq2seq"
     return await predict(request)
+
+@app.post("/predict/both", response_model=BothModelsResponse)
+async def predict_both_models(request: ImageRequest):
+    """Predict using both ViT and seq2seq models"""
+    start_time = time.time()
+    
+    try:
+        # Preprocess image once
+        image_tensor = preprocess_image(request.image_data)
+        
+        # Get predictions from both models
+        vit_prediction = None
+        seq2seq_prediction = None
+        
+        # ViT prediction
+        if vit_model is not None:
+            try:
+                vit_pred, vit_conf = predict_vit(image_tensor)
+                vit_prediction = {
+                    "pred": vit_pred,
+                    "confidence": vit_conf,
+                    "model_type": "vit",
+                    "model_name": "Vision Transformer (Classification)"
+                }
+            except Exception as e:
+                vit_prediction = {
+                    "pred": "Error",
+                    "confidence": 0.0,
+                    "model_type": "vit",
+                    "model_name": "Vision Transformer (Classification)",
+                    "error": str(e)
+                }
+        else:
+            vit_prediction = {
+                "pred": "Not Loaded",
+                "confidence": 0.0,
+                "model_type": "vit",
+                "model_name": "Vision Transformer (Classification)",
+                "error": "Model not loaded"
+            }
+        
+        # Seq2Seq prediction
+        if seq2seq_model is not None:
+            try:
+                seq2seq_pred, seq2seq_conf = predict_seq2seq(image_tensor)
+                seq2seq_prediction = {
+                    "pred": seq2seq_pred,
+                    "confidence": seq2seq_conf,
+                    "model_type": "seq2seq",
+                    "model_name": "Seq2Seq Vision Transformer"
+                }
+            except Exception as e:
+                seq2seq_prediction = {
+                    "pred": "Error",
+                    "confidence": 0.0,
+                    "model_type": "seq2seq",
+                    "model_name": "Seq2Seq Vision Transformer",
+                    "error": str(e)
+                }
+        else:
+            seq2seq_prediction = {
+                "pred": "Not Loaded",
+                "confidence": 0.0,
+                "model_type": "seq2seq",
+                "model_name": "Seq2Seq Vision Transformer",
+                "error": "Model not loaded"
+            }
+        
+        processing_time = time.time() - start_time
+        
+        return BothModelsResponse(
+            vit_prediction=vit_prediction,
+            seq2seq_prediction=seq2seq_prediction,
+            processing_time=processing_time
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Both models prediction failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn

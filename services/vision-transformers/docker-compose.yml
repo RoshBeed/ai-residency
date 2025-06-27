@@ -50,7 +50,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - model-data:/app/model_data
+      - ./model_data:/app/model_data
     environment:
       - PYTHONPATH=/app
     # Optional GPU support for inference (uncomment if needed)
@@ -70,10 +70,11 @@ services:
     restart: always
     ports:
       - "8501:8501"
+    volumes:
+      - ./model_data:/app/model_data
     environment:
       MODEL_URL: "http://model-serve:8000/predict"
-      VIT_URL: "http://model-serve:8000/predict/vit"
-      SEQ2SEQ_URL: "http://model-serve:8000/predict/seq2seq"
+      BOTH_MODELS_URL: "http://model-serve:8000/predict/both"
       MODELS_URL: "http://model-serve:8000/models"
 
 volumes:

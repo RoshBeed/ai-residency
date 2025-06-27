@@ -11,9 +11,13 @@ import time
 from typing import Dict, List, Tuple, Optional
 import argparse
 from pathlib import Path
+import sys
+
+# Add project root to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 # Import local modules
-from .classifier import VisionTransformer
+from models.classifier.classifier import VisionTransformer
 from datasets.mnist_dataset import MNISTDataset
 
 class Trainer:
@@ -193,15 +197,20 @@ class Trainer:
             'val_accuracies': self.val_accuracies
         }
         
-        # Save regular checkpoint
-        checkpoint_path = self.output_dir / f'checkpoint_epoch_{epoch}.pth'
+        # Create descriptive filename with model architecture details
+        model_config = self.config['model_config']
+        arch_info = f"vit_cls_{model_config['img_size']}x{model_config['img_size']}_patch{model_config['patch_size']}_d{model_config['d_model']}_layers{model_config['num_encoder_layers']}_heads{model_config['heads']}"
+        
+        # Save regular checkpoint with epoch info
+        checkpoint_path = self.output_dir / f'{arch_info}_epoch_{epoch}.pth'
         torch.save(checkpoint, checkpoint_path)
         
-        # Save best model
+        # Save best model with descriptive name
         if is_best:
-            best_path = self.output_dir / 'best_model.pth'
+            best_path = self.output_dir / f'{arch_info}_best.pth'
             torch.save(checkpoint, best_path)
             print(f"New best model saved with validation accuracy: {self.val_accuracies[-1]:.2f}%")
+            print(f"Model saved as: {best_path}")
     
     def plot_training_history(self):
         """Plot training history."""

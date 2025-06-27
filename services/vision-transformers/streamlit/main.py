@@ -10,6 +10,7 @@ import os
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import math
 
 # Page configuration
 st.set_page_config(
@@ -22,7 +23,7 @@ st.set_page_config(
 def get_available_models():
     """Get available models from the API"""
     try:
-        models_url = os.environ.get("MODELS_URL", "http://model-serve:8000/models")
+        models_url = os.environ.get("MODELS_URL", "http://localhost:8000/models")
         response = requests.get(models_url)
         if response.status_code == 200:
             return response.json()["available_models"]
@@ -51,6 +52,26 @@ def predict_multi_digit(image_array, model_url, model_type="vit"):
     except Exception as e:
         st.error(f"Error making prediction: {e}")
         return None, 0.0, model_type
+
+def predict_both_models(image_array):
+    """Predict using both ViT and seq2seq models simultaneously."""
+    # Convert numpy array to PIL Image
+    image = Image.fromarray(image_array.astype('uint8'), 'L')
+    
+    # Save to buffer and encode
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    b64 = base64.b64encode(buffer.getvalue()).decode()
+    
+    # Make prediction request to both models endpoint
+    try:
+        both_models_url = os.environ.get("BOTH_MODELS_URL", "http://localhost:8000/predict/both")
+        response = requests.post(both_models_url, json={"image_data": b64})
+        data = response.json()
+        return data
+    except Exception as e:
+        st.error(f"Error making prediction with both models: {e}")
+        return None
 
 def visualize_patches_detailed(image_array, patch_size=8):
     """Create detailed patch visualization with numbering"""
@@ -90,21 +111,23 @@ def visualize_patches_detailed(image_array, patch_size=8):
 
 def create_attention_visualization(num_patches, num_heads=4):
     """Create a visualization of multi-head attention"""
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    rows = int(math.ceil(num_heads / 2))
+    fig, axes = plt.subplots(rows, 2, figsize=(12, 5 * rows))
     axes = axes.flatten()
     
     for head in range(num_heads):
         # Create random attention weights (for demonstration)
         attention_weights = np.random.rand(num_patches, num_patches)
         attention_weights = attention_weights / attention_weights.sum(axis=1, keepdims=True)
-        
         im = axes[head].imshow(attention_weights, cmap='Blues', vmin=0, vmax=1)
         axes[head].set_title(f'Attention Head {head + 1}')
         axes[head].set_xlabel('Key Patches')
         axes[head].set_ylabel('Query Patches')
-        
-        # Add colorbar
-        plt.colorbar(im, ax=axes[head], fraction=0.046, pad=0.04)
+        plt.colorbar(im, ax=axes[head])
+    
+    # Hide unused subplots
+    for ax in axes[num_heads:]:
+        ax.axis('off')
     
     plt.tight_layout()
     return fig
@@ -166,32 +189,24 @@ Draw digits on the canvas below and watch how the model processes your input!
 
 # Sidebar with model selection and educational content
 with st.sidebar:
-    st.header("🤖 Model Selection")
+    st.header("🤖 Model Information")
     
     # Get available models
     available_models = get_available_models()
     
     if available_models:
-        model_options = {model["id"]: model["name"] for model in available_models if model["loaded"]}
-        if model_options:
-            selected_model = st.selectbox(
-                "Choose Model:",
-                options=list(model_options.keys()),
-                format_func=lambda x: model_options[x],
-                index=0
-            )
+        loaded_models = [model for model in available_models if model["loaded"]]
+        if len(loaded_models) >= 2:
+            st.success("✅ Both models loaded and ready!")
             
-            # Get model info
-            model_info = next((m for m in available_models if m["id"] == selected_model), None)
-            if model_info:
-                st.info(f"**Model Type:** {model_info['type'].title()}")
-                st.info(f"**Status:** ✅ Loaded")
+            for model in loaded_models:
+                st.info(f"**{model['name']}** ({model['type'].title()})")
+        elif len(loaded_models) == 1:
+            st.warning(f"⚠️ Only {loaded_models[0]['name']} is loaded")
         else:
-            st.error("No models are currently loaded")
-            selected_model = "vit"
+            st.error("❌ No models are currently loaded")
     else:
         st.warning("Could not fetch model information")
-        selected_model = "vit"
     
     st.markdown("---")
     st.header("📚 Learning Resources")
@@ -266,14 +281,18 @@ with col2:
     st.metric("Attention Heads", "8")
     st.metric("Encoder Layers", "6")
     
-    # Show selected model info
+    # Show model status
     if available_models:
-        model_info = next((m for m in available_models if m["id"] == selected_model), None)
-        if model_info:
-            st.markdown("---")
-            st.subheader("🤖 Selected Model")
-            st.info(f"**{model_info['name']}**")
-            st.info(f"Type: {model_info['type'].title()}")
+        loaded_count = len([m for m in available_models if m["loaded"]])
+        st.markdown("---")
+        st.subheader("🤖 Model Status")
+        st.info(f"**{loaded_count}/2 models loaded**")
+        if loaded_count == 2:
+            st.success("Both models ready!")
+        elif loaded_count == 1:
+            st.warning("One model loaded")
+        else:
+            st.error("No models loaded")
 
 # Process the image if drawn
 if canvas_result.image_data is not None:
@@ -379,66 +398,27 @@ if canvas_result.image_data is not None:
     with tab5:
         st.subheader("Step 5: Prediction Results")
         
-        # Determine model URL based on selection
-        if selected_model == "seq2seq":
-            model_url = os.environ.get("SEQ2SEQ_URL", "http://model-serve:8000/predict/seq2seq")
-        else:
-            model_url = os.environ.get("VIT_URL", "http://model-serve:8000/predict/vit")
-        
-        # Make prediction
-        pred, confidence, model_type = predict_multi_digit(resized_image, model_url, selected_model)
-        
-        if pred is not None:
+        both_results = predict_both_models(resized_image)
+        if both_results is not None:
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.markdown("**Model Prediction**")
-                st.metric("Predicted Number", pred)
-                st.metric("Confidence", f"{confidence:.2%}")
-                st.metric("Model Type", model_type.upper())
-            
+                st.markdown("<h2 style='color:#4F8BF9;'>🎯 ViT Classifier</h2>", unsafe_allow_html=True)
+                vit_pred = both_results.get("vit_prediction", {})
+                if "error" in vit_pred:
+                    st.error(f"**Error:** {vit_pred['error']}")
+                else:
+                    st.markdown(f"<div style='font-size:2.5em; font-weight:bold; color:#4F8BF9; background:#eaf3ff; border-radius:10px; padding:20px; text-align:center;'>{vit_pred.get('pred', 'N/A')}</div>", unsafe_allow_html=True)
+                    st.metric("Confidence", f"{vit_pred.get('confidence', 0.0):.2%}")
             with col2:
-                st.markdown("**Input Image**")
-                st.image(resized_image, caption="Processed input", width=200)
-            
-            # Show detailed explanation based on model type
-            if model_type == "seq2seq":
-                st.markdown("### How the Seq2Seq Model Made This Decision")
-                st.markdown(f"""
-                1. **Patch Processing:** Your image was divided into 25 patches
-                2. **Feature Extraction:** Each patch was converted to a 256-dimensional vector
-                3. **Encoder Processing:** The encoder processed all patches using self-attention
-                4. **Sequence Generation:** The decoder generated digits one by one: **{pred}**
-                5. **End Detection:** The model stopped when it generated an end-of-sequence token
-                
-                **Confidence Level:** {confidence:.2%} - This indicates how certain the model is about its prediction.
-                """)
-            else:
-                st.markdown("### How the Classification Model Made This Decision")
-                st.markdown(f"""
-                1. **Patch Processing:** Your image was divided into 25 patches
-                2. **Feature Extraction:** Each patch was converted to a 256-dimensional vector
-                3. **Attention Computation:** The model computed attention weights between all patches
-                4. **Global Pooling:** Information from all patches was aggregated
-                5. **Classification:** The final layer mapped the aggregated features to number **{pred}**
-                
-                **Confidence Level:** {confidence:.2%} - This indicates how certain the model is about its prediction.
-                """)
-            
-            # Show what the model learned
-            st.markdown("### What the Model Learned")
-            st.markdown("""
-            The Vision Transformer learned to:
-            - **Recognize digit shapes** across different patches
-            - **Understand spatial relationships** between different parts of digits
-            - **Handle multiple digits** in a single image
-            - **Generalize** from training examples to new drawings
-            
-            Unlike CNNs that use local convolutions, the transformer can directly attend to 
-            any part of the image, making it particularly good at understanding global patterns.
-            """)
+                st.markdown("<h2 style='color:#F97B4F;'>🔢 Seq2Seq Model</h2>", unsafe_allow_html=True)
+                s2s_pred = both_results.get("seq2seq_prediction", {})
+                if "error" in s2s_pred:
+                    st.error(f"**Error:** {s2s_pred['error']}")
+                else:
+                    st.markdown(f"<div style='font-size:2.5em; font-weight:bold; color:#F97B4F; background:#fff3ea; border-radius:10px; padding:20px; text-align:center;'>{s2s_pred.get('pred', 'N/A')}</div>", unsafe_allow_html=True)
+                    st.metric("Confidence", f"{s2s_pred.get('confidence', 0.0):.2%}")
         else:
-            st.error("Failed to get prediction from model. Please check if the model server is running.")
+            st.warning("No prediction results to display.")
 
 # Footer
 st.markdown("---")

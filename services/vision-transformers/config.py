@@ -42,26 +42,22 @@ print_device_info(DETECTED_DEVICE)
 
 # Model Architecture Configuration
 MODEL_CONFIG = {
-    # Image and patch settings
-    "img_size": 84,
-    "patch_size": 16,
+    "img_size": 28,
+    "patch_size": 4,
     "in_channels": 1,
-    
-    # Model dimensions - scaled up for better performance
-    "d_model": 256,  # Increased from 128 for better accuracy
-    "num_encoder_layers": 6,  # Increased from 4 for better accuracy
-    "num_decoder_layers": 6,  # Increased from 4 for better accuracy
-    "heads": 8,  # Increased from 2 for better accuracy
-    "head_dim": 32,  # Keep same for compatibility
-    "ff_hidden_dim": 1024,  # Increased from 512 for better accuracy
-    
+    "num_classes": 10,
+    "d_model": 128,
+    "num_encoder_layers": 6,
+    "num_decoder_layers": 6,  # for seq2seq
+    "heads": 8,
+    "head_dim": 16,
+    "ff_hidden_dim": 512,
+    "dropout": 0.1,
     # Seq2Seq settings - using constants
     "vocab_size": VOCAB_CONSTANTS["VOCAB_SIZE"],
     "start_token": VOCAB_CONSTANTS["START_TOKEN"],
     "eos_token": VOCAB_CONSTANTS["EOS_TOKEN"],
-    
-    # Training settings - increased regularization
-    "dropout": 0.1,
+    "max_seq_length": 5,
 }
 
 # Get device-specific configuration
@@ -100,12 +96,12 @@ DATASET_CONFIG = {
     "train_split": TRAINING_CONFIG["train_split"],
 }
 
-# Model file paths
+# Model file paths - using descriptive names
 MODEL_PATHS = {
-    "best_model": "model_data/best_multi_digit_vit.pth",
-    "final_model": "model_data/vit_model_final.pth",
-    "best_seq2seq_model": "model_data/best_multi_digit_vit_seq2seq.pth",
-    "final_seq2seq_model": "model_data/vit_model_final_seq2seq.pth",
+    "best_model": "model_data/vit_cls_28x28_patch4_d128_layers6_heads8_best.pth",
+    "final_model": "model_data/vit_cls_84x84_patch16_d256_layers6_heads8_final.pth",
+    "best_seq2seq_model": "model_data/vit_seq2seq_84x84_patch16_d256_enc6_dec6_heads8_best.pth",
+    "final_seq2seq_model": "model_data/best_multi_digit_vit_seq2seq.pth",
 }
 
 # API Configuration
@@ -128,4 +124,36 @@ ENV_CONFIG = {
     "in_docker": os.path.exists('/.dockerenv'),
     "platform": platform.system(),
     "python_version": sys.version,
+}
+
+# Classifier config (matches classifier checkpoint)
+CLASSIFIER_CONFIG = {
+    "img_size": 28,
+    "patch_size": 4,
+    "in_channels": 1,
+    "num_classes": 10,
+    "d_model": 128,
+    "num_encoder_layers": 6,
+    "heads": 8,
+    "head_dim": 16,
+    "ff_hidden_dim": 512,
+    "dropout": 0.1,
+}
+
+# Seq2Seq config (matches seq2seq checkpoint)
+SEQ2SEQ_CONFIG = {
+    "img_size": 84,
+    "patch_size": 16,
+    "in_channels": 1,
+    "d_model": 256,
+    "num_encoder_layers": 6,
+    "num_decoder_layers": 6,
+    "heads": 8,
+    "head_dim": 32,
+    "ff_hidden_dim": 1024,
+    "dropout": 0.1,
+    "vocab_size": VOCAB_CONSTANTS["VOCAB_SIZE"],
+    "start_token": VOCAB_CONSTANTS["START_TOKEN"],
+    "eos_token": VOCAB_CONSTANTS["EOS_TOKEN"],
+    "max_seq_length": 5,
 } 

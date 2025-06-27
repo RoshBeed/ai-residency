@@ -13,7 +13,7 @@ import math
 # Ensure project root is in sys.path for local imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from .seq2seq import Seq2SeqVisionTransformer
+from models.seq2seq.seq2seq import Seq2SeqVisionTransformer
 from datasets.multi_digit_dataset import MultiDigitMNISTDataset
 from config import MODEL_CONFIG, TRAINING_CONFIG, DATASET_CONFIG, MODEL_PATHS
 
@@ -125,6 +125,18 @@ def validate_batch(images, targets, vocab_size):
     img_std = images.std().item()
     if abs(img_mean) > 1.0 or img_std > 2.0:
         print(f"Warning: Image statistics - mean: {img_mean:.4f}, std: {img_std:.4f}")
+
+def create_model_filename(model_type="seq2seq", is_best=True, epoch=None):
+    """Create descriptive filename for model saving."""
+    # Get model architecture details from config
+    arch_info = f"vit_{model_type}_{MODEL_CONFIG['img_size']}x{MODEL_CONFIG['img_size']}_patch{MODEL_CONFIG['patch_size']}_d{MODEL_CONFIG['d_model']}_enc{MODEL_CONFIG['num_encoder_layers']}_dec{MODEL_CONFIG['num_decoder_layers']}_heads{MODEL_CONFIG['heads']}"
+    
+    if is_best:
+        return f"{arch_info}_best.pth"
+    elif epoch is not None:
+        return f"{arch_info}_epoch_{epoch}.pth"
+    else:
+        return f"{arch_info}_final.pth"
 
 def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, scheduler, epochs=10, device='cpu'):
     """
@@ -299,8 +311,10 @@ def train_seq2seq_model(model, train_loader, val_loader, optimizer, criterion, s
         # Save best model based on autoregressive accuracy
         if epoch_acc_auto > best_acc:
             best_acc = epoch_acc_auto
-            torch.save(model.state_dict(), MODEL_PATHS["best_seq2seq_model"])
+            best_model_path = create_model_filename("seq2seq", is_best=True)
+            torch.save(model.state_dict(), best_model_path)
             print(f'New best model saved with accuracy: {best_acc:.2f}%')
+            print(f'Model saved as: {best_model_path}')
         
         print('-' * 50)
     
@@ -439,8 +453,9 @@ if __name__ == "__main__":
     print(f"Training completed. Best accuracy: {best_accuracy:.2f}%")
     
     # Save final model
-    torch.save(model.state_dict(), MODEL_PATHS["final_seq2seq_model"])
-    print(f"Final model saved to {MODEL_PATHS['final_seq2seq_model']}")
+    final_model_path = create_model_filename("seq2seq", is_best=False)
+    torch.save(model.state_dict(), final_model_path)
+    print(f"Final model saved to {final_model_path}")
     
     # Evaluate on test set
     print("\nEvaluating final model on test set...")
