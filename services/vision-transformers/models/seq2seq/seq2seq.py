@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from .patch_embedding import PatchEmbedding
-from .positional import PositionalEncoding, LearnablePositionalEncoding
-from .encoder import Encoder
-from .decoder import Decoder
+from transformer.patch_embedding import PatchEmbedding
+from transformer.positional import PositionalEncoding, LearnablePositionalEncoding
+from transformer.encoder import Encoder
+from transformer.decoder import Decoder
 
 class Seq2SeqVisionTransformer(nn.Module):
     def __init__(self, config):

@@ -11,9 +11,9 @@ import sys
 import math
 
 # Ensure project root is in sys.path for local imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from transformer.seq2seq_vit import Seq2SeqVisionTransformer
+from .seq2seq import Seq2SeqVisionTransformer
 from datasets.multi_digit_dataset import MultiDigitMNISTDataset
 from config import MODEL_CONFIG, TRAINING_CONFIG, DATASET_CONFIG, MODEL_PATHS
 

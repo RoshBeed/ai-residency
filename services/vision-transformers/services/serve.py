@@ -20,8 +20,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import MODEL_CONFIG, MODEL_PATHS
-from transformer.vit_model import VisionTransformer
-from transformer.seq2seq_vit import Seq2SeqVisionTransformer
+from models.classifier.classifier import VisionTransformer
+from models.seq2seq.seq2seq import Seq2SeqVisionTransformer
 
 app = FastAPI(title="Vision Transformer API", version="1.0.0")
 

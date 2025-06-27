@@ -1,13 +1,17 @@
 services:
-  model-train:
+  classifier-train:
     profiles:
       - train
     build:
-      context: transformer
-      dockerfile: Dockerfile.train
-    image: mnist-digit-transformer-model-train:latest
+      context: .
+      dockerfile: models/classifier/Dockerfile
+    image: mnist-digit-classifier-train:latest
     volumes:
-      - model-data:/app/model_data  # Shared volume for model.pth
+      - model-data:/app/model_data
+    environment:
+      - PYTHONPATH=/app
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
       resources:
         reservations:
@@ -15,19 +19,16 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-  s2s-train:
+  seq2seq-train:
     profiles:
       - train
     build:
       context: .
-      dockerfile: s2s_vit/Dockerfile
+      dockerfile: models/seq2seq/Dockerfile
     image: mnist-digit-seq2seq-train:latest
     volumes:
-      - model-data:/app/model_data  # Shared volume for seq2seq model.pth
+      - model-data:/app/model_data
     environment:
       - PYTHONPATH=/app
       - NVIDIA_VISIBLE_DEVICES=all
@@ -42,14 +43,16 @@ services:
 
   model-serve:
     build:
-      context: transformer
-      dockerfile: Dockerfile.serve
-    image: mnist-digit-classifier-transformer-serve:latest
+      context: .
+      dockerfile: services/Dockerfile
+    image: mnist-digit-transformer-serve:latest
     restart: always
     ports:
       - "8000:8000"
     volumes:
-      - model-data:/app/model_data  # Access to both ViT and seq2seq models
+      - model-data:/app/model_data
+    environment:
+      - PYTHONPATH=/app
     # Optional GPU support for inference (uncomment if needed)
     # deploy:
     #   resources:
@@ -74,4 +77,4 @@ services:
       MODELS_URL: "http://model-serve:8000/models"
 
 volumes:
-  model-data:  # Shared volume for both ViT and seq2seq models
+  model-data:

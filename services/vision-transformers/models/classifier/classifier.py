@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from .patch_embedding import PatchEmbedding
-from .positional import PositionalEncoding
-from .encoder import Encoder
+from transformer.patch_embedding import PatchEmbedding
+from transformer.positional import PositionalEncoding
+from transformer.encoder import Encoder
 
 class VisionTransformer(nn.Module):
     def __init__(self, config):

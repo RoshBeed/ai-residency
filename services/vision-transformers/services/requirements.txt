@@ -7,3 +7,4 @@ fastapi
 pillow
 numpy
 matplotlib
+tqdm

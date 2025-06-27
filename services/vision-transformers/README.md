@@ -72,11 +72,11 @@ Since MPS is not supported in Docker on Mac, run the Python files directly:
 
 4. **Train models:**
    ```bash
-   # Train ViT model (uses MPS on Mac)
-   python transformer/train_vit.py
+   # Train ViT classifier model (uses MPS on Mac)
+   python models/classifier/trainer.py
    
    # Train seq2seq model (uses MPS on Mac)
-   python s2s_vit/train_seq2seq_vit.py
+   python models/seq2seq/multi_digit_trainer.py
    ```
 
 ## 🏗️ Architecture
@@ -85,8 +85,8 @@ Since MPS is not supported in Docker on Mac, run the Python files directly:
 
 - **`model-serve`**: FastAPI server serving both ViT and seq2seq models
 - **`streamlit`**: Interactive web frontend with model selection
-- **`model-train`**: Training service for regular ViT classification
-- **`s2s-train`**: Training service for seq2seq model
+- **`classifier-train`**: Training service for ViT classification model
+- **`seq2seq-train`**: Training service for seq2seq model
 
 ### Model Types
 
@@ -148,16 +148,30 @@ The models use the following configuration (from `config.py`):
 │   ├── __init__.py
 │   ├── device_utils.py      # Device detection and configuration
 │   └── huggingface_utils.py # Hugging Face upload utility
-├── transformer/              # Core model implementation
-│   ├── serve.py             # FastAPI server
-│   ├── vit_model.py         # ViT classification model
-│   ├── seq2seq_vit.py       # Seq2Seq model
+├── transformer/              # Core transformer components
+│   ├── attention.py         # Multi-head attention
+│   ├── encoder.py           # Transformer encoder
+│   ├── decoder.py           # Transformer decoder
+│   ├── patch_embedding.py   # Image patch embedding
+│   ├── positional.py        # Positional encoding
+│   ├── feedforward.py       # Feed-forward networks
 │   └── ...
-├── s2s_vit/                  # Seq2Seq training scripts
-│   ├── train_seq2seq_vit.py
-│   └── train_single_digit.py
+├── models/                   # High-level models and training
+│   ├── classifier/          # ViT classification models
+│   │   ├── classifier.py    # Vision Transformer classifier
+│   │   ├── trainer.py       # Training script
+│   │   └── Dockerfile       # Dockerfile for classifier training
+│   └── seq2seq/             # Seq2Seq models
+│       ├── seq2seq.py       # Seq2Seq Vision Transformer
+│       ├── multi_digit_trainer.py # Training script
+│       └── Dockerfile       # Dockerfile for seq2seq training
+├── services/                 # API services
+│   ├── serve.py             # FastAPI server
+│   ├── requirements.txt     # Service dependencies
+│   └── Dockerfile           # Dockerfile for API service
 ├── streamlit/                # Web frontend
-│   └── main.py
+│   ├── main.py
+│   └── Dockerfile           # Dockerfile for streamlit
 └── model_data/               # Trained model weights
 ```
 
@@ -196,11 +210,11 @@ streamlit run streamlit/main.py  # Frontend
 ### Training
 
 ```bash
-# Train ViT model (uses detected device)
-python transformer/train_vit.py
+# Train ViT classifier model (uses detected device)
+python models/classifier/trainer.py
 
 # Train seq2seq model (uses detected device)
-python s2s_vit/train_seq2seq_vit.py
+python models/seq2seq/multi_digit_trainer.py
 ```
 
 ## 🐳 Docker Setup for GPU Servers
