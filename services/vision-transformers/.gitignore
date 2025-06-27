@@ -32,8 +32,6 @@ env.bak/
 venv.bak/
 
 # PyTorch
-*.pth
-*.pt
 *.ckpt
 
 # Model data and checkpoints
