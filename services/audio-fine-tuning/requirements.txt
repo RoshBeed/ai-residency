@@ -1,0 +1,6 @@
+torch
+openai-whisper
+ffmpeg
+streamlit
+streamlit-audiorec
+matplotlib
