@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+/datasets/
+
 # C extensions
 *.so
 
@@ -111,15 +113,15 @@ logs/
 *.gif
 *.svg
 
-# Data files (uncomment if you don't want to track large CSV files)
-# *.csv
-# *.json
-# *.parquet
-# *.hdf5
-# *.h5
+# Data files
+*.csv
+*.json
+*.parquet
+*.hdf5
+*.h5
 
-# Dataset directories (uncomment if you don't want to track datasets)
-# datasets/
+# Dataset directories
+datasets/
 
 # Other
 *.log 
