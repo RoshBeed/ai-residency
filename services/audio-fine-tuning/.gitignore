@@ -77,5 +77,49 @@ coverage.xml
 .env
 .env.*
 
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# ML/Audio Project specific
+# Model files
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+*.onnx
+*.tflite
+
+# Model directories
+whisper_emotion_model/
+whisper_tokenizer_emotion/
+models/
+checkpoints/
+
+# Training logs
+training.log
+*.log
+logs/
+
+# Generated images and plots
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# Data files (uncomment if you don't want to track large CSV files)
+# *.csv
+# *.json
+# *.parquet
+# *.hdf5
+# *.h5
+
+# Dataset directories (uncomment if you don't want to track datasets)
+# datasets/
+
 # Other
 *.log 

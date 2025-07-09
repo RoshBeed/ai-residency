@@ -4,3 +4,7 @@ ffmpeg
 streamlit
 streamlit-audiorec
 matplotlib
+requests
+librosa
+seaborn
+numpy

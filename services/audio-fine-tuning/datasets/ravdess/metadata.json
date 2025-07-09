@@ -1,0 +1,18 @@
+{
+  "dataset": "RAVDESS",
+  "description": "Ryerson Audio-Visual Database of Emotional Speech and Song",
+  "emotions": [
+    "neutral",
+    "calm",
+    "happy",
+    "sad",
+    "angry",
+    "fearful",
+    "disgust",
+    "surprised"
+  ],
+  "total_files": 0,
+  "format": "wav",
+  "sample_rate": 16000,
+  "download_url": "https://zenodo.org/record/1188976"
+}

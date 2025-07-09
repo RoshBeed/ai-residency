@@ -1,0 +1,17 @@
+{
+  "dataset": "Sample Emotion Dataset",
+  "description": "Sample structure for emotion detection fine-tuning",
+  "emotions": [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "fearful",
+    "disgust",
+    "surprised"
+  ],
+  "total_files": 0,
+  "format": "wav",
+  "sample_rate": 16000,
+  "note": "This is a sample structure. Add your audio files to each emotion directory."
+}

@@ -1,0 +1,16 @@
+{
+  "dataset": "CREMA-D",
+  "description": "Organized CREMA-D dataset for emotion detection",
+  "emotions": [
+    "train",
+    "val"
+  ],
+  "total_files": 0,
+  "format": "wav",
+  "sample_rate": 16000,
+  "train_val_split": true,
+  "emotion_counts": {
+    "train": 0,
+    "val": 0
+  }
+}
