@@ -42,14 +42,31 @@ if 'finetuned_model' not in st.session_state:
 if 'finetune_history' not in st.session_state:
     st.session_state['finetune_history'] = []
 
+# Add output history for base and fine-tuned models
+if 'base_output_history' not in st.session_state:
+    st.session_state['base_output_history'] = []
+if 'ft_output_history' not in st.session_state:
+    st.session_state['ft_output_history'] = []
+
 st.markdown("### 1. Record your audio")
 with st.container():
-    audio_bytes = st_audiorec()
+    col_rec, col_send = st.columns([4, 1])
+    with col_rec:
+        audio_bytes = st_audiorec()
+    with col_send:
+        send_prev_btn = st.button("Send previous audio to models", key="send_prev_audio_btn")
     audio_path = None
 
     base_output = ""
     ft_output = ""
     mel = None
+
+    # Store last audio in session state for reuse
+    if audio_bytes:
+        st.session_state['last_audio_bytes'] = audio_bytes
+    # Use previous audio if button pressed
+    if send_prev_btn and 'last_audio_bytes' in st.session_state:
+        audio_bytes = st.session_state['last_audio_bytes']
 
     if audio_bytes:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -59,6 +76,8 @@ with st.container():
         base_model, base_device = load_whisper_model("tiny")
         base_tokenizer = get_tokenizer()
         base_output = decode_audio(base_model, base_device, audio_path)
+        # Append to base output history
+        st.session_state['base_output_history'].append(base_output)
 
         if st.session_state['finetuned_model'] is not None:
             ft_model = st.session_state['finetuned_model']
@@ -67,6 +86,8 @@ with st.container():
             ft_output = decode_audio(ft_model, ft_device, audio_path)
         else:
             ft_output = "(Fine-tuned model not available yet)"
+        # Append to fine-tuned output history
+        st.session_state['ft_output_history'].append(ft_output)
 
         mel = preprocess_audio(audio_path)
         st.audio(audio_bytes, format="audio/wav")
@@ -78,10 +99,32 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("#### 🤖 Base Model Output")
-    st.info(base_output if audio_bytes else "Record audio to see output.")
+    if audio_bytes:
+        for output in st.session_state['base_output_history']:
+            st.markdown(
+                f"""
+                <div style='background: #1a2a3a; color: #fff; border-radius: 8px; padding: 0.5em 1em; margin-bottom: 0.5em; font-size: 1.1em;'>
+                    {output}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        st.info("Record audio to see output.")
 with col2:
     st.markdown("#### 🛠️ Fine-tuned Model Output")
-    st.success(ft_output if audio_bytes else "Record audio to see output.")
+    if audio_bytes:
+        for output in st.session_state['ft_output_history']:
+            st.markdown(
+                f"""
+                <div style='background: #184a28; color: #fff; border-radius: 8px; padding: 0.5em 1em; margin-bottom: 0.5em; font-size: 1.1em;'>
+                    {output}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        st.success("Record audio to see output.")
     st.markdown("##### Fine-tune the Model")
     with st.form("finetune_form", clear_on_submit=False):
         correct_text = st.text_input(
