@@ -1,5 +1,5 @@
 [project]
-name = "ai-residency-week6-rlhf-ppo"
+name = "ai-residency-rlhf-ppo"
 version = "0.1.0"
 description = "From-scratch PPO implementation (generation, KL penalty, reward, advantage, policy/value updates) for RLHF fine-tuning of Qwen3-0.6B-Base, built with PyTorch + Hugging Face transformers/peft"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
     "accelerate>=0.25.0",
     "datasets>=2.14.0",
     "fastapi>=0.110.0",
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "numpy>=1.24.0",
     "peft>=0.7.0",
     "torch>=2.0.0",
@@ -39,6 +39,7 @@ dev = [
 package = false
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
@@ -51,74 +52,3 @@ pythonpath = ["."]
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
 testpaths = ["tests"]
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all six
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.per-file-ignores]
-# The walkthrough notebook narrates the pipeline in stages, so imports follow the
-# markdown cell that introduces them rather than all sitting at the top.
-"notebooks/*.ipynb" = ["E402"]
-
-# rosh.ipynb is kept verbatim as the exploratory notebook this package was refactored
-# out of, and the README's file tree documents it by name as exactly that. Its cells
-# were written and re-run out of order, so names defined in a later cell are used in
-# an earlier one and imports are repeated. Rewriting it to satisfy the linter would
-# make it a tidier document and a less truthful record, so the rules it breaks are
-# listed explicitly here rather than the file being excluded wholesale.
-"notebooks/rosh.ipynb" = [
-    "B007",
-    "B905",
-    "E501",
-    "F401",
-    "F811",
-    "F821",
-    "I001",
-    "RUF010",
-    "RUF015",
-    "SIM108",
-]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-# transformers and peft ship incomplete annotations. Following their imports leaks
-# `no-untyped-call` errors out of internals that cannot be fixed from here, so both
-# are skipped. This waives stubs for those libraries, not type checking of our own
-# code — there is no `type: ignore` anywhere in this repo.
-[[tool.mypy.overrides]]
-module = ["peft.*", "transformers.*"]
-follow_imports = "skip"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["datasets.*"]
-ignore_missing_imports = true

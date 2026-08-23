@@ -7,7 +7,6 @@ without first spending hours on the training stages.
 from pathlib import Path
 
 from ai_residency_common import get_logger, pull_checkpoint
-
 from config import Config
 
 __all__ = ["download_artifacts", "main"]

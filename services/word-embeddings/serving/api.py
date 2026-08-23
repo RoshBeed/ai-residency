@@ -13,10 +13,10 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger, load_checkpoint, resolve_required, run_app
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from ai_residency_common import get_logger, load_checkpoint, resolve_required, run_app
 from config import Config
 
 __all__ = ["app"]

@@ -1,5 +1,5 @@
 [project]
-name = "ai-residency-week2-vector-search-retrieval"
+name = "ai-residency-vector-search-retrieval"
 version = "0.1.0"
 description = "Two-tower dual-encoder document retrieval (CBOW word embeddings + GRU query/document towers trained with triplet loss on MS MARCO, served via Redis/RediSearch ANN)"
 readme = "README.md"
@@ -9,7 +9,7 @@ dependencies = [
     "datasets>=2.19.0",
     "fastapi",
     "huggingface_hub>=0.23.4",
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "numpy",
     "python-dotenv",
     "pyyaml>=6.0",
@@ -44,66 +44,10 @@ package = false
 pythonpath = ["."]
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all six
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.per-file-ignores]
-# The walkthrough notebook chdirs to the repo root before importing anything, because
-# `Config` reads `.env` and resolves its paths relative to cwd. Those imports genuinely
-# cannot come first.
-"notebooks/*.ipynb" = ["E402"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-# redis-py ships `py.typed` but leaves the low-level `execute_command` unannotated, and
-# RediSearch's `FT.SEARCH`/`FT.CREATE` are only reachable through it. This permits calling
-# that one library's unannotated functions; it is a decision about a dependency we do not
-# control, in the same category as `ignore_missing_imports` below, and does not relax
-# anything about this repo's own code.
-untyped_calls_exclude = ["redis"]
-
-# Third-party packages that ship no type stubs. These waive stubs for the library,
-# not type checking of our own code — no `type: ignore` is used anywhere in this repo.
-[[tool.mypy.overrides]]
-module = [
-    "datasets.*",
-    "dotenv.*",
-    "wandb.*",
-]
-ignore_missing_imports = true

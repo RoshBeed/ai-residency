@@ -1,12 +1,12 @@
 [project]
-name = "ai-residency-week3-vision-transformers"
+name = "ai-residency-vision-transformers"
 version = "0.1.0"
 description = "From-scratch Vision Transformer for MNIST digit classification (single-digit) and sequence-to-sequence multi-digit recognition, served via FastAPI"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "RoshBeed" }]
 dependencies = [
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "tqdm>=4.64.0",
@@ -42,6 +42,7 @@ package = false
 pythonpath = ["."]
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 torchvision = [{ index = "pytorch-cpu" }]
 
@@ -49,53 +50,3 @@ torchvision = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all six
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.per-file-ignores]
-# The walkthrough notebook chdirs to the repo root before importing anything whose
-# checkpoint and data paths resolve relative to cwd, so those imports genuinely
-# cannot come first.
-"notebooks/*.ipynb" = ["E402"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-# Third-party packages that ship no type stubs. These waive stubs for the library,
-# not type checking of our own code — no `type: ignore` is used anywhere in this repo.
-[[tool.mypy.overrides]]
-module = [
-    "matplotlib.*",
-    "torchvision.*",
-    "wandb.*",
-]
-ignore_missing_imports = true

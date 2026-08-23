@@ -5,9 +5,8 @@ before spending time on the stages that consume it.
 """
 
 from ai_residency_common import get_logger
-from datasets import load_dataset
-
 from data_prep.generate_triples import SPLITS
+from datasets import load_dataset
 
 __all__ = ["describe_dataset", "main"]
 

@@ -19,10 +19,10 @@ so there is no reason to force CPU here.
 
 import torch
 import whisper
-from ai_residency_common import get_device, get_logger
 from whisper.model import Whisper
 from whisper.tokenizer import Tokenizer
 
+from ai_residency_common import get_device, get_logger
 from config import Config
 
 __all__ = [

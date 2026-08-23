@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 from ai_residency_common import get_logger, set_seed
-
 from config import Config, DatasetSpec
 
 __all__ = [

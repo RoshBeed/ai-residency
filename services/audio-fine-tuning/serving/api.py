@@ -24,12 +24,12 @@ import tempfile
 from typing import Any
 
 import torch
-from ai_residency_common import decode_audio as decode_base64_audio
-from ai_residency_common import get_logger, run_app, stream_sse
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ai_residency_common import decode_audio as decode_base64_audio
+from ai_residency_common import get_logger, run_app, stream_sse
 from audio_fine_tuning.models import (
     decode_audio,
     get_tokenizer,

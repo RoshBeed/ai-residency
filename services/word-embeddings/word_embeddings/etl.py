@@ -25,12 +25,12 @@ from typing import Any
 import nltk
 import psycopg2
 import requests
-from ai_residency_common import get_logger, resolve_checkpoint
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from psycopg2.extras import RealDictCursor
 from tqdm import tqdm
 
+from ai_residency_common import get_logger, resolve_checkpoint
 from config import Config
 
 logger = get_logger(__name__)

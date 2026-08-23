@@ -16,8 +16,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from ai_residency_common import get_logger, load_checkpoint, resolve_required
 
+from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from config import Config
 from content_scoring.embeddings import load_cbow_embeddings, load_cbow_vocabulary
 from content_scoring.model import ScorePredictor

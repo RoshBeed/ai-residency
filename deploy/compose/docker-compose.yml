@@ -20,22 +20,22 @@
 services:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
   week1-word-embeddings:
-    image: roshbeed/ai-residency-week1-serve:latest
+    image: roshbeed/ai-residency-word-embeddings-serve:latest
     ports:
       - "8001:8000"
     volumes:
-      - ../ai-residency-week1-word-embeddings/checkpoints:/app/checkpoints
+      - ../../services/word-embeddings/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   # --- Week 1b: content-scoring — the regression head that consumes those vectors ---
   week1-content-scoring:
-    image: roshbeed/ai-residency-week1-content-scoring-serve:latest
+    image: roshbeed/ai-residency-content-scoring-serve:latest
     ports:
       - "8007:8000"
     volumes:
-      - ../ai-residency-week1-content-scoring/checkpoints:/app/checkpoints
+      - ../../services/content-scoring/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -50,7 +50,7 @@ services:
     # persistent redis container, which already owns host port 6390.
 
   week2:
-    image: roshbeed/ai-residency-week2-serve:latest
+    image: roshbeed/ai-residency-vector-search-retrieval-serve:latest
     depends_on:
       - week2-redis
     environment:
@@ -63,16 +63,16 @@ services:
       # Trained towers + CBOW vocab/embeddings, gitignored from the image -- mount
       # from the sibling repo at runtime. data/ holds tokenized_triples.json, needed
       # once to (re)populate this hub's own (fresh, empty) redis index.
-      - ../ai-residency-week2-vector-search-retrieval/checkpoints:/app/checkpoints
-      - ../ai-residency-week2-vector-search-retrieval/data:/app/data
+      - ../../services/vector-search-retrieval/checkpoints:/app/checkpoints
+      - ../../services/vector-search-retrieval/data:/app/data
     ports:
       - "8002:8000"
 
   # --- Week 3: FastAPI inference container (both classifier and seq2seq) ---
   week3:
-    image: roshbeed/ai-residency-week3-serve:latest
+    image: roshbeed/ai-residency-vision-transformers-serve:latest
     volumes:
-      - ../ai-residency-week3-vision-transformers/checkpoints:/app/checkpoints
+      - ../../services/vision-transformers/checkpoints:/app/checkpoints
     ports:
       - "8003:8000"
     environment:
@@ -80,11 +80,11 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   week4:
-    image: roshbeed/ai-residency-week4-serve:latest
+    image: roshbeed/ai-residency-multimodal-captioning-serve:latest
     volumes:
       # Week 4's adapter checkpoints are gitignored from the build context, so this
       # mount is what actually supplies them at run time.
-      - ../ai-residency-week4-multimodal-captioning/checkpoints:/app/checkpoints
+      - ../../services/multimodal-captioning/checkpoints:/app/checkpoints
     working_dir: /app
     ports:
       - "8004:8000"
@@ -93,9 +93,9 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   week5:
-    image: roshbeed/ai-residency-week5-serve:latest
+    image: roshbeed/ai-residency-audio-fine-tuning-serve:latest
     volumes:
-      - ../ai-residency-week5-audio-fine-tuning/checkpoints:/app/checkpoints
+      - ../../services/audio-fine-tuning/checkpoints:/app/checkpoints
     ports:
       - "8005:8000"
     environment:
@@ -103,9 +103,9 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   week6:
-    image: roshbeed/ai-residency-week6-serve:latest
+    image: roshbeed/ai-residency-rlhf-ppo-serve:latest
     volumes:
-      - ../ai-residency-week6-rlhf-ppo/checkpoints:/app/checkpoints
+      - ../../services/rlhf-ppo/checkpoints:/app/checkpoints
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
       - "8006:8000"
@@ -148,10 +148,10 @@ services:
 
   train-week1-word-embeddings:
     profiles: [train]
-    image: roshbeed/ai-residency-week1-train:latest
+    image: roshbeed/ai-residency-word-embeddings-train:latest
     volumes:
-      - ../ai-residency-week1-word-embeddings/checkpoints:/app/checkpoints
-      - ../ai-residency-week1-word-embeddings/data:/app/data
+      - ../../services/word-embeddings/checkpoints:/app/checkpoints
+      - ../../services/word-embeddings/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -159,9 +159,9 @@ services:
 
   train-week1-content-scoring:
     profiles: [train]
-    image: roshbeed/ai-residency-week1-content-scoring-train:latest
+    image: roshbeed/ai-residency-content-scoring-train:latest
     volumes:
-      - ../ai-residency-week1-content-scoring/checkpoints:/app/checkpoints
+      - ../../services/content-scoring/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -169,13 +169,13 @@ services:
 
   train-week2:
     profiles: [train]
-    image: roshbeed/ai-residency-week2-train:latest
+    image: roshbeed/ai-residency-vector-search-retrieval-train:latest
     command: ["uv", "run", "python", "-m", "training"]
     depends_on:
       - week2-redis
     volumes:
-      - ../ai-residency-week2-vector-search-retrieval/checkpoints:/app/checkpoints
-      - ../ai-residency-week2-vector-search-retrieval/data:/app/data
+      - ../../services/vector-search-retrieval/checkpoints:/app/checkpoints
+      - ../../services/vector-search-retrieval/data:/app/data
     environment:
       REDIS_HOST: week2-redis
       REDIS_PORT: 6379
@@ -186,13 +186,13 @@ services:
 
   train-week3:
     profiles: [train]
-    image: roshbeed/ai-residency-week3-train:latest
+    image: roshbeed/ai-residency-vision-transformers-train:latest
     # Dockerfile.train's own default is the classifier; pass
     # `command: ["uv", "run", "python", "-m", "models.seq2seq.trainer"]`
     # for the seq2seq trainer.
     volumes:
-      - ../ai-residency-week3-vision-transformers/checkpoints:/app/checkpoints
-      - ../ai-residency-week3-vision-transformers/data:/app/data
+      - ../../services/vision-transformers/checkpoints:/app/checkpoints
+      - ../../services/vision-transformers/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -203,9 +203,9 @@ services:
 
   train-week4:
     profiles: [train]
-    image: roshbeed/ai-residency-week4-train:latest
+    image: roshbeed/ai-residency-multimodal-captioning-train:latest
     volumes:
-      - ../ai-residency-week4-multimodal-captioning/checkpoints:/app/checkpoints
+      - ../../services/multimodal-captioning/checkpoints:/app/checkpoints
     working_dir: /app
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -216,10 +216,10 @@ services:
 
   train-week5:
     profiles: [train]
-    image: roshbeed/ai-residency-week5-train:latest
+    image: roshbeed/ai-residency-audio-fine-tuning-train:latest
     volumes:
-      - ../ai-residency-week5-audio-fine-tuning/checkpoints:/app/checkpoints
-      - ../ai-residency-week5-audio-fine-tuning/data:/app/data
+      - ../../services/audio-fine-tuning/checkpoints:/app/checkpoints
+      - ../../services/audio-fine-tuning/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -227,10 +227,10 @@ services:
 
   train-week6:
     profiles: [train]
-    image: roshbeed/ai-residency-week6-train:latest
+    image: roshbeed/ai-residency-rlhf-ppo-train:latest
     # One PPO step -- this repo has no epoch loop, by design.
     volumes:
-      - ../ai-residency-week6-rlhf-ppo/checkpoints:/app/checkpoints
+      - ../../services/rlhf-ppo/checkpoints:/app/checkpoints
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     environment:
       HF_HOME: /root/.cache/huggingface

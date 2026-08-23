@@ -14,7 +14,6 @@ import csv
 from pathlib import Path
 
 from ai_residency_common import get_logger
-
 from config import Config
 
 __all__ = ["create_manifest", "create_manifests", "main"]

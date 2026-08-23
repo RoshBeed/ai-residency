@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+#
+# Shared base for every image in the workspace: python, uv, and a venv with the
+# CPU-only torch wheel already in it. Published as roshbeed/ai-residency-base.
+#
+# It used to also install ai-residency-common from a private git URL, which meant
+# every build needed a GitHub token mounted as a BuildKit secret and a credential
+# file written and scrubbed inside a single RUN. The library is a workspace member
+# now, so it arrives with the source and none of that is needed: no token, no git
+# in the image, no secret to leak.
+#
+# Build: docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+RUN uv venv .venv
+
+# The CPU wheel, explicitly and first. Left to resolve on its own, torch pulls the
+# default CUDA build -- ~10 nvidia-*/cuda-* packages and a 5-10x larger image, on a
+# node with no GPU. Installing it here means every downstream `uv sync` sees the
+# requirement as already satisfied.
+RUN uv pip install --python .venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cpu torch
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv

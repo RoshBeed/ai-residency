@@ -16,6 +16,9 @@ from dataclasses import asdict
 
 import matplotlib
 import torch
+from torch import nn, optim
+from torch.utils.data import DataLoader
+
 from ai_residency_common import (
     finish_tracking,
     get_device,
@@ -26,9 +29,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn, optim
-from torch.utils.data import DataLoader
-
 from config import Config
 from datasets.mnist_dataset import Example, MNISTDataset
 from models.classifier.classifier import VisionTransformer

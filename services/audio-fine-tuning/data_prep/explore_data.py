@@ -22,8 +22,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from ai_residency_common import get_logger
 
+from ai_residency_common import get_logger
 from config import Config, DatasetSpec
 
 # macOS's default backend is interactive and blocks on show() when these run as a

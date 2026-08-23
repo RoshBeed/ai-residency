@@ -11,8 +11,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from ai_residency_common import get_logger
 from torch.utils.data import Dataset
+
+from ai_residency_common import get_logger
 
 __all__ = ["TitleScoreDataset", "create_title_embeddings"]
 

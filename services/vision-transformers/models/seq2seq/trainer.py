@@ -18,6 +18,10 @@ from dataclasses import asdict
 
 import torch
 import torch.nn.functional as F
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from ai_residency_common import (
     finish_tracking,
     get_device,
@@ -28,10 +32,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn, optim
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from config import Config
 from datasets.multi_digit_dataset import Example, MultiDigitMNISTDataset
 from models.seq2seq.seq2seq import Seq2SeqVisionTransformer

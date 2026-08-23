@@ -14,9 +14,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
+
+from ai_residency_common import get_logger
 
 __all__ = ["Example", "MultiDigitDataset", "MultiDigitMNISTDataset"]
 

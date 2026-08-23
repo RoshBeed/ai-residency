@@ -1,5 +1,5 @@
 [project]
-name = "ai-residency-week1-content-scoring"
+name = "ai-residency-content-scoring"
 version = "0.1.0"
 description = "A regression head over frozen CBOW embeddings, predicting an engagement score from a title, served through FastAPI"
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 authors = [{ name = "RoshBeed" }]
 dependencies = [
     "torch>=2.9.0",
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "numpy>=2.3.0",
     "fastapi>=0.120.0",
     "uvicorn>=0.38.0",
@@ -37,49 +37,10 @@ package = false
 pythonpath = ["."]
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-[[tool.mypy.overrides]]
-module = [
-    "wandb.*",
-]
-ignore_missing_imports = true

@@ -1,0 +1,140 @@
+# Workspace root. Deliberately not a project of its own -- nothing is built from
+# here; it exists to hold the member list, one lockfile, and the lint/type
+# configuration that every member shares.
+#
+# Before consolidation each of these was its own repo, and the block below was
+# copy-pasted into nine pyproject.toml files with a comment asking future readers
+# to keep them in sync by hand. One copy cannot drift.
+
+[tool.uv.workspace]
+members = ["libs/*", "services/*"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "types-PyYAML",
+    "types-tqdm",
+]
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+# Each member is its own import root: `config`, `serving` and the topic package are
+# first-party *within a service*, not third-party just because the repository root
+# moved up a level. Without this, isort reclassifies every intra-service import.
+src = [
+    "libs/common/src",
+    "services/_template",
+    "services/audio-fine-tuning",
+    "services/content-scoring",
+    "services/frontend",
+    "services/multimodal-captioning",
+    "services/rlhf-ppo",
+    "services/vector-search-retrieval",
+    "services/vision-transformers",
+    "services/word-embeddings",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import sorting (replaces isort)
+    "N",   # pep8-naming — enforces the naming spec
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects
+# to it everywhere, so it is waived once rather than per file.
+ignore = ["N812"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# These two modules *are* unicode-to-ASCII replacement tables. RUF001/RUF003 read
+# the lookalike characters they exist to map as mistakes.
+"services/word-embeddings/word_embeddings/etl.py" = ["RUF001", "RUF003"]
+"services/word-embeddings/tests/test_week1.py" = ["RUF001"]
+
+# Walkthrough notebooks introduce imports beside the markdown cell that explains
+# them, rather than all at the top. Their printed output is prose, so it uses real
+# typographic characters (en dash, multiplication sign) that RUF001 reads as typos.
+"services/frontend/notebooks/**/*.ipynb" = ["E402", "I001", "RUF001"]
+
+# The frontend is one Streamlit page per service, and most of its length is display
+# content rather than logic: an inline SVG logo, the copy shown on each page, and
+# dimension labels written properly as "28 x 28" with a multiplication sign. Wrapping
+# a sentence to satisfy a line-length rule, or spelling the character wrong to satisfy
+# RUF001, would damage what the reader sees. Every code-level finding here was fixed.
+"services/frontend/app.py" = ["E501", "RUF001"]
+
+# The original exploratory notebook the rlhf-ppo package was refactored out of.
+# Kept as a historical record, not held to the package's standard.
+"services/frontend/notebooks/week6-rlhf-ppo/rosh.ipynb" = [
+    "B007", "B905", "E501", "F401", "F811", "F821",
+    "I001", "RUF010", "RUF015", "SIM108",
+]
+
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+
+# redis-py ships `py.typed` but leaves the low-level `execute_command` unannotated,
+# and RediSearch's FT.SEARCH/FT.CREATE are only reachable through it. This permits
+# calling that one library's unannotated functions -- a decision about a dependency
+# we do not control, and it relaxes nothing about our own code.
+untyped_calls_exclude = ["redis"]
+
+# Third-party packages that ship no type stubs. These waive stubs for the library,
+# not type checking of our own code -- there is no `type: ignore` anywhere in this
+# repo, and no blanket `noqa`.
+[[tool.mypy.overrides]]
+module = [
+    "datasets.*",
+    "dotenv.*",
+    "librosa.*",
+    "matplotlib.*",
+    "nltk.*",
+    "peft.*",
+    "psycopg2.*",
+    "scipy.*",
+    "seaborn.*",
+    "sklearn.*",
+    "streamlit_drawable_canvas.*",
+    "torchvision.*",
+    "transformers.*",
+    "uvicorn.*",
+    "wandb.*",
+    "whisper.*",
+]
+ignore_missing_imports = true
+
+# transformers and peft ship partial annotations that leak `no-untyped-call` out of
+# PreTrainedModel internals under strict mode. Skipping the import body confines
+# that to the library instead of suppressing anything of ours.
+[[tool.mypy.overrides]]
+module = ["peft.*", "transformers.*"]
+follow_imports = "skip"
+
+# ...which in turn makes PreTrainedModel an `Any` base class, so the one module
+# that subclasses it needs this.
+[[tool.mypy.overrides]]
+module = ["word_embeddings.model"]
+disallow_subclassing_any = false

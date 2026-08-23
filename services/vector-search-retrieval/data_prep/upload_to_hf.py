@@ -11,7 +11,6 @@ and uploads only the artifacts — the code is already in git.
 """
 
 from ai_residency_common import get_logger, push_checkpoint
-
 from cbow.vocabulary import CANONICAL_CBOW_CHECKPOINT, latest_cbow_checkpoint
 from config import Config
 

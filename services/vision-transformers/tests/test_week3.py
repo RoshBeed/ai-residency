@@ -230,9 +230,9 @@ def test_served_predictions_match_in_process_predictions() -> None:
     import io
 
     import numpy as np
-    from ai_residency_common import load_checkpoint
     from PIL import Image
 
+    from ai_residency_common import load_checkpoint
     from datasets.mnist_dataset import MNISTDataset
 
     mnist = MNISTDataset(data_dir=config.data_dir, image_size=28, batch_size=16, num_workers=0)

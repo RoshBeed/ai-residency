@@ -1,0 +1,21 @@
+.git
+.venv
+**/.venv
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+
+# Trained artifacts and datasets are resolved from the Hugging Face Hub at run
+# time, never baked into an image.
+services/*/checkpoints
+services/*/data
+services/*/datasets
+**/wandb
+
+# Figures and notebooks are for GitHub. The frontend is the exception: it renders
+# its own assets, and its Dockerfile lives in that service.
+services/frontend/notebooks
+**/*.ipynb
+
+.env

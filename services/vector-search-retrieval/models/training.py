@@ -25,6 +25,8 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
+from torch import nn
+
 from ai_residency_common import (
     finish_tracking,
     get_logger,
@@ -35,8 +37,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn
-
 from cbow.vocabulary import build_embedding_layer
 from config import Config
 from data_prep.tokenize_triples import Triple

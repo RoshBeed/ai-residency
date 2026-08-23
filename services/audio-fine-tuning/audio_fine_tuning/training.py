@@ -22,6 +22,10 @@ construction, and reporting it against its own starting point says so plainly.
 from collections.abc import Callable
 
 import torch
+from torch import nn
+from whisper.model import Whisper
+from whisper.tokenizer import Tokenizer
+
 from ai_residency_common import (
     finish_tracking,
     get_logger,
@@ -31,10 +35,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn
-from whisper.model import Whisper
-from whisper.tokenizer import Tokenizer
-
 from audio_fine_tuning.models import (
     forward,
     get_tokenizer,

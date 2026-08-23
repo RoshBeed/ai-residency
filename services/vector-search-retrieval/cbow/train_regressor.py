@@ -17,8 +17,8 @@ one fabricated score, fitted a hundred times. It shows the mechanism, not a resu
 
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger, set_seed
 
+from ai_residency_common import get_logger, set_seed
 from cbow.model import Regressor
 from cbow.vocabulary import build_embedding_layer
 from config import Config

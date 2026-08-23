@@ -8,7 +8,6 @@ now, on first use, because a repo is for code.
 from pathlib import Path
 
 from ai_residency_common import get_logger, resolve_checkpoint
-
 from config import Config
 
 __all__ = ["available_samples", "sample_image"]

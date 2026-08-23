@@ -20,10 +20,14 @@ import json
 import math
 import os
 from collections.abc import Generator
+from itertools import pairwise
+from typing import Any
 
+import numpy as np
 import requests
 import streamlit as st
 from PIL import Image, ImageDraw
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(page_title="ML Systems Portfolio", page_icon="🧩", layout="wide")
@@ -86,18 +90,20 @@ TAG_URLS: dict[str, str] = {
     "Reward Modelling": "https://en.wikipedia.org/wiki/Reinforcement_learning_from_human_feedback#Reward_model",
 }
 
+
 def tag_link(t: str) -> str:
     url = TAG_URLS.get(t)
     if url:
         return f'<a href="{url}" target="_blank" class="tag-chip tag-link">{t}</a>'
     return f'<span class="tag-chip">{t}</span>'
 
+
 # ---------------------------------------------------------------------------
 # Project metadata used for the home-page card grid and the tech-depth sidebar
 # on each project's demo page.  Real numbers pulled from actual training logs,
 # W&B runs, and each project's own README -- nothing invented.
 # ---------------------------------------------------------------------------
-PROJECTS: dict[str, dict] = {
+PROJECTS: dict[str, dict[str, Any]] = {
     "week1-word-embeddings": {
         "icon": "🧬",
         "title": "Word Embeddings",
@@ -109,7 +115,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["NLP", "Embeddings", "Representation Learning", "CBOW"],
         "papers": [
-            ("Mikolov et al.", "Efficient Estimation of Word Representations in Vector Space", "https://arxiv.org/abs/1301.3781"),
+            (
+                "Mikolov et al.",
+                "Efficient Estimation of Word Representations in Vector Space",
+                "https://arxiv.org/abs/1301.3781",
+            ),
         ],
         "datasets": [("text8", "https://huggingface.co/datasets/ardMLX/text8"), ("HN Posts", "#")],
         "model_links": [],
@@ -137,12 +147,16 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/word-embeddings.md",
         "diagrams": [
-            ("assets/word-embeddings/fig9-cbow-forward-pass.png",
-             "Annotated CBOW forward pass — context word embeddings are averaged, then "
-             "scored against every word in the vocabulary to produce a probability distribution."),
-            ("assets/word-embeddings/fig3-late-early-fusion.png",
-             "Late fusion vs early fusion — late fusion averages word embeddings first, then "
-             "feeds them to a downstream head. This portfolio uses late fusion."),
+            (
+                "assets/word-embeddings/fig9-cbow-forward-pass.png",
+                "Annotated CBOW forward pass — context word embeddings are averaged, then "
+                "scored against every word in the vocabulary to produce a probability distribution.",
+            ),
+            (
+                "assets/word-embeddings/fig3-late-early-fusion.png",
+                "Late fusion vs early fusion — late fusion averages word embeddings first, then "
+                "feeds them to a downstream head. This portfolio uses late fusion.",
+            ),
         ],
         "model_specs": [
             "**CBOW** — vocab × 128 embedding matrices (in + out), context window 4, "
@@ -159,7 +173,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["NLP", "Embeddings", "Regression", "Transfer Learning"],
         "papers": [
-            ("Mikolov et al.", "Efficient Estimation of Word Representations in Vector Space", "https://arxiv.org/abs/1301.3781"),
+            (
+                "Mikolov et al.",
+                "Efficient Estimation of Word Representations in Vector Space",
+                "https://arxiv.org/abs/1301.3781",
+            ),
         ],
         "datasets": [("HN Posts", "#")],
         "model_links": [],
@@ -186,9 +204,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/content-scoring.md",
         "diagrams": [
-            ("assets/word-embeddings/fig3-late-early-fusion.png",
-             "Late fusion vs early fusion — this project uses late fusion: average the word "
-             "vectors, then feed one vector to the regression head."),
+            (
+                "assets/word-embeddings/fig3-late-early-fusion.png",
+                "Late fusion vs early fusion — this project uses late fusion: average the word "
+                "vectors, then feed one vector to the regression head.",
+            ),
         ],
         "model_specs": [
             "**Scorer** — 128 → 128 → 64 → 1 MLP with ReLU and dropout 0.2. "
@@ -206,7 +226,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["RAG", "Semantic Search", "Vector Search", "Dual Encoder", "HNSW"],
         "papers": [
-            ("Bromley et al.", "Signature Verification using a Siamese Time Delay Neural Network", "https://proceedings.neurips.cc/paper/1993/hash/288cc0ff022877bd3df94bc9360b9c5d-Abstract.html"),
+            (
+                "Bromley et al.",
+                "Signature Verification using a Siamese Time Delay Neural Network",
+                "https://proceedings.neurips.cc/paper/1993/hash/288cc0ff022877bd3df94bc9360b9c5d-Abstract.html",
+            ),
         ],
         "datasets": [("MS MARCO", "https://huggingface.co/datasets/microsoft/ms_marco")],
         "model_links": [],
@@ -240,12 +264,16 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/dual-encoder-retrieval.md",
         "diagrams": [
-            ("assets/dual-encoder-retrieval/fig6-offline-online-stages.png",
-             "Offline pipeline (train towers, embed corpus, index in Redis) and online query "
-             "flow (encode query → ANN search → ranked results)."),
-            ("assets/dual-encoder-retrieval/fig5-triplet-loss.png",
-             "Triplet loss — pulls the query and relevant document embeddings together while "
-             "pushing the irrelevant one apart, with a margin to prevent trivial solutions."),
+            (
+                "assets/dual-encoder-retrieval/fig6-offline-online-stages.png",
+                "Offline pipeline (train towers, embed corpus, index in Redis) and online query "
+                "flow (encode query → ANN search → ranked results).",
+            ),
+            (
+                "assets/dual-encoder-retrieval/fig5-triplet-loss.png",
+                "Triplet loss — pulls the query and relevant document embeddings together while "
+                "pushing the irrelevant one apart, with a margin to prevent trivial solutions.",
+            ),
         ],
         "model_specs": [
             "**GRU towers** — single-layer GRU, hidden size 128, embedding dim 128. "
@@ -263,7 +291,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["Computer Vision", "Vision Transformer", "Self-Attention", "Seq2Seq"],
         "papers": [
-            ("Dosovitskiy et al.", "An Image is Worth 16x16 Words", "https://arxiv.org/abs/2010.11929"),
+            (
+                "Dosovitskiy et al.",
+                "An Image is Worth 16x16 Words",
+                "https://arxiv.org/abs/2010.11929",
+            ),
             ("Vaswani et al.", "Attention Is All You Need", "https://arxiv.org/abs/1706.03762"),
         ],
         "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
@@ -298,13 +330,17 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/vision-transformer.md",
         "diagrams": [
-            ("assets/vision-transformer/task_overview.png",
-             "Two tasks sharing one encoder — a ViT classifier for single-digit recognition and "
-             "an encoder-decoder model that reads composited multi-digit images and generates "
-             "the number autoregressively."),
-            ("assets/vision-transformer/seq2seq_slide_architecture.png",
-             "Encoder-decoder with cross-attention — the decoder attends to encoder output at "
-             "each generation step, producing digits token by token until EOS."),
+            (
+                "assets/vision-transformer/task_overview.png",
+                "Two tasks sharing one encoder — a ViT classifier for single-digit recognition and "
+                "an encoder-decoder model that reads composited multi-digit images and generates "
+                "the number autoregressively.",
+            ),
+            (
+                "assets/vision-transformer/seq2seq_slide_architecture.png",
+                "Encoder-decoder with cross-attention — the decoder attends to encoder output at "
+                "each generation step, producing digits token by token until EOS.",
+            ),
         ],
         "model_specs": [
             "**Classifier** — 6 encoder layers, d_model=128, 8 heads, FF hidden=512, 4×4 patches. ~1.7M parameters.",
@@ -324,7 +360,11 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["Multimodal", "Vision-Language", "CLIP", "Adapter Fine-tuning"],
         "papers": [
-            ("Radford et al.", "Learning Transferable Visual Models From Natural Language Supervision", "https://arxiv.org/abs/2103.00020"),
+            (
+                "Radford et al.",
+                "Learning Transferable Visual Models From Natural Language Supervision",
+                "https://arxiv.org/abs/2103.00020",
+            ),
         ],
         "datasets": [("Flickr8k", "https://huggingface.co/datasets/nlphuji/flickr8k")],
         "model_links": [
@@ -361,14 +401,18 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/image-captioning.md",
         "diagrams": [
-            ("assets/image-captioning/fig3-paligemma-architecture.png",
-             "The PaliGemma architecture — SigLIP vision encoder → linear projection → "
-             "Gemma decoder. The canonical reference pattern: a frozen vision backbone "
-             "feeds a frozen language model through a learned projection layer."),
-            ("assets/image-captioning/fig1-clip-contrastive-pretraining.png",
-             "CLIP contrastive pretraining — image and text encoders are trained jointly to "
-             "maximise cosine similarity between matched pairs while minimising it for "
-             "unmatched ones."),
+            (
+                "assets/image-captioning/fig3-paligemma-architecture.png",
+                "The PaliGemma architecture — SigLIP vision encoder → linear projection → "
+                "Gemma decoder. The canonical reference pattern: a frozen vision backbone "
+                "feeds a frozen language model through a learned projection layer.",
+            ),
+            (
+                "assets/image-captioning/fig1-clip-contrastive-pretraining.png",
+                "CLIP contrastive pretraining — image and text encoders are trained jointly to "
+                "maximise cosine similarity between matched pairs while minimising it for "
+                "unmatched ones.",
+            ),
         ],
         "model_specs": [
             "**CLIP ViT-B/32** (frozen) — 512-dim image embeddings, 12 layers, 12 heads.",
@@ -389,9 +433,16 @@ PROJECTS: dict[str, dict] = {
         ),
         "techniques": ["ASR", "Speech Recognition", "Fine-tuning", "Transfer Learning"],
         "papers": [
-            ("Radford et al.", "Robust Speech Recognition via Large-Scale Weak Supervision", "https://arxiv.org/abs/2212.04356"),
+            (
+                "Radford et al.",
+                "Robust Speech Recognition via Large-Scale Weak Supervision",
+                "https://arxiv.org/abs/2212.04356",
+            ),
         ],
-        "datasets": [("EmoDB", "http://emodb.bilderbar.info/"), ("CREMA-D", "https://github.com/CheyneyComputerScience/CREMA-D")],
+        "datasets": [
+            ("EmoDB", "http://emodb.bilderbar.info/"),
+            ("CREMA-D", "https://github.com/CheyneyComputerScience/CREMA-D"),
+        ],
         "model_links": [
             ("Whisper‑tiny", "https://huggingface.co/openai/whisper-tiny"),
         ],
@@ -425,13 +476,17 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/whisper-finetuning.md",
         "diagrams": [
-            ("assets/whisper-finetuning/fig2-whisper-architecture.png",
-             "Whisper encoder-decoder architecture — log-mel spectrogram input, encoder "
-             "blocks, cross-attention decoder producing text tokens."),
-            ("assets/whisper-finetuning/fig3-multitask-format.png",
-             "Whisper's multitask training format — a single model handles transcription, "
-             "translation, language identification, and voice activity detection through "
-             "special tokens prepended to the decoder input."),
+            (
+                "assets/whisper-finetuning/fig2-whisper-architecture.png",
+                "Whisper encoder-decoder architecture — log-mel spectrogram input, encoder "
+                "blocks, cross-attention decoder producing text tokens.",
+            ),
+            (
+                "assets/whisper-finetuning/fig3-multitask-format.png",
+                "Whisper's multitask training format — a single model handles transcription, "
+                "translation, language identification, and voice activity detection through "
+                "special tokens prepended to the decoder input.",
+            ),
         ],
         "model_specs": [
             "**Whisper-tiny** — 4 encoder + 4 decoder layers, d_model=384, 6 attention heads, "
@@ -493,13 +548,17 @@ PROJECTS: dict[str, dict] = {
         ),
         "docs_path": "docs/rlhf-ppo.md",
         "diagrams": [
-            ("assets/rlhf-ppo/fig1-rlhf-three-stage.png",
-             "The RLHF pipeline — human feedback → reward model training → PPO policy "
-             "optimisation with four models active per step (policy, reference, reward, value)."),
-            ("assets/rlhf-ppo/ppo-workflow.png",
-             "PPO workflow — sampling from the environment → GAE advantage estimation → "
-             "loss computation → policy gradient update. The iterative loop that trains the "
-             "policy model through exploration and exploitation."),
+            (
+                "assets/rlhf-ppo/fig1-rlhf-three-stage.png",
+                "The RLHF pipeline — human feedback → reward model training → PPO policy "
+                "optimisation with four models active per step (policy, reference, reward, value).",
+            ),
+            (
+                "assets/rlhf-ppo/ppo-workflow.png",
+                "PPO workflow — sampling from the environment → GAE advantage estimation → "
+                "loss computation → policy gradient update. The iterative loop that trains the "
+                "policy model through exploration and exploitation.",
+            ),
         ],
         "model_specs": [
             "**SmolLM2-135M** (LoRA-wrapped) — 30 layers, d_model=576, 9 heads, FFN hidden 2304. ~135M base parameters.",
@@ -744,7 +803,7 @@ def render_stats(items: list[tuple[str, str]]) -> str:
     return f'<div class="stat-row">{tiles}</div>'
 
 
-def render_word_trace(word_trace: list[dict]) -> str:
+def render_word_trace(word_trace: list[dict[str, Any]]) -> str:
     """Known/unknown vocabulary chips -- a status pair, always icon + label."""
     chips = []
     for w in word_trace:
@@ -769,7 +828,7 @@ def render_probability_bars(probs: dict[str, float], predicted: str | None) -> s
     return f'<div class="prob-chart">{"".join(rows)}</div>'
 
 
-def render_token_heatmap(tokens: list[dict]) -> str:
+def render_token_heatmap(tokens: list[dict[str, Any]]) -> str:
     """Each token shaded by its own sampling/greedy probability -- one hue, magnitude only."""
     spans = []
     for t in tokens:
@@ -784,7 +843,7 @@ def render_token_heatmap(tokens: list[dict]) -> str:
     return f'<div class="token-row">{"".join(spans)}</div>'
 
 
-def render_digit_trace(digit_trace: list[dict]) -> str:
+def render_digit_trace(digit_trace: list[dict[str, Any]]) -> str:
     chips = []
     for d in digit_trace:
         conf = float(d["confidence"])
@@ -890,10 +949,12 @@ def render_loss_curve(points: list[tuple[int, float]]) -> str:
     )
 
 
-def draw_patch_grid(image_bytes: bytes, img_size: int, patch_size: int, upscale: int = 6) -> Image.Image:
+def draw_patch_grid(
+    image_bytes: bytes, img_size: int, patch_size: int, upscale: int = 6
+) -> Image.Image:
     """Resize to the model's real input resolution, then overlay its real patch grid."""
     base = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((img_size, img_size))
-    overlay = base.resize((img_size * upscale, img_size * upscale), Image.NEAREST)
+    overlay = base.resize((img_size * upscale, img_size * upscale), Image.Resampling.NEAREST)
     draw = ImageDraw.Draw(overlay, "RGBA")
     step = patch_size * upscale
     w, h = overlay.size
@@ -905,7 +966,9 @@ def draw_patch_grid(image_bytes: bytes, img_size: int, patch_size: int, upscale:
     return overlay
 
 
-def stream_sse(url: str, json_body: dict, timeout: int) -> Generator[dict, None, None]:
+def stream_sse(
+    url: str, json_body: dict[str, Any], timeout: int
+) -> Generator[dict[str, Any], None, None]:
     """POST to an SSE endpoint and yield each event as a parsed dict.
 
     A thin wrapper over `requests`' own streaming support -- no extra dependency.
@@ -937,7 +1000,7 @@ def bytes_to_b64(data: bytes) -> str:
     return base64.b64encode(data).decode("utf-8")
 
 
-def image_to_b64(uploaded_file) -> str:
+def image_to_b64(uploaded_file: UploadedFile) -> str:
     return bytes_to_b64(uploaded_file.getvalue())
 
 
@@ -946,7 +1009,7 @@ def image_file_to_b64(path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def canvas_to_png_bytes(image_data) -> bytes:
+def canvas_to_png_bytes(image_data: np.ndarray) -> bytes:
     """Convert the drawable canvas's RGBA pixel array into grayscale PNG bytes."""
     image = Image.fromarray(image_data.astype("uint8"), "RGBA").convert("L")
     buffer = io.BytesIO()
@@ -976,7 +1039,7 @@ def render_week_details(week: str) -> None:
                     f'<div style="height:400px;display:flex;align-items:center;justify-content:center;padding:16px;background:#fff;border-radius:4px;">'
                     f'<img src="data:image/png;base64,{b64}" '
                     f'style="max-width:100%;max-height:400px;object-fit:contain;">'
-                    f'</div>',
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
                 st.caption(diagrams[0][1])
@@ -986,7 +1049,7 @@ def render_week_details(week: str) -> None:
                     f'<div style="height:400px;display:flex;align-items:center;justify-content:center;padding:16px;background:#fff;border-radius:4px;">'
                     f'<img src="data:image/png;base64,{b64}" '
                     f'style="max-width:100%;max-height:400px;object-fit:contain;">'
-                    f'</div>',
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
                 st.caption(diagrams[1][1])
@@ -1002,7 +1065,7 @@ def render_week_details(week: str) -> None:
 
     if project.get("stats"):
         cols = st.columns(len(project["stats"]))
-        for col, (label, value) in zip(cols, project["stats"]):
+        for col, (label, value) in zip(cols, project["stats"], strict=True):
             with col:
                 st.metric(label, value)
 
@@ -1024,7 +1087,9 @@ def render_week_details(week: str) -> None:
         unsafe_allow_html=True,
     )
 
-    docs_link = f"https://github.com/RoshBeed/ai-residency-frontend/blob/main/{project['docs_path']}"
+    docs_link = (
+        f"https://github.com/RoshBeed/ai-residency-frontend/blob/main/{project['docs_path']}"
+    )
     st.caption(
         f"[Full technical write-up →]({docs_link}) "
         "(architecture diagrams, method walkthrough, experimental results, references)"
@@ -1069,7 +1134,7 @@ def render_home_page() -> None:
                     f'<div class="card-header">'
                     f'<span class="card-icon">{p["icon"]}</span>'
                     f'<span class="card-title">{p["title"]}</span>'
-                    f'</div>'
+                    f"</div>"
                     f'<div class="card-desc">{p["description"]}</div>'
                     f'<div class="tag-row">{tags_html}{model_html}{data_html}{paper_html}</div>'
                     f"</div>",
@@ -1096,9 +1161,11 @@ if "page" in st.query_params and st.query_params["page"] != st.session_state.get
 if "page" not in st.session_state:
     st.session_state.page = "home"
 
+
 def navigate(page: str) -> None:
     st.session_state.page = page
     st.query_params["page"] = page
+
 
 _PAGE = st.session_state.page
 
@@ -1168,8 +1235,7 @@ if _PAGE == "week1-word-embeddings":
             )
             for rank, (neighbour, similarity) in enumerate(data["nearest"], start=1):
                 st.markdown(
-                    f"**{rank}.** `{neighbour}` "
-                    f'<span class="dim">(cosine {similarity:.3f})</span>',
+                    f'**{rank}.** `{neighbour}` <span class="dim">(cosine {similarity:.3f})</span>',
                     unsafe_allow_html=True,
                 )
         except requests.exceptions.RequestException as e:
@@ -1186,7 +1252,9 @@ if _PAGE == "week1-word-embeddings":
         c = st.text_input("c", value="woman")
     if st.button("Solve analogy", type="primary") and a and b and c:
         try:
-            r = requests.post(f"{API_URLS[_PAGE]}/analogy", json={"a": a, "b": b, "c": c}, timeout=15)
+            r = requests.post(
+                f"{API_URLS[_PAGE]}/analogy", json={"a": a, "b": b, "c": c}, timeout=15
+            )
             r.raise_for_status()
             data = r.json()
             for neighbour, similarity in data["nearest"]:
@@ -1202,7 +1270,10 @@ if _PAGE == "week1-word-embeddings":
 # Content Scoring (regression head over frozen embeddings)
 # ---------------------------------------------------------------------------
 elif _PAGE == "week1-content-scoring":
-    title = st.text_input("Hacker News post title", value="Show HN: I built a CLI tool that writes your commit messages")
+    title = st.text_input(
+        "Hacker News post title",
+        value="Show HN: I built a CLI tool that writes your commit messages",
+    )
     if st.button("Predict score", type="primary") and title:
         st.caption("Live -- each stage below arrives the moment it completes:")
         tracker = st.empty()
@@ -1220,12 +1291,9 @@ elif _PAGE == "week1-content-scoring":
                     known_c = sum(1 for w in word_trace if w["known"])
                     total_c = len(word_trace)
                     done_lines.append(
-                        f'<span class="done">✓</span> Word lookup: '
-                        f'{known_c}/{total_c} recognised'
+                        f'<span class="done">✓</span> Word lookup: {known_c}/{total_c} recognised'
                     )
-                    done_lines.append(
-                        f'<span class="active">⟳</span> Building embedding vector…'
-                    )
+                    done_lines.append('<span class="active">⟳</span> Building embedding vector…')
                     tracker.markdown(
                         f'<div class="tracker">{"<br>".join(done_lines)}</div>',
                         unsafe_allow_html=True,
@@ -1236,9 +1304,7 @@ elif _PAGE == "week1-content-scoring":
                     done_lines[-1] = (
                         f'<span class="done">✓</span> Embedding built (norm = {norm:.3f})'
                     )
-                    done_lines.append(
-                        f'<span class="active">⟳</span> Predicting score…'
-                    )
+                    done_lines.append('<span class="active">⟳</span> Predicting score…')
                     tracker.markdown(
                         f'<div class="tracker">{"<br>".join(done_lines)}</div>',
                         unsafe_allow_html=True,
@@ -1290,87 +1356,83 @@ elif _PAGE == "week2":
         st.caption("Live -- each stage below arrives the moment it completes:")
         tracker = st.empty()
         live_words = st.empty()
-        done_lines: list[str] = []
+        retrieved_lines: list[str] = []
         try:
-                for event in stream_sse(
-                    f"{API_URLS[_PAGE]}/query/stream",
-                    {"text": query, "top_k": top_k},
-                    timeout=15,
-                ):
-                    stage = event["stage"]
-                    if stage == "vocabulary":
-                        wt = event["word_trace"]
-                        known_c = sum(1 for w in wt if w["known"])
-                        done_lines.append(
-                            f'<span class="done">✓</span> Vocabulary check: '
-                            f'{known_c}/{len(wt)} words recognised'
+            for event in stream_sse(
+                f"{API_URLS[_PAGE]}/query/stream",
+                {"text": query, "top_k": top_k},
+                timeout=15,
+            ):
+                stage = event["stage"]
+                if stage == "vocabulary":
+                    wt = event["word_trace"]
+                    known_c = sum(1 for w in wt if w["known"])
+                    retrieved_lines.append(
+                        f'<span class="done">✓</span> Vocabulary check: '
+                        f"{known_c}/{len(wt)} words recognised"
+                    )
+                    retrieved_lines.append(
+                        '<span class="active">⟳</span> Encoding query with GRU tower…'
+                    )
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(retrieved_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    live_words.markdown(render_word_trace(wt), unsafe_allow_html=True)
+                elif stage == "encoded":
+                    norm = event["embedding_norm"]
+                    retrieved_lines[-1] = (
+                        f'<span class="done">✓</span> Query encoded (norm = {norm:.3f})'
+                    )
+                    retrieved_lines.append(
+                        '<span class="active">⟳</span> Searching Redis via HNSW…'
+                    )
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(retrieved_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "done":
+                    data = event
+                    n_res = len(data["results"])
+                    retrieved_lines[-1] = f'<span class="done">✓</span> {n_res} results retrieved'
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(retrieved_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        '<div class="trace-caption">'
+                        "Words encoded by trained GRU query tower, then compared against "
+                        "indexed documents via cosine distance (lower = closer).</div>",
+                        unsafe_allow_html=True,
+                    )
+                    live_words.empty()
+                    st.markdown(render_word_trace(data["word_trace"]), unsafe_allow_html=True)
+                    st.markdown(
+                        render_stats([("Query vector norm", f"{data['embedding_norm']:.3f}")]),
+                        unsafe_allow_html=True,
+                    )
+                    if not data["results"]:
+                        st.info("No results — the index may be empty on this deployment.")
+                    else:
+                        chart_data = {f"#{r['rank']}": r["score"] for r in data["results"]}
+                        st.bar_chart(
+                            chart_data,
+                            horizontal=True,
+                            x_label="cosine distance",
+                            y_label="result rank",
                         )
-                        done_lines.append(
-                            f'<span class="active">⟳</span> Encoding query with GRU tower…'
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        live_words.markdown(render_word_trace(wt), unsafe_allow_html=True)
-                    elif stage == "encoded":
-                        norm = event["embedding_norm"]
-                        done_lines[-1] = (
-                            f'<span class="done">✓</span> Query encoded (norm = {norm:.3f})'
-                        )
-                        done_lines.append(
-                            f'<span class="active">⟳</span> Searching Redis via HNSW…'
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "done":
-                        data = event
-                        n_res = len(data["results"])
-                        done_lines[-1] = (
-                            f'<span class="done">✓</span> {n_res} results retrieved'
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
+                    for res in data["results"]:
                         st.markdown(
-                            '<div class="trace-caption">'
-                            "Words encoded by trained GRU query tower, then compared against "
-                            "indexed documents via cosine distance (lower = closer).</div>",
+                            f'<div class="score-detail"><strong>#{res["rank"]}</strong> '
+                            f"(cos-dist {res['score']:.4f})</div>"
+                            f'<div class="score-detail">{esc(res["text"])}</div>',
                             unsafe_allow_html=True,
                         )
-                        live_words.empty()
-                        st.markdown(render_word_trace(data["word_trace"]), unsafe_allow_html=True)
-                        st.markdown(
-                            render_stats([("Query vector norm", f"{data['embedding_norm']:.3f}")]),
-                            unsafe_allow_html=True,
-                        )
-                        if not data["results"]:
-                            st.info("No results — the index may be empty on this deployment.")
-                        else:
-                            chart_data = {
-                                f"#{r['rank']}": r["score"] for r in data["results"]
-                            }
-                            st.bar_chart(
-                                chart_data,
-                                horizontal=True,
-                                x_label="cosine distance",
-                                y_label="result rank",
-                            )
-                        for res in data["results"]:
-                            st.markdown(
-                                f'<div class="score-detail"><strong>#{res["rank"]}</strong> '
-                                f'(cos-dist {res["score"]:.4f})</div>'
-                                f'<div class="score-detail">{esc(res["text"])}</div>',
-                                unsafe_allow_html=True,
-                            )
-                        with st.expander("Raw response"):
-                            st.json(data)
-                    elif stage == "error":
-                        tracker.empty()
-                        st.error(f"Retrieval failed: {event['detail']}")
+                    with st.expander("Raw response"):
+                        st.json(data)
+                elif stage == "error":
+                    tracker.empty()
+                    st.error(f"Retrieval failed: {event['detail']}")
         except requests.exceptions.RequestException as e:
             st.error(f"Request failed: {e}")
 
@@ -1393,7 +1455,11 @@ elif _PAGE == "week3":
         )
     with col_upload:
         st.caption("Or upload one")
-        uploaded = st.file_uploader("Upload a digit image (PNG/JPG)", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+        uploaded = st.file_uploader(
+            "Upload a digit image (PNG/JPG)",
+            type=["png", "jpg", "jpeg"],
+            label_visibility="collapsed",
+        )
         if uploaded is not None:
             st.image(uploaded, width=150)
 
@@ -1407,7 +1473,7 @@ elif _PAGE == "week3":
         b64_image = bytes_to_b64(image_bytes)
 
         # Classifier is instant -- fetch it first regardless of stream mode.
-        vit_data: dict | None = None
+        vit_data: dict[str, Any] | None = None
         try:
             r = requests.post(
                 f"{API_URLS[_PAGE]}/predict/vit",
@@ -1450,7 +1516,7 @@ elif _PAGE == "week3":
                 st.caption("Live -- each digit below appears the moment the model emits it:")
                 digit_display = st.empty()
                 seq2seq_data = None
-                digit_trace_sofar: list[dict] = []
+                digit_trace_sofar: list[dict[str, Any]] = []
                 try:
                     for event in stream_sse(
                         f"{API_URLS[_PAGE]}/predict/seq2seq/stream",
@@ -1491,7 +1557,9 @@ elif _PAGE == "week3":
 elif _PAGE == "week4":
     col_upload, col_camera = st.columns(2)
     with col_upload:
-        uploaded = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+        uploaded = st.file_uploader(
+            "Upload an image", type=["png", "jpg", "jpeg"], label_visibility="collapsed"
+        )
         if uploaded is not None:
             st.image(uploaded, width=250)
     with col_camera:
@@ -1500,68 +1568,65 @@ elif _PAGE == "week4":
             st.image(camera, width=250)
 
     image_source = uploaded or camera
-    if image_source is not None:
-        if st.button("Generate caption", type="primary"):
-            st.caption("Live -- each token below appears the moment the model emits it:")
-            tracker = st.empty()
-            live_heatmap = st.empty()
-            tokens: list[dict] = []
-            data = None
-            try:
-                for event in stream_sse(
-                    f"{API_URLS[_PAGE]}/caption/stream",
-                    {"image_data": image_to_b64(image_source), "checkpoint_name": "adapter.pth"},
-                    timeout=90,
-                ):
-                    stage = event["stage"]
-                    if stage == "model_loaded":
-                        tracker.markdown(
-                            '<div class="tracker">'
-                            '<span class="done">✓</span> CLIP + Qwen3 loaded<br>'
-                            '<span class="active">⟳</span> Generating caption…'
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "token":
-                        tokens.append({"token": event["token"], "probability": event["probability"]})
-                        live_heatmap.markdown(
-                            render_token_heatmap(tokens), unsafe_allow_html=True
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">'
-                            f'<span class="done">✓</span> Models loaded<br>'
-                            f'<span class="active">⟳</span> Token {event["step"] + 1}: '
-                            f'"<strong>{esc(event["token"])}</strong>" '
-                            f'({event["probability"] * 100:.1f}% confidence)'
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "done":
-                        data = event
-                        tracker.markdown(
-                            f'<div class="tracker">'
-                            f'<span class="done">✓</span> Models loaded<br>'
-                            f'<span class="done">✓</span> {len(data["token_trace"])} tokens generated'
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "error":
-                        tracker.empty()
-                        st.error(f"Captioning failed: {event['detail']}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Request failed: {e}")
+    if image_source is not None and st.button("Generate caption", type="primary"):
+        st.caption("Live -- each token below appears the moment the model emits it:")
+        tracker = st.empty()
+        live_heatmap = st.empty()
+        tokens: list[dict[str, Any]] = []
+        data = None
+        try:
+            for event in stream_sse(
+                f"{API_URLS[_PAGE]}/caption/stream",
+                {"image_data": image_to_b64(image_source), "checkpoint_name": "adapter.pth"},
+                timeout=90,
+            ):
+                stage = event["stage"]
+                if stage == "model_loaded":
+                    tracker.markdown(
+                        '<div class="tracker">'
+                        '<span class="done">✓</span> CLIP + Qwen3 loaded<br>'
+                        '<span class="active">⟳</span> Generating caption…'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "token":
+                    tokens.append({"token": event["token"], "probability": event["probability"]})
+                    live_heatmap.markdown(render_token_heatmap(tokens), unsafe_allow_html=True)
+                    tracker.markdown(
+                        f'<div class="tracker">'
+                        f'<span class="done">✓</span> Models loaded<br>'
+                        f'<span class="active">⟳</span> Token {event["step"] + 1}: '
+                        f'"<strong>{esc(event["token"])}</strong>" '
+                        f"({event['probability'] * 100:.1f}% confidence)"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "done":
+                    data = event
+                    tracker.markdown(
+                        f'<div class="tracker">'
+                        f'<span class="done">✓</span> Models loaded<br>'
+                        f'<span class="done">✓</span> {len(data["token_trace"])} tokens generated'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "error":
+                    tracker.empty()
+                    st.error(f"Captioning failed: {event['detail']}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Request failed: {e}")
 
-            if data:
-                st.caption(
-                    f"CLIP image embedding → prepended to prompt → Qwen3 autoregressive decode. "
-                    "Darker = higher sampling probability."
-                )
-                live_heatmap.empty()
-                st.markdown(render_token_heatmap(data["token_trace"]), unsafe_allow_html=True)
-                st.success(data["caption"])
-                st.caption(f"Checkpoint: {data['checkpoint_used']}")
-                with st.expander("Raw SSE response"):
-                    st.json(data)
+        if data:
+            st.caption(
+                "CLIP image embedding → prepended to prompt → Qwen3 autoregressive decode. "
+                "Darker = higher sampling probability."
+            )
+            live_heatmap.empty()
+            st.markdown(render_token_heatmap(data["token_trace"]), unsafe_allow_html=True)
+            st.success(data["caption"])
+            st.caption(f"Checkpoint: {data['checkpoint_used']}")
+            with st.expander("Raw SSE response"):
+                st.json(data)
 
 # ---------------------------------------------------------------------------
 # Emotion-Aware Speech Recognition
@@ -1573,12 +1638,14 @@ elif _PAGE == "week5":
         if audio is not None:
             st.audio(audio)
     with col_upload:
-        audio_file = st.file_uploader("Upload audio", type=["mp3", "wav", "m4a", "aiff", "flac"], label_visibility="collapsed")
+        audio_file = st.file_uploader(
+            "Upload audio", type=["mp3", "wav", "m4a", "aiff", "flac"], label_visibility="collapsed"
+        )
         if audio_file is not None:
             st.audio(audio_file)
 
     audio_source = audio or audio_file
-    uploaded: bytes | None = audio_source.getvalue() if audio_source else None
+    audio_bytes: bytes | None = audio_source.getvalue() if audio_source else None
 
     target_text = st.text_input(
         "Fine-tune target text",
@@ -1588,86 +1655,82 @@ elif _PAGE == "week5":
         "record something else, try changing this to match it, or leave it as-is to "
         "see what happens when the target doesn't match what was actually said.",
     )
-    if uploaded is not None:
-        if st.button("Transcribe", type="primary"):
-            st.caption("Live -- each event below arrives the moment that stage finishes:")
-            tracker = st.empty()
-            live_curve = st.empty()
-            live_table = st.empty()
-            baseline_loss = None
-            base_output = None
-            done_lines: list[str] = []
-            steps: list[dict] = []
-            try:
-                for event in stream_sse(
-                    f"{API_URLS[_PAGE]}/transcribe/stream",
-                    {"audio_data": bytes_to_b64(uploaded), "target_text": target_text},
-                    timeout=120,
-                ):
-                    stage = event["stage"]
-                    if stage == "base_transcript":
-                        base_output = event["text"]
-                        done_lines.append(
-                            f'<span class="done">✓</span> Base whisper: '
-                            f'"<em>{esc(base_output)}</em>"'
+    if audio_bytes is not None and st.button("Transcribe", type="primary"):
+        st.caption("Live -- each event below arrives the moment that stage finishes:")
+        tracker = st.empty()
+        live_curve = st.empty()
+        live_table = st.empty()
+        baseline_loss = None
+        base_output = None
+        transcript_lines: list[str] = []
+        steps: list[dict[str, Any]] = []
+        try:
+            for event in stream_sse(
+                f"{API_URLS[_PAGE]}/transcribe/stream",
+                {"audio_data": bytes_to_b64(audio_bytes), "target_text": target_text},
+                timeout=120,
+            ):
+                stage = event["stage"]
+                if stage == "base_transcript":
+                    base_output = event["text"]
+                    transcript_lines.append(
+                        f'<span class="done">✓</span> Base whisper: "<em>{esc(base_output)}</em>"'
+                    )
+                    transcript_lines.append(
+                        '<span class="active">⟳</span> Computing baseline loss…'
+                    )
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(transcript_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "baseline_loss":
+                    baseline_loss = event["loss"]
+                    transcript_lines[-1] = (
+                        f'<span class="done">✓</span> Baseline loss: {baseline_loss:.4f}'
+                    )
+                    transcript_lines.append('<span class="active">⟳</span> Step 1/5…')
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(transcript_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif stage == "step":
+                    steps.append(event)
+                    transcript_lines[-1] = (
+                        f'<span class="done">✓</span> Step {event["step"]}/5: '
+                        f"loss {event['loss']:.4f}"
+                    )
+                    if event["step"] < 5:
+                        transcript_lines.append(
+                            f'<span class="active">⟳</span> Step {event["step"] + 1}/5…'
                         )
-                        done_lines.append(
-                            f'<span class="active">⟳</span> Computing baseline loss…'
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "baseline_loss":
-                        baseline_loss = event["loss"]
-                        done_lines[-1] = (
-                            f'<span class="done">✓</span> Baseline loss: {baseline_loss:.4f}'
-                        )
-                        done_lines.append(
-                            f'<span class="active">⟳</span> Step 1/5…'
-                        )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    elif stage == "step":
-                        steps.append(event)
-                        done_lines[-1] = (
-                            f'<span class="done">✓</span> Step {event["step"]}/5: '
-                            f'loss {event["loss"]:.4f}'
-                        )
-                        if event["step"] < 5:
-                            done_lines.append(
-                                f'<span class="active">⟳</span> Step {event["step"] + 1}/5…'
-                            )
-                        tracker.markdown(
-                            f'<div class="tracker">{"<br>".join(done_lines)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        points = [(0, baseline_loss)] + [(s["step"], s["loss"]) for s in steps]
-                        live_curve.markdown(render_loss_curve(points), unsafe_allow_html=True)
-                        live_table.dataframe(
-                            [{"step": 0, "loss": baseline_loss, "text": base_output}] + steps,
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                    elif stage == "done":
-                        st.session_state["week5_data"] = event
-                        tracker.empty()
-                        live_curve.empty()
-                        live_table.empty()
-                    elif stage == "error":
-                        tracker.empty()
-                        st.error(f"Fine-tuning failed: {event['detail']}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Request failed: {e}")
+                    tracker.markdown(
+                        f'<div class="tracker">{"<br>".join(transcript_lines)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    points = [(0, baseline_loss)] + [(s["step"], s["loss"]) for s in steps]
+                    live_curve.markdown(render_loss_curve(points), unsafe_allow_html=True)
+                    live_table.dataframe(
+                        [{"step": 0, "loss": baseline_loss, "text": base_output}, *steps],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                elif stage == "done":
+                    st.session_state["week5_data"] = event
+                    tracker.empty()
+                    live_curve.empty()
+                    live_table.empty()
+                elif stage == "error":
+                    tracker.empty()
+                    st.error(f"Fine-tuning failed: {event['detail']}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Request failed: {e}")
 
     data = st.session_state.get("week5_data")
     if data:
         st.markdown(
             '<div class="trace-caption">'
             "Not a cached demo. Fine-tunes Whisper-tiny from scratch each request — "
-            f"5 gradient steps toward target \"{esc(target_text)}\".</div>",
+            f'5 gradient steps toward target "{esc(target_text)}".</div>',
             unsafe_allow_html=True,
         )
         points = [(0, data["baseline_loss"])] + [
@@ -1689,14 +1752,12 @@ elif _PAGE == "week5":
             unsafe_allow_html=True,
         )
 
-        step_rows = [
-            {"step": 0, "loss": data["baseline_loss"], "text": data["base_output"]}
-        ] + [
+        step_rows = [{"step": 0, "loss": data["baseline_loss"], "text": data["base_output"]}] + [
             {"step": s["step"], "loss": s["loss"], "text": s["text"]}
             for s in data["fine_tune_trace"]
         ]
         st.caption("Per-step transcript — green = added, red = dropped:")
-        for prev_row, curr_row in zip(step_rows, step_rows[1:], strict=False):
+        for prev_row, curr_row in pairwise(step_rows):
             loss = curr_row["loss"]
             st.markdown(f"**Step {curr_row['step']}** (loss = {loss:.4f})")
             st.markdown(render_diff(prev_row["text"], curr_row["text"]), unsafe_allow_html=True)
@@ -1743,29 +1804,29 @@ elif _PAGE == "week6":
     if st.button("Run PPO steps", type="primary"):
         st.caption("Live — 12 stages per step. Token rows persist across stages.")
         _rendering = {
-            "kl_divergence":   ("2. Token-Level KL Penalty",    "kl_div"),
-            "adjusted_reward": ("4. KL-Penalized Reward",        "adjusted_reward"),
-            "value":           ("5. Value Function",             "value"),
-            "td_error":        ("6. Temporal Difference Error",  "td_error"),
-            "advantage":       ("7. Generalized Advantage Estimation", "advantage"),
-            "reward_to_go":    ("8. Rewards-to-Go",              "reward_to_go"),
-            "clip":            ("10. Clip",                      "clipped_ratio"),
-            "policy_ratio":    ("12. Policy Ratio",              "policy_ratio"),
+            "kl_divergence": ("2. Token-Level KL Penalty", "kl_div"),
+            "adjusted_reward": ("4. KL-Penalized Reward", "adjusted_reward"),
+            "value": ("5. Value Function", "value"),
+            "td_error": ("6. Temporal Difference Error", "td_error"),
+            "advantage": ("7. Generalized Advantage Estimation", "advantage"),
+            "reward_to_go": ("8. Rewards-to-Go", "reward_to_go"),
+            "clip": ("10. Clip", "clipped_ratio"),
+            "policy_ratio": ("12. Policy Ratio", "policy_ratio"),
         }
 
         _MATH = {
-            "generate":        "a_t  ∼  π_θ(·∣s_t)",
-            "kl_divergence":   "log π_θ(a_t∣s_t) / π_ref(a_t∣s_t)",
-            "rewards":         "r_ψ(x, y)",
+            "generate": "a_t  ∼  π_θ(·∣s_t)",
+            "kl_divergence": "log π_θ(a_t∣s_t) / π_ref(a_t∣s_t)",
+            "rewards": "r_ψ(x, y)",
             "adjusted_reward": "r − η·KL_t",
-            "value":           "V_ϕ(s_t)",
-            "td_error":        "δ_t  =  r_t + γV_ϕ(s_{t+1}) − V_ϕ(s_t)",
-            "advantage":       "Â_t  =  Σ_{l≥0} (γλ)^l δ_{t+l}",
-            "reward_to_go":    "R̂_t  =  Â_t + V_ϕ(s_t)",
-            "value_loss":      "L_V  =  E[(V_ϕ − R̂_t)²]    ···  ∂V",
-            "clip":            "clamp(r_t(θ), 1±ε)",
-            "policy_loss":     "L_CLIP  =  E[min(r_tÂ_t, clip(r_t, 1±ε)Â_t)]    ···  ∂π",
-            "policy_ratio":    "r_t(θ)  =  π_θ / π_old    ——  readout",
+            "value": "V_ϕ(s_t)",
+            "td_error": "δ_t  =  r_t + γV_ϕ(s_{t+1}) − V_ϕ(s_t)",
+            "advantage": "Â_t  =  Σ_{l≥0} (γλ)^l δ_{t+l}",
+            "reward_to_go": "R̂_t  =  Â_t + V_ϕ(s_t)",
+            "value_loss": "L_V  =  E[(V_ϕ − R̂_t)²]    ···  ∂V",
+            "clip": "clamp(r_t(θ), 1±ε)",
+            "policy_loss": "L_CLIP  =  E[min(r_tÂ_t, clip(r_t, 1±ε)Â_t)]    ···  ∂π",
+            "policy_ratio": "r_t(θ)  =  π_θ / π_old    ——  readout",
         }
 
         try:
@@ -1780,15 +1841,15 @@ elif _PAGE == "week6":
             cur: dict[str, float | str] = {}
 
             def _render_heatmap(
-                label: str, stage: str, field: str, event: dict, math: dict
+                label: str, stage: str, field: str, event: dict[str, Any], math: dict[str, Any]
             ) -> str:
                 html = (
                     f'<div class="stage-block">'
                     f'<span class="stage-label">{label}</span>'
                     f'<span class="stage-math">{math[stage]}</span>'
-                    f'</div>'
+                    f"</div>"
                 )
-                pairs_by_prompt: dict[int, list[dict]] = {}
+                pairs_by_prompt: dict[int, list[dict[str, Any]]] = {}
                 for pair in event["sa_pairs"]:
                     pairs_by_prompt.setdefault(pair["prompt_idx"], []).append(pair)
                 for pidx in sorted(pairs_by_prompt):
@@ -1804,7 +1865,12 @@ elif _PAGE == "week6":
 
             for event in stream_sse(
                 f"{API_URLS[_PAGE]}/ppo_step/stream",
-                {"prompts": ["SUBREDDIT: r/relationships\nTITLE: Should I admit to snooping?\nPOST: ...\nTL;DR:"], "ppo_steps": ppo_steps},
+                {
+                    "prompts": [
+                        "SUBREDDIT: r/relationships\nTITLE: Should I admit to snooping?\nPOST: ...\nTL;DR:"
+                    ],
+                    "ppo_steps": ppo_steps,
+                },
                 timeout=600,
             ):
                 stage = event["stage"]
@@ -1819,9 +1885,7 @@ elif _PAGE == "week6":
                     step_num = event["step"]
                     step_total = event["total"]
                     blocks.append(
-                        f'<div class="step-header">'
-                        f'PPO Step {step_num} / {step_total}'
-                        f'</div>'
+                        f'<div class="step-header">PPO Step {step_num} / {step_total}</div>'
                     )
                     flush()
                 elif stage == "generating":
@@ -1837,7 +1901,7 @@ elif _PAGE == "week6":
                         f'<div class="stage-block">'
                         f'<span class="stage-label">1. Sampling</span>'
                         f'<span class="stage-math">{_MATH["generate"]}</span>'
-                        f'</div>'
+                        f"</div>"
                         f'<div class="token-row">{"".join(sampling_chips)}</div>'
                     )
                     if len(blocks) == 0 or "1. Sampling" in blocks[0]:
@@ -1866,7 +1930,7 @@ elif _PAGE == "week6":
                         f'<span class="stage-label">1. Sampling</span>'
                         f'<span class="stage-math">{_MATH["generate"]}</span>'
                         f'<span class="stage-completion">{completion}</span>'
-                        f'</div>'
+                        f"</div>"
                         f'<div class="token-row">{"".join(chips)}</div>'
                     )
                     if len(blocks) > 0 and "1. Sampling" in blocks[0]:
@@ -1894,14 +1958,20 @@ elif _PAGE == "week6":
                         f'<div class="stage-block">'
                         f'<span class="stage-label">3. Reward Scoring</span>'
                         f'<span class="stage-math">{_MATH["rewards"]}</span>'
-                        f'</div>'
+                        f"</div>"
                         f'<div class="stage-scalar">{vals}</div>'
                     )
                     flush()
                 elif stage in {"value_loss", "policy_loss"}:
-                    label = "9. Value Function Loss" if stage == "value_loss" else "11. PPO-Clip Loss"
+                    label = (
+                        "9. Value Function Loss" if stage == "value_loss" else "11. PPO-Clip Loss"
+                    )
                     math_key = "value_loss" if stage == "value_loss" else "policy_loss"
-                    value = event.get("value_loss") if stage == "value_loss" else event.get("policy_loss")
+                    value = (
+                        event.get("value_loss")
+                        if stage == "value_loss"
+                        else event.get("policy_loss")
+                    )
                     if value is not None:
                         if stage == "value_loss":
                             cur["value_loss"] = value
@@ -1911,7 +1981,7 @@ elif _PAGE == "week6":
                             f'<div class="stage-block">'
                             f'<span class="stage-label">{label}</span>'
                             f'<span class="stage-math">{_MATH[math_key]}</span>'
-                            f'</div>'
+                            f"</div>"
                             f'<div class="stage-scalar">{value:.4f}</div>'
                         )
                         flush()
@@ -1929,17 +1999,17 @@ elif _PAGE == "week6":
                     block_html = _render_heatmap(label, stage, field, event, _MATH)
                     blocks.append(block_html)
                     # Per-step summary line.
-                    r = cur.get("reward", float("nan"))
+                    step_reward = cur.get("reward", float("nan"))
                     vl = cur.get("value_loss", float("nan"))
                     pl = cur.get("policy_loss", float("nan"))
-                    summary = f'<div class="step-summary">'
-                    summary += f'<table><tr>'
-                    summary += f'<td>reward</td><td>{r:.2f}</td>'
-                    summary += f'<td>value loss</td><td>{vl:.1f}</td>'
-                    summary += f'<td>policy loss</td><td>{pl:+.3f}</td>'
-                    summary += f'<td>avg KL</td><td>{cur["avg_kl"]:.2f}</td>'
-                    summary += f'<td>avg ratio</td><td>{cur["avg_ratio"]:.3f}</td>'
-                    summary += f'</tr></table></div>'
+                    summary = '<div class="step-summary">'
+                    summary += "<table><tr>"
+                    summary += f"<td>reward</td><td>{step_reward:.2f}</td>"
+                    summary += f"<td>value loss</td><td>{vl:.1f}</td>"
+                    summary += f"<td>policy loss</td><td>{pl:+.3f}</td>"
+                    summary += f"<td>avg KL</td><td>{cur['avg_kl']:.2f}</td>"
+                    summary += f"<td>avg ratio</td><td>{cur['avg_ratio']:.3f}</td>"
+                    summary += "</tr></table></div>"
                     blocks.append(summary)
                     flush()
                 elif stage in _rendering and "sa_pairs" in event:
@@ -1970,27 +2040,27 @@ elif _PAGE == "week6":
 
             st.markdown(
                 f'<div class="summary-card">'
-                f'<h4>{len(records)} PPO steps — before → after</h4>'
+                f"<h4>{len(records)} PPO steps — before → after</h4>"
                 f'<table class="summary-table">'
                 f'<tr><th style="text-align:left;font-weight:500;color:var(--text-muted)">metric</th>'
                 f'<th style="text-align:right;font-weight:500;color:var(--text-muted)">step 1</th>'
                 f'<th style="text-align:right;font-weight:500;color:var(--text-muted)">step {len(records)}</th></tr>'
-                f'<tr><td>Reward</td>'
+                f"<tr><td>Reward</td>"
                 f'<td style="text-align:right">{r_first:.2f}</td>'
                 f'<td style="text-align:right">{r_last:.2f}'
                 f'<span class="{"summary-good" if r_last > r_first else "summary-bad" if r_last < r_first else ""}">{_arrow(r_first, r_last)}</span></td></tr>'
-                f'<tr><td>Value loss</td>'
+                f"<tr><td>Value loss</td>"
                 f'<td style="text-align:right">{vl_first:.1f}</td>'
                 f'<td style="text-align:right">{vl_last:.1f}'
                 f'<span class="summary-{"good" if vl_last < vl_first else "bad" if vl_last > vl_first else ""}">{_arrow(vl_first, vl_last)}</span></td></tr>'
-                f'<tr><td>Policy loss</td>'
+                f"<tr><td>Policy loss</td>"
                 f'<td style="text-align:right">{pl_first:+.3f}</td>'
                 f'<td style="text-align:right">{pl_last:+.3f}</td></tr>'
-                f'<tr><td>KL divergence</td>'
+                f"<tr><td>KL divergence</td>"
                 f'<td style="text-align:right">{kl_first:.2f}</td>'
                 f'<td style="text-align:right">{kl_last:.2f}'
                 f'<span class="">{_arrow(kl_first, kl_last)}</span></td></tr>'
-                f'</table></div>',
+                f"</table></div>",
                 unsafe_allow_html=True,
             )
         st.info(ppo_data["note"])

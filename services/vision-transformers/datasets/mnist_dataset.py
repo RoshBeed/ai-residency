@@ -3,9 +3,10 @@
 from pathlib import Path
 
 import torch
-from ai_residency_common import get_logger
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
+
+from ai_residency_common import get_logger
 
 __all__ = ["Example", "MNISTDataset"]
 

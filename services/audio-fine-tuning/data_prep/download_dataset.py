@@ -22,8 +22,8 @@ import zipfile
 from pathlib import Path
 
 import requests
-from ai_residency_common import get_logger
 
+from ai_residency_common import get_logger
 from config import Config
 
 __all__ = [

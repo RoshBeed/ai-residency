@@ -25,11 +25,11 @@ from functools import lru_cache
 from typing import Any
 
 import torch
-from ai_residency_common import format_sse, get_device, get_logger, run_app
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ai_residency_common import format_sse, get_device, get_logger, run_app
 from base_setup import BaseModelSetup
 from config import PPOConfig
 from models import PolicyModel

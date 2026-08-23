@@ -10,7 +10,6 @@ the same functions rather than reimplementing them.
 """
 
 from ai_residency_common import get_logger, set_seed
-
 from audio_fine_tuning.models import decode_audio, get_tokenizer, load_whisper_model
 from audio_fine_tuning.training import fine_tune
 from config import Config

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 import torch
-from ai_residency_common import save_checkpoint
 
+from ai_residency_common import save_checkpoint
 from cbow.model import CBOW
 from config import Config
 

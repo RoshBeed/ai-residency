@@ -9,6 +9,7 @@ inside the checkpoint so the mapping cannot drift from the matrix it indexes.
 from pathlib import Path
 
 import torch
+
 from ai_residency_common import get_logger
 
 __all__ = ["load_cbow_embeddings", "load_cbow_vocabulary"]

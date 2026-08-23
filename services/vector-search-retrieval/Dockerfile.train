@@ -1,27 +1,41 @@
 # syntax=docker/dockerfile:1
 #
-# Training image — what a RunPod/AWS GPU host pulls and runs. FROM roshbeed/ai-residency-base
-# (built by ai-residency-repo-template's Dockerfile.base, the shared base every repo in the
-# portfolio builds on). ai-residency-common is already installed there, so this file never
-# touches git or needs a credential of any kind.
+# Training image for vector-search-retrieval.
 #
-# Default: run the full training pipeline (tokenizer → word2vec → triples → encoder).
-# Override CMD for individual stages:
-#   docker compose run train uv run python -m cbow.train_tokenizer
-#   docker compose run train uv run python -m cbow.train_word2vec
-#   docker compose run train uv run python -m data_prep.generate_triples
-#   docker compose run train uv run python -m data_prep.tokenize_triples
+# The build context is the repository root, not this directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
+# none of which live inside a service.
 #
-# Build: docker build -f Dockerfile.train -t ai-residency-week2-train .
+#   docker build -f services/vector-search-retrieval/Dockerfile.train -t roshbeed/ai-residency-vector-search-retrieval-train:latest .
+#   (or: make build SERVICE=vector-search-retrieval)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
+
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+COPY libs/common/pyproject.toml libs/common/
+COPY services/_template/pyproject.toml services/_template/
+COPY services/audio-fine-tuning/pyproject.toml services/audio-fine-tuning/
+COPY services/content-scoring/pyproject.toml services/content-scoring/
+COPY services/frontend/pyproject.toml services/frontend/
+COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
+COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
+COPY services/vision-transformers/pyproject.toml services/vision-transformers/
+COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# libs/common is a real installable package, so it has to be present before the
+# dependency sync can build it -- a manifest alone is not enough.
+COPY libs/common libs/common
+RUN uv sync --frozen --no-install-project --package ai-residency-vector-search-retrieval
 
-COPY . .
-RUN uv sync --frozen
+COPY services/vector-search-retrieval services/vector-search-retrieval
+RUN uv sync --frozen --package ai-residency-vector-search-retrieval
 
-CMD ["uv", "run", "python", "-m", "models.training"]
+WORKDIR /app/services/vector-search-retrieval
+
+CMD ["python", "-m", "models.training"]

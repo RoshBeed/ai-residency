@@ -10,9 +10,9 @@ The extended tokenizer is written under `checkpoints/` because it is a trained
 artifact of this pipeline, not source.
 """
 
-from ai_residency_common import get_logger
 from transformers import WhisperTokenizer
 
+from ai_residency_common import get_logger
 from config import Config
 
 __all__ = ["add_emotion_tokens", "main"]

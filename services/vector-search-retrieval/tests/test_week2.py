@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 import torch
-from ai_residency_common import load_checkpoint
 from fastapi.testclient import TestClient
 
+from ai_residency_common import load_checkpoint
 from cbow.vocabulary import (
     build_embedding_layer,
     build_embedding_placeholder,

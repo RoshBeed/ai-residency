@@ -23,6 +23,13 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as F
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from PIL import Image
+from PIL.Image import Image as PILImage
+from pydantic import BaseModel
+
 from ai_residency_common import (
     get_device,
     get_logger,
@@ -31,13 +38,6 @@ from ai_residency_common import (
     run_app,
     stream_sse,
 )
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from PIL import Image
-from PIL.Image import Image as PILImage
-from pydantic import BaseModel
-
 from config import Config
 from models.classifier.classifier import VisionTransformer
 from models.seq2seq.seq2seq import Seq2SeqVisionTransformer

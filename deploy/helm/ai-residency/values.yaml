@@ -8,14 +8,15 @@
 # against Docker Desktop's built-in Kubernetes.
 
 # Root directory on the *node's host filesystem* under which this repo and its six
-# sibling ai-residency-weekN-... repos all live as siblings. Every hostPath volume below is
+# the repository root. Every service's checkpoints live at services/<name>/checkpoints,
+# so every hostPath volume below is
 # written as a Go template string and rendered with `tpl` against this value, so
 # moving the whole portfolio to a different path only requires changing this one line.
 # This only works because Docker Desktop's Kubernetes node's filesystem *is* the Mac's
 # filesystem -- a real multi-node cluster would need actual artifact hosting (git-lfs,
 # release assets, DVC) instead, the same caveat already documented in this repo's own
 # README for the docker-compose version.
-hostRoot: /Users/rosh/mlx
+hostRoot: /Users/rosh/mlx/ai-residency
 
 # The Hugging Face model cache on the *node's host filesystem*. Deliberately a
 # separate value from hostRoot: the cache lives under the user's home directory, not
@@ -155,8 +156,8 @@ redis:
 backends:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference (Dockerfile.serve) ---
   week1-word-embeddings:
-    image: roshbeed/ai-residency-week1-serve
-    trainImage: roshbeed/ai-residency-week1-train
+    image: roshbeed/ai-residency-word-embeddings-serve
+    trainImage: roshbeed/ai-residency-word-embeddings-train
     trainCommand:
       - uv
       - run
@@ -174,14 +175,14 @@ backends:
       # so the service's own try/except around torch.load still gets to run and degrade to
       # model_loaded=False, same as it does for a genuinely missing file.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week1-word-embeddings/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/word-embeddings/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
   # --- Week 1b: content-scoring — the regression head over those frozen vectors ---
   week1-content-scoring:
-    image: roshbeed/ai-residency-week1-content-scoring-serve
-    trainImage: roshbeed/ai-residency-week1-content-scoring-train
+    image: roshbeed/ai-residency-content-scoring-serve
+    trainImage: roshbeed/ai-residency-content-scoring-train
     trainCommand:
       - uv
       - run
@@ -194,14 +195,14 @@ backends:
     env: {}
     volumes:
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week1-content-scoring/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/content-scoring/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
   # --- Week 2: needs its own Redis (HNSW retrieval index) ---
   week2:
-    image: roshbeed/ai-residency-week2-serve
-    trainImage: roshbeed/ai-residency-week2-train
+    image: roshbeed/ai-residency-vector-search-retrieval-serve
+    trainImage: roshbeed/ai-residency-vector-search-retrieval-train
     # The encoder towers. The CBOW and triples stages need their own data prep.
     trainCommand:
       - uv
@@ -240,18 +241,18 @@ backends:
       # The container's own code (image build) has the SSE /query/stream support;
       # this mounts only the gitignored artifacts, not the whole /app.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week2-vector-search-retrieval/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/vector-search-retrieval/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
       - name: data
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week2-vector-search-retrieval/data"
+        hostPath: "{{ .Values.hostRoot }}/services/vector-search-retrieval/data"
         mountPath: /app/data
         type: DirectoryOrCreate
 
   # --- Week 3: FastAPI inference container (Dockerfile.serve) ---
   week3:
-    image: roshbeed/ai-residency-week3-serve
-    trainImage: roshbeed/ai-residency-week3-train
+    image: roshbeed/ai-residency-vision-transformers-serve
+    trainImage: roshbeed/ai-residency-vision-transformers-train
     # This repo trains two models with separate epoch caps, so the classifier's is
     # classifier_epochs, not num_epochs -- train.env's AI_RESIDENCY_NUM_EPOCHS alone would not
     # shorten it. trainEnv is merged in after train.env, so it can add or override.
@@ -271,7 +272,7 @@ backends:
     volumes:
       # Gitignored -- may legitimately be absent, see week1-word-embeddings' volumes comment above.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week3-vision-transformers/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/vision-transformers/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
@@ -279,8 +280,8 @@ backends:
   # baked in (including /caption/stream SSE support); mounting all of /app over the
   # image would shadow those changes.
   week4:
-    image: roshbeed/ai-residency-week4-serve
-    trainImage: roshbeed/ai-residency-week4-train
+    image: roshbeed/ai-residency-multimodal-captioning-serve
+    trainImage: roshbeed/ai-residency-multimodal-captioning-train
     trainCommand:
       - uv
       - run
@@ -297,7 +298,7 @@ backends:
       # enough to exist in the source repo. Mount only this dir, not all of /app --
       # the container's own code has the SSE changes.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week4-multimodal-captioning/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/multimodal-captioning/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
       # Shared HF model cache so CLIP + Qwen3 are not re-downloaded on cold starts.
@@ -309,8 +310,8 @@ backends:
   # --- Week 5: the image doesn't carry the (gitignored) fine-tuned checkpoint, so
   # mount the real one at runtime.
   week5:
-    image: roshbeed/ai-residency-week5-serve
-    trainImage: roshbeed/ai-residency-week5-train
+    image: roshbeed/ai-residency-audio-fine-tuning-serve
+    trainImage: roshbeed/ai-residency-audio-fine-tuning-train
     trainCommand:
       - uv
       - run
@@ -324,14 +325,14 @@ backends:
     volumes:
       # Gitignored -- may legitimately be absent, see week1-word-embeddings' volumes comment above.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week5-audio-fine-tuning/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/audio-fine-tuning/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
   # --- Week 6: checkpoints mount so policy/value LoRA adapters persist across restart ---
   week6:
-    image: roshbeed/ai-residency-week6-serve
-    trainImage: roshbeed/ai-residency-week6-train
+    image: roshbeed/ai-residency-rlhf-ppo-serve
+    trainImage: roshbeed/ai-residency-rlhf-ppo-train
     # One PPO step -- this repo has no epoch loop, by design.
     trainCommand:
       - uv
@@ -358,6 +359,6 @@ backends:
       # Checkpoints written by PPOTrainer._save_ckpt so repeated calls compound
       # across pod restarts, not just within one lifetime.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/ai-residency-week6-rlhf-ppo/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/rlhf-ppo/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate

@@ -1,9 +1,9 @@
 """Scoring generated sequences with the reward model."""
 
 import torch
-from ai_residency_common import get_logger
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from ai_residency_common import get_logger
 from config import PPOConfig
 
 __all__ = ["RewardComputer"]

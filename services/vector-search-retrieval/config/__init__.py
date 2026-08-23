@@ -22,8 +22,9 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ai_residency_common import BaseConfig
 from dotenv import load_dotenv
+
+from ai_residency_common import BaseConfig
 
 __all__ = ["Config"]
 

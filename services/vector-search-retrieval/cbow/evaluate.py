@@ -8,8 +8,8 @@ something more informative than a falling loss.
 
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger
 
+from ai_residency_common import get_logger
 from cbow.model import CBOW
 
 __all__ = ["nearest_words"]

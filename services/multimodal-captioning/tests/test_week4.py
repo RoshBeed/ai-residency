@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 import torch
-from ai_residency_common import load_checkpoint, save_checkpoint
 from fastapi.testclient import TestClient
 
+from ai_residency_common import load_checkpoint, save_checkpoint
 from config import CHECKPOINTS, Config
 from multimodal_captioning.models import build_adapter
 from serving.api import app
