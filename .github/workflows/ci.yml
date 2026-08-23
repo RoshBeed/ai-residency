@@ -131,6 +131,17 @@ jobs:
 
       # Both tags come off one commit, which is what makes a deployment
       # reproducible: deploy/ pins the SHA, not a moving `latest`.
+      # The frontend's image has no -serve suffix: it is the only service with one
+      # image rather than a serving/training pair.
+      - name: Image name
+        id: image
+        run: |
+          if [ "${{ matrix.service }}" = "frontend" ]; then
+            echo "name=${{ env.REGISTRY }}/ai-residency-frontend" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -138,5 +149,5 @@ jobs:
           file: services/${{ matrix.service }}/Dockerfile.serve
           push: true
           tags: |
-            ${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve:sha-${{ github.sha }}
-            ${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve:latest
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest

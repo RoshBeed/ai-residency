@@ -1,6 +1,6 @@
 # AI Residency — ML systems, built end to end
 
-Seven machine-learning systems, each taken from scratch to a containerized service, plus the
+Nine machine-learning systems, each taken from scratch to a containerized service, plus the
 frontend and deployment that run all of them. The point isn't only the models — it's the
 engineering around them: real architectures implemented from the ground up, one shared library,
 one lockfile, and identical deployment on three runtimes (macOS, docker-compose, Kubernetes).
@@ -45,16 +45,20 @@ Each links to its own full write-up — architecture, method, results, reference
 | [Word embeddings](services/word-embeddings) | CBOW word2vec with negative sampling, from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy and similarity checks) |
 | [Content scoring](services/content-scoring) | Regression head over frozen CBOW embeddings | Trained end to end on real Hacker News post data |
 | [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served through Redis/RediSearch ANN search |
-| [Vision Transformer](services/vision-transformers) | From-scratch ViT — a single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
+| [ViT classifier](services/vit-classifier) | Encoder-only ViT from scratch: patch embedding, self-attention, encoder blocks | 91.78% on the MNIST test set, against an 11.35% majority baseline |
+| [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | 68.00% exact-sequence match, against 0.10% random |
 | [Image captioning](services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end to end |
-| [Whisper fine-tuning](services/audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end to end, served through FastAPI |
+| [Whisper fine-tuning](services/whisper-fine-tuning) | Whisper fine-tuned live on a single clip | `"My name is Roosh."` → `"My name is Rosh"`, in five gradient steps |
+| [Speech emotion recognition](services/speech-emotion-recognition) | Emotion as a token Whisper's decoder emits, not a classifier head | Corpus pipeline, extended tokenizer, fine-tuning and serving end to end |
 | [RLHF / PPO](services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy and value updates | Full PPO step runs end to end against Qwen3-0.6B-Base |
 
 ## Layout
 
 ```
 ai-residency/
-├── libs/common/          shared library: device, logging, checkpoints, config, Hub, tracking
+├── libs/
+│   ├── common/           device, logging, checkpoints, config, Hub, tracking — used by all
+│   └── vision-transformer/  attention, encoder, decoder, patch embedding — used by the two ViTs
 ├── services/             one directory per service — package, tests, Dockerfiles, write-up
 │   ├── _template/        what `make new-service` copies; a working service, not a skeleton
 │   └── frontend/         the Streamlit app, one page per system
@@ -65,7 +69,7 @@ ai-residency/
 ```
 
 Every service is independently deployable — its own image, its own Deployment, its own memory
-limits. What it is *not* is independently versioned: one commit tags all nine images, and
+limits. What it is *not* is independently versioned: one commit tags every image, and
 `deploy/` pins that tag, so the whole system is reproducible from a single identifier.
 
 ## Running it
@@ -73,16 +77,29 @@ limits. What it is *not* is independently versioned: one commit tags all nine im
 ```bash
 make install                              # one venv for the whole workspace
 make check                                # ruff, strict mypy, pytest, every service
-make serve SERVICE=word-embeddings        # one backend on :8000
+make serve SERVICE=vit-classifier         # one backend on :8000
 ```
 
-The whole stack, both runtimes:
+The whole stack. Images are not published yet, so build them locally first — the same
+`roshbeed/…:latest` names compose and the Helm chart already reference:
+
+```bash
+docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+for s in $(ls services | grep -vE '^(_template)$'); do make build SERVICE=$s; done
+```
 
 ```bash
 cd deploy
 make up                                   # docker-compose; frontend on :8500
-make helm-install                         # Kubernetes; frontend on :8500
+
+make load-images                          # Kubernetes only: see below
+make helm-install                         # frontend on :8500
 ```
+
+docker-compose reads the host's images directly. **Kubernetes does not** — Docker Desktop runs its
+node as a kind container with its own containerd store, and `imagePullPolicy: IfNotPresent` means
+it silently keeps whatever it already had. `make load-images` imports them; run it after every
+rebuild.
 
 See [`deploy/README.md`](deploy/README.md) for the cluster details, and
 [`libs/common/README.md`](libs/common/README.md) for what every service shares.

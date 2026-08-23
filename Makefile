@@ -57,14 +57,14 @@ check: lint typecheck test ## Everything CI runs
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)
 	docker build -f services/$(SERVICE)/Dockerfile.serve \
-		-t $(REGISTRY)/ai-residency-$(SERVICE)-serve:$(IMAGE_TAG) .
+		-t $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG) .
 	@test -f services/$(SERVICE)/Dockerfile.train && \
 		docker build -f services/$(SERVICE)/Dockerfile.train \
 			-t $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG) . || true
 
 push: ## Push a service's images: make push SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make push SERVICE=<name>" && exit 1)
-	docker push $(REGISTRY)/ai-residency-$(SERVICE)-serve:$(IMAGE_TAG)
+	docker push $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG)
 	-docker push $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG)
 
 ## --- Per-service pipelines -----------------------------------------------

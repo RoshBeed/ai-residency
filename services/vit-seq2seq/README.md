@@ -49,8 +49,8 @@ like word tokens. No convolutions anywhere.
 **Figure 1.** The two tasks this repo solves: recognizing one digit versus recognizing several.
 ![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder mapping a 3-digit image through a decoder seeded with <start> to the token sequence 0 2 3 1](assets/task_overview.png)
 
-This repo implements that same split. `models/classifier/` is the left half: one encoder, one
-label out. `models/seq2seq/` is the right half: an encoder feeding a decoder that's seeded
+This repo implements that same split. `vit_classifier/` is the left half: one encoder, one
+label out. `vit_seq2seq/` is the right half: an encoder feeding a decoder that's seeded
 with a learned `START` token and generates one digit at a time, the same `<start>` → `0 2 3 1`
 loop the figure draws.
 
@@ -76,12 +76,12 @@ flowchart TD
         decmod["Decoder"]
     end
 
-    subgraph Classifier["models/classifier/"]
+    subgraph Classifier["vit_classifier/"]
         clsmodel["VisionTransformer<br/>(encoder-only, 10-class)"]
         clstrain["trainer.py"]
     end
 
-    subgraph Seq2Seq["models/seq2seq/"]
+    subgraph Seq2Seq["vit_seq2seq/"]
         s2smodel["Seq2SeqVisionTransformer<br/>(encoder-decoder, vocab=12)"]
         s2strain["seq2seq/trainer.py"]
     end
@@ -104,7 +104,7 @@ flowchart TD
 
     clsckpt --> api["FastAPI<br/>serving/api.py"]
     s2sckpt --> api
-    api --> ui["Streamlit frontend<br/>(ai-residency-frontend)"]
+    api --> ui["Streamlit frontend<br/>(services/frontend)"]
 
     style Shared fill:#e1f5fe,stroke:#01579b
     style Classifier fill:#e8f5e8,stroke:#1b5e20
@@ -124,17 +124,17 @@ sequenceDiagram
     participant API as FastAPI (serve.py)
     participant UI as Streamlit (main.py)
 
-    Dev->>+CT: python -m models.classifier.trainer
+    Dev->>+CT: python -m vit_classifier.trainer
     CT-->>-Dev: checkpoints/vit_cls_..._best.pth
 
-    Dev->>+ST: python -m models.seq2seq.trainer
+    Dev->>+ST: python -m vit_seq2seq.trainer
     ST-->>-Dev: checkpoints/vit_seq2seq_..._best.pth
 
     Dev->>+API: python -m serving.api
     API->>API: load_models()
     API-->>-Dev: Uvicorn running on :8000
 
-    Dev->>+UI: frontend (ai-residency-frontend)
+    Dev->>+UI: frontend (services/frontend)
     UI-->>-Dev: UI on :8501
 
     Dev->>UI: draw digit(s) on canvas
@@ -220,14 +220,14 @@ inset in Figure 4, which uses pre-norm instead.
 ### 3.4 Sequence Decoding: Encoder–Decoder ViT
 
 The multi-digit task can't use a fixed-size classification head, because the output is a variable
-number of digits (0 up to 999). Instead, `models/seq2seq/seq2seq.py` pairs the same
+number of digits (0 up to 999). Instead, `vit_seq2seq/seq2seq.py` pairs the same
 patch-embedding encoder with a transformer decoder over a 12-token vocabulary: digits 0–9, plus
 learned `START` (10) and `EOS` (11) tokens.
 
 **Figure 6.** Encoder–decoder ViT for multi-digit sequence generation.
 ![Encoder-decoder architecture for the sequence task: a 3-digit image goes through linear projection of flattened patches and encoder blocks to produce a 16x64 encoder output; in parallel, the target tokens <start> 7 7 6 9 are tokenized and embedded (5x11), pass through decoder blocks with cross-attention (Q/K/V formulas shown) to the encoder output, and are projected via nn.Linear(11,13) into next-token logits over the digit/start/finish/pad vocabulary, producing 7 7 6 9 <finish>](assets/seq2seq_slide_architecture.png)
 
-`models/seq2seq/seq2seq.py` implements this pipeline. On the left, a patch-embedding encoder
+`vit_seq2seq/seq2seq.py` implements this pipeline. On the left, a patch-embedding encoder
 (`Conv2d(k=16,s=16)` → 25×256 for this repo's real 84×84 three-digit images, larger than the
 figure's illustrative 16×64). On the right, a tokenizer/embedding stage over a 12-token vocabulary
 — digits 0–9 plus learned `START`/`EOS` tokens, the figure's `<start>`/`<finish>`/`<pad>` table.
@@ -274,26 +274,26 @@ target actually runs is kept underneath it, since that's what's really executing
 
 ```bash
 make install   # what this runs: uv sync   (installs from pyproject.toml + committed uv.lock)
-make serve     # what this runs: uv run python -m serving.api   (FastAPI on :8000)
+make serve SERVICE=vit-seq2seq     # what this runs: uv run python -m serving.api   (FastAPI on :8000)
 make check     # lint + type check + tests
 ```
 
 To retrain from scratch instead:
 
 ```bash
-make train-classifier  # what this runs:
-                        #   uv run python -m models.classifier.trainer
+make train SERVICE=vit-seq2seq-classifier  # what this runs:
+                        #   uv run python -m vit_classifier.trainer
                         # trains on MNIST, saves to checkpoints/
-make train-seq2seq     # what this runs:
-                        #   uv run python -m models.seq2seq.trainer
+make train SERVICE=vit-seq2seq-seq2seq     # what this runs:
+                        #   uv run python -m vit_seq2seq.trainer
                         # trains on composited multi-digit images, ~85min on M1 Max/MPS
 ```
 
-`make train` is an alias for `make train-classifier` (the faster of the two).
+`make train SERVICE=vit-seq2seq` is an alias for `make train SERVICE=vit-seq2seq-classifier` (the faster of the two).
 
 A `notebooks/walkthrough.ipynb` runs the happy path end to end — loading both committed
 checkpoints and running real inference — without retraining anything. Its first cell chdirs back
-to the repo root so relative paths (checkpoints, MNIST cache) resolve the same way `make serve`'s
+to the repo root so relative paths (checkpoints, MNIST cache) resolve the same way `make serve SERVICE=vit-seq2seq`'s
 do; the package itself is installed, so nothing needs to be put on the import path.
 
 **Docker Compose (Linux/CUDA servers):** two single-purpose Dockerfiles, both
@@ -306,17 +306,17 @@ CUDA-enabled lockfile rather than overriding this one at build time.
 On Apple Silicon, that CPU-only pin isn't just about avoiding a CUDA download. Docker Desktop on
 macOS runs containers inside a Linux VM, and that VM has no path to the host's Metal GPU at all
 (no MPS passthrough exists, unlike Linux's native NVIDIA passthrough), so a container always
-reports `"device": "cpu"` here no matter what the host itself can do. `make serve` /
-`make train-classifier` / `make train-seq2seq` run natively and get real MPS acceleration; the
+reports `"device": "cpu"` here no matter what the host itself can do. `make serve SERVICE=vit-seq2seq` /
+`make train SERVICE=vit-seq2seq-classifier` / `make train SERVICE=vit-seq2seq-seq2seq` run natively and get real MPS acceleration; the
 same targets under `make docker-*` are CPU-only on this hardware by construction, not a bug to
 chase. Use the native `make` targets for real Apple Silicon speed, and Docker Compose for a
 CPU-portable, Linux/CUDA-ready deployment story.
 
 ```bash
-make docker-up               # what this runs: docker compose up serve
-make docker-train            # what this runs: docker compose --profile train run --rm train   (classifier)
-make docker-train STAGE=seq2seq  # the slower seq2seq trainer
-make docker-down             # what this runs: docker compose down
+make -C deploy up               # what this runs: docker compose up serve
+docker compose --profile train run --rm train-vit-seq2seq
+make -C deploy up  # then: docker compose --profile train run --rm train-vit-seq2seq STAGE=seq2seq  # the slower seq2seq trainer
+make -C deploy down             # what this runs: docker compose down
 ```
 
 **API:**

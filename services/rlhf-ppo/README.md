@@ -199,11 +199,11 @@ for the invariant this guarantees.
 
 Mapping the architecture from [Section 2](#2-system-architecture) onto the actual file layout:
 this repo is a flat set of modules at the repo root — no `src/`, no install step, no `sys.path`
-manipulation anywhere. `make train` runs `python -m training.run_ppo` and `make serve` runs
+manipulation anywhere. `make train SERVICE=rlhf-ppo` runs `python -m training.run_ppo` and `make serve SERVICE=rlhf-ppo` runs
 `python -m serving.api`, directly.
 
 Shared concerns that every repo in this portfolio needs identically — device selection, logging,
-seeding, the base config fields — come from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common)
+seeding, the base config fields — come from [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common)
 rather than being reimplemented here. `PPOConfig` inherits from its `BaseConfig`.
 
 ```
@@ -225,8 +225,8 @@ rather than being reimplemented here. `PPOConfig` inherits from its `BaseConfig`
 │   ├── policy_ratio.py      PolicyRatio — recomputes log pi_new(a|s) for the PPO ratio
 │   ├── policy_loss.py       PolicyLoss — the PPO-clip surrogate objective
 │   ├── value_loss.py        ValueLoss — MSE against reward-to-go
-│   └── run_ppo.py           Entrypoint: one ppo_step() on two example prompts (`make train`)
-├── serving/api.py         FastAPI generation service (`make serve`), what the portfolio frontend calls
+│   └── run_ppo.py           Entrypoint: one ppo_step() on two example prompts (`make train SERVICE=rlhf-ppo`)
+├── serving/api.py         FastAPI generation service (`make serve SERVICE=rlhf-ppo`), what the portfolio frontend calls
 └── sa_pair.py             The (state, action) dict every pipeline stage reads from and writes to
 examples/basic_usage.py  Three consecutive PPO steps, for watching the losses move
 notebooks/
@@ -242,25 +242,25 @@ the real entrypoints, plus a Docker path for running them without a local Python
 
 ```bash
 make install   # uv sync — installs from pyproject.toml/uv.lock
-make train     # uv run python -m training.run_ppo — see note below
-make serve     # uv run python -m serving.api — FastAPI generation service on :8000
-make test      # uv run pytest -q
+make train SERVICE=rlhf-ppo     # uv run python -m training.run_ppo — see note below
+make serve SERVICE=rlhf-ppo     # uv run python -m serving.api — FastAPI generation service on :8000
+make test SERVICE=rlhf-ppo      # uv run pytest -q
 make check     # lint + strict mypy + tests, everything CI would run
 ```
 
-**What the generation demo does:** the browser UI (the unified frontend in `ai-residency-frontend`,
+**What the generation demo does:** the browser UI (the unified frontend in `services/frontend`,
 calling this repo's `serving/api.py`) loads `PolicyModel` and generates a sampled completion for a
 prompt you type in — the real generation pipeline end to end (tokenizer setup with
 `padding_side="left"`, float32 model loading, LoRA wrapping, sampling `generate()`). This is the
 one-model demo path; `PolicyModel` here is a freshly LoRA-initialized copy of Qwen3-0.6B-Base, and
-`make train` below exercises the full four-model pipeline.
+`make train SERVICE=rlhf-ppo` below exercises the full four-model pipeline.
 
-**What `make train` actually runs:** one PPO step end to end (generation, KL penalty, reward
+**What `make train SERVICE=rlhf-ppo` actually runs:** one PPO step end to end (generation, KL penalty, reward
 scoring, GAE advantage, one value-model gradient step, one policy-model gradient step) on two
 example prompts. `examples/basic_usage.py` runs three of them back to back to watch the losses move
 between steps.
 
-**What `make serve` actually runs:** the same FastAPI generation service (`serving/api.py`) the
+**What `make serve SERVICE=rlhf-ppo` actually runs:** the same FastAPI generation service (`serving/api.py`) the
 portfolio frontend calls, matching every other project's HTTP contract.
 
 **Device selection:** `PPOTrainer` calls `ai_residency_common.get_device()`, which picks `cuda` > `mps` >
@@ -269,9 +269,9 @@ now uses MPS automatically: four float32 model copies (SFT/policy/reward/value) 
 meaningfully from it, and I confirmed empirically that LoRA/PEFT plus batched `generate()` produce
 the same coherent output on MPS as on CPU, just faster. Inside Docker, this always falls back to
 CPU. The container is Linux, and MPS is a macOS-only backend with no passthrough into a Linux VM,
-so `make docker-train`/`make docker-up` never see `mps` regardless of the host.
+so `make -C deploy up  # then: docker compose --profile train run --rm train-rlhf-ppo`/`make -C deploy up` never see `mps` regardless of the host.
 
-**Figure 5.** Running `training/run_ppo.py` (what `make train` runs under the hood).
+**Figure 5.** Running `training/run_ppo.py` (what `make train SERVICE=rlhf-ppo` runs under the hood).
 ```mermaid
 sequenceDiagram
     actor Dev as Developer
@@ -307,13 +307,18 @@ pytest -q
 
 Two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base`: `Dockerfile.serve` (the FastAPI
 generation service) and `Dockerfile.train` (one PPO step on a GPU host). Neither needs a git
-credential — `ai-residency-common` is already installed in the base image.
+credential — `libs/common` is already installed in the base image.
 
 ```bash
-make docker-build-serve   # docker build -f Dockerfile.serve -t ai-residency-week6-serve .
-make docker-build-train   # docker build -f Dockerfile.train -t ai-residency-week6-train .
-make docker-up            # docker compose up --build serve — FastAPI at http://localhost:8000
-make docker-train         # docker compose --profile train run --rm train — one PPO step, in a container
+# both images for this service, built from the repository root
+make build SERVICE=rlhf-ppo
+make push SERVICE=rlhf-ppo
+
+# the whole stack, this service included
+make -C deploy up
+
+# train in a container
+cd deploy && docker compose --profile train run --rm train-rlhf-ppo
 ```
 
 `train` is profile-gated in `docker-compose.yml` (`profiles: [train]`) so a bare
@@ -325,7 +330,7 @@ structurally ready.
 ## 6. Experimental Results
 
 `PPOTrainer.ppo_step()` runs end to end against a real pretrained reward model, with a fixed seed
-(`ai-residency-common`'s `set_seed`) for reproducible runs. One gradient step on two example
+(`libs/common`'s `set_seed`) for reproducible runs. One gradient step on two example
 prompts produces:
 
 ```
@@ -385,5 +390,5 @@ directly (see References).
 ## Dependencies
 
 PyTorch · Hugging Face `transformers` · `peft` (LoRA) · `datasets` · NumPy · tqdm · `accelerate` ·
-FastAPI · Streamlit · [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) (shared device,
+FastAPI · Streamlit · [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) (shared device,
 logging, config and tracking helpers) · ruff · mypy

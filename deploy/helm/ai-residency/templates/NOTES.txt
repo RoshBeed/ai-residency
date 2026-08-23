@@ -1,7 +1,7 @@
 AI Residency Portfolio deployed to namespace "{{ .Release.Namespace }}".
 
 Images are pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), published by each
-week repo's own `make docker-push-serve` / `docker-push-train`. If you've republished any
+`make push SERVICE=<name>` at the repository root. If you've republished any
 image, pull it and roll the pods:
 
   docker pull roshbeed/ai-residency-word-embeddings-serve:latest   # (or whichever changed)

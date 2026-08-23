@@ -1,51 +1,53 @@
-# AI Residency Portfolio Infrastructure
+# Deployment
 
-Deployment infrastructure for the [Machine Learning Institute](https://ml.institute/) residency
-projects. This repo only *deploys* containers — it pulls each week's published Docker Hub image and
-runs it. The code and the UI live elsewhere:
+How the portfolio runs: a docker-compose stack for a single `docker compose up`, and a Helm chart
+for a real Kubernetes cluster. Same ten containers either way — nine backends, the frontend, and
+the Redis the retrieval service indexes into.
 
-| Repo | What it is |
+Nothing here builds from source. It consumes images built at the repository root
+(`make build SERVICE=<name>`), so the deployment description and the code that produced it move
+together in one commit.
+
+| | |
 |---|---|
-| [`services/`](../services) | The services this deploys, one directory each |
-| [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) | Shared helpers the backends depend on |
-| `ai-residency-frontend` | The Streamlit frontend (and the full docs for all weeks) |
-| **this repo** | Compose + Helm + Terraform to run all of it |
-
-There are two equivalent ways to run the same seven containers (6 backends + frontend), plus vector-search-retrieval's
-Redis: a docker-compose stack for a single `docker compose up`, and a Helm chart for a real
-Kubernetes cluster. Each week stands alone as its own service, with one separate frontend service in
-front of them.
+| [`../services/`](../services) | The services this deploys, one directory each |
+| [`../libs/common`](../libs/common) | Shared helpers every backend depends on |
+| [`../services/frontend`](../services/frontend) | The Streamlit frontend that calls them |
 
 ## Layout
 
 ```
-ai-residency-infrastructure/
-├── docker-compose.yml         all 6 backends + vector-search-retrieval's Redis + the frontend, one command
-├── helm/ai-residency-hub/    Helm chart for the same 7 services on a Kubernetes cluster
-├── infra/aws-training/        Terraform: AWS spot GPU training, an alternative to RunPod
-├── Makefile                   pull / up / down / status / helm-install / helm-upgrade / helm-train
-└── .env.example               HF_TOKEN, WANDB_API_KEY (optional — everything degrades without them)
+deploy/
+├── compose/docker-compose.yml   every backend + Redis + the frontend, one command
+├── helm/ai-residency/           the same services as a Helm chart
+├── terraform/aws-training/      AWS spot GPU training, an alternative to RunPod
+├── Makefile                     up / down / status / load-images / helm-* targets
+└── .env.example                 HF_TOKEN, WANDB_API_KEY (optional — both degrade gracefully)
 ```
 
 ## Images come from Docker Hub
 
-Every container is pulled as `roshbeed/ai-residency-weekN-serve:latest` (or `-train`, or
-`roshbeed/ai-residency-frontend`). Each is published by its own repo's
-`make docker-push-serve` / `make docker-push-train`. This repo never builds from source — that is
-the whole point of the split: the week repos build and publish, this repo consumes.
-
-**They are not pushed yet** (the whole portfolio is private/unpublished right now), so
-`docker compose pull` has nothing to fetch. To run the stack before then, build the images
-locally — each repo's `make docker-build-serve` tags them under exactly the same
-`roshbeed/…:latest` name this compose file and the Helm chart reference:
+Every container is pulled as `roshbeed/ai-residency-<service>-serve:latest` (or `-train`, or
+`roshbeed/ai-residency-frontend`). They are built and published from the repository root:
 
 ```bash
-cd ../ai-residency-repo-template && GITHUB_TOKEN=$(gh auth token) make docker-build-base
-for r in ../ai-residency-week*/; do (cd "$r" && make docker-build-serve); done
-cd ../ai-residency-frontend && make docker-build
+make build SERVICE=word-embeddings
+make push  SERVICE=word-embeddings
 ```
 
-The base image comes first because every week's `Dockerfile.serve` builds `FROM` it.
+**Nothing is published yet**, so `docker compose pull` has nothing to fetch. To run the stack
+before then, build locally — the same names compose and the chart already reference:
+
+```bash
+cd ..
+docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+for s in $(ls -d services/*/ | xargs -n1 basename | grep -v _template | grep -v frontend); do
+  make build SERVICE=$s
+done
+docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-frontend:latest .
+```
+
+The base image comes first because every `Dockerfile.serve` builds `FROM` it.
 
 That is enough for docker-compose, which reads the host's images directly. **Kubernetes does
 not.** Docker Desktop runs its node as a kind container with its own containerd image store, so
@@ -59,9 +61,9 @@ kubectl rollout restart deployment -n ai-residency
 ```
 
 Trained checkpoints are a separate concern from the images. Each backend mounts
-`../ai-residency-weekN-.../checkpoints` from the sibling repo on this host as the fast local path, and also
+`../services/<name>/checkpoints` as the fast local path, and also
 falls back to pulling weights from the Hugging Face Hub when the mount is empty or absent (see
-`ai-residency-common`'s `resolve_checkpoint`). It reports which happened via `checkpoint_source` on
+`libs/common`'s `resolve_checkpoint`). It reports which happened via `checkpoint_source` on
 `/health`.
 
 ## Quickstart
@@ -106,12 +108,12 @@ it looked in, so mounting `checkpoints` read-only turns "fall back to the Hub" i
 
 ## Kubernetes (Helm)
 
-`helm/ai-residency-hub/` is the Kubernetes analog of `docker-compose.yml` — the same 7 services
-(6 backends + frontend) plus vector-search-retrieval's Redis, expressed as Deployments/Services instead of compose
+`helm/ai-residency/` is the Kubernetes analog of `docker-compose.yml` — the same ten containers
+(nine backends + frontend) plus the retrieval service's Redis, expressed as Deployments/Services instead of compose
 services.
 
 ```bash
-make helm-install         # helm install ai-residency-hub ./helm/ai-residency-hub -n ai-residency --create-namespace
+make helm-install         # helm install ai-residency ./helm/ai-residency -n ai-residency --create-namespace
 ```
 
 Then open http://localhost:8500 — Docker Desktop's Kubernetes auto-binds `LoadBalancer` services to
@@ -214,7 +216,7 @@ and confirmed to pull from the Hub and return identical output.
 
 ### Credentials
 
-Both boxes read a `.env` (see `.env.example`). `ai-residency-common` loads it on import, walking up from the
+Both boxes read a `.env` (see `.env.example`). `libs/common` loads it on import, walking up from the
 working directory, so one file beside several repos covers all of them.
 
 ```bash
@@ -254,8 +256,8 @@ Per-repo caveats worth knowing before you rent anything:
 ### AWS EC2 spot GPU — alternative to RunPod
 
 `infra/aws-training/` is Terraform that provisions a single AWS spot GPU instance, pulls a pushed
-`roshbeed/ai-residency-weekN-train` image (built by that week's own `Dockerfile.train`,
-`make docker-push-train`), runs it, and terminates itself when training finishes or times out. It
+`roshbeed/ai-residency-<service>` image (built by that week's own `Dockerfile.train`,
+`make push SERVICE=<name>`), runs it, and terminates itself when training finishes or times out. It
 moved here from Week 3 (where it started as a Week-3-only script) because it isn't Week-3-specific
 infrastructure — `train_image` picks which week's already-built image to run.
 
@@ -285,12 +287,12 @@ curl localhost:8000/health
 
 No checkpoint needs copying. The first request resolves it: local file if present, Hub otherwise.
 Expect `"checkpoint_source": "hub"` on a fresh box — that is the whole mechanism working. A
-container works the same way, with no volume at all: `docker pull roshbeed/ai-residency-weekN-serve:latest`
-then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshbeed/ai-residency-weekN-serve:latest`.
+container works the same way, with no volume at all: `docker pull roshbeed/ai-residency-<service>:latest`
+then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshbeed/ai-residency-<service>:latest`.
 
 ## Related
 
-The frontend and the full documentation for all weeks live in `ai-residency-frontend`. The
+The frontend and the full documentation for all weeks live in `services/frontend`. The
 backend repos are container source only: two Dockerfiles (`Dockerfile.train` for a RunPod/AWS
 GPU host, `Dockerfile.serve` for Kubernetes) and a short technical README:
 

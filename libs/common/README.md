@@ -1,37 +1,27 @@
-# ai-residency-common
+# `libs/common` — the shared library
 
-Shared helpers for the six repos of my [Machine Learning Institute](https://ml.institute/)
-residency portfolio. Each week is its own standalone repo, so before this package existed the
-same concerns were implemented six separate times and drifted apart: device selection had six
-implementations (one omitted CUDA entirely, one returned bare strings instead of `torch.device`,
-one repeated the same block in three files), there were ~495 `print()` calls and no logging
-config, checkpoint files had no agreed shape, four of the six repos had no random seed at all,
-only two logged metrics anywhere, and only one pushed weights off the machine that trained them.
+The things every service must do identically, in one place. Before this existed each project
+implemented them separately and they drifted: device selection had six implementations (one
+omitted CUDA entirely, one returned bare strings instead of `torch.device`, one repeated the same
+block in three files), there were ~495 `print()` calls and no logging config, checkpoint files had
+no agreed shape, four projects had no random seed at all, only two logged metrics anywhere, and
+only one pushed weights off the machine that trained them.
 
-This package is small on purpose. It holds the things that must be identical across repos, and
-nothing else — the actual ML lives in the week repos.
+Small on purpose. It holds what has to be identical and nothing else — the actual ML lives in
+[`services/`](../../services).
 
 ## Install
 
-```bash
-uv add "ai-residency-common @ git+https://https://github.com/RoshBeed/ai-residency.git@v0.7.3"
+```toml
+# in a service's pyproject.toml
+[tool.uv.sources]
+ai-residency-common = { workspace = true }
 ```
 
-Pin by tag. Six repos depend on this, and an unpinned change would break all of them at once.
-
-The repo is private, so `docker build` needs a token passed as a BuildKit secret rather than
-inheriting host credentials:
-
-```dockerfile
-RUN --mount=type=secret,id=gh_token \
-    git config --global credential.helper 'store --file=/tmp/gc' && \
-    printf 'https://x-access-token:%s@github.com\n' "$(cat /run/secrets/gh_token)" > /tmp/gc && \
-    uv sync --frozen --no-install-project && \
-    rm -f /tmp/gc && git config --global --unset credential.helper
-```
-
-Built with `docker build --secret id=gh_token,env=GITHUB_TOKEN`. The token stays out of the image:
-no credential file survives the layer, and it appears in no layer's contents.
+No version to pin, and no credential to supply. This was a private git dependency pinned by tag
+in ten places, which meant a bump was ten coordinated edits and a Docker build had to mount a
+GitHub token as a BuildKit secret. As a workspace member it resolves by path: a change here
+reaches every service in the same commit, and CI checks all of them.
 
 ## What's in it
 
@@ -148,4 +138,4 @@ make check     # lint + strict mypy + tests
 
 Ruff (format and lint) and mypy run in strict mode with zero suppressions. The `[tool.ruff]` and
 `[tool.mypy]` blocks in `pyproject.toml` are the canonical copies for the whole portfolio — the
-week repos use the same configuration.
+services use the same configuration.

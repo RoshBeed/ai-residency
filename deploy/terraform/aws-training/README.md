@@ -3,7 +3,7 @@
 Terraform that provisions a single AWS spot GPU instance, pulls a pushed `roshbeed/ai-residency-weekN-train`
 image, runs it, and terminates the instance itself when training finishes (or times out). This is
 the same training container every week repo's own `Dockerfile.train` already builds and
-`make docker-push-train` already pushes — this module doesn't reimplement training, it's just
+`make push SERVICE=<name>` already pushes — this module doesn't reimplement training, it's just
 another place to run the same image, on a rented GPU instead of RunPod.
 
 Generalized from a module that only ever ran the vision-transformers project,
@@ -24,7 +24,7 @@ own comments for what changed).
 ## Prerequisites
 
 - Terraform >= 1.0, AWS CLI configured (`aws configure`), an SSH key pair
-- A pushed training image: `cd ai-residency-weekN-.../ && make docker-push-train` (needs `docker login`
+- A pushed training image: `cd ai-residency-weekN-.../ && make push SERVICE=<name>` (needs `docker login`
   first if the image is private — see `docker_hub_username`/`docker_hub_token` below)
 - A Hugging Face token with write access — training pushes its own checkpoint as it runs
 
@@ -48,11 +48,11 @@ timeout — this is a backstop, not the normal path).
 
 | Variable | What it does |
 |---|---|
-| `train_image` | The image to pull and run, e.g. `roshbeed/ai-residency-vision-transformers-train:latest`. No default — always set this. |
+| `train_image` | The image to pull and run, e.g. `roshbeed/ai-residency-vit-classifier-train:latest`. No default — always set this. |
 | `train_command` | Overrides the image's own default training entrypoint. Empty runs the image's default (e.g. Week 3's classifier stage); set to `"seq2seq"` for its other trainer. |
 | `docker_hub_username` / `docker_hub_token` | Only needed if `train_image` is a private repository. |
-| `hf_token` | Training pushes its own checkpoint to the Hub via `ai-residency-common`'s `push_checkpoint` — this module never re-uploads anything separately. |
-| `wandb_api_key` | Optional. Without it, the run still trains and logs offline (`ai-residency-common`'s `init_tracking` degrades rather than fails). |
+| `hf_token` | Training pushes its own checkpoint to the Hub via `libs/common`'s `push_checkpoint` — this module never re-uploads anything separately. |
+| `wandb_api_key` | Optional. Without it, the run still trains and logs offline (`libs/common`'s `init_tracking` degrades rather than fails). |
 | `spot_price` / `max_training_time` | Caps cost two ways: a max hourly bid, and an auto-terminate timeout regardless of training progress. |
 
 ## What actually happens on the instance

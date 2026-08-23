@@ -290,10 +290,10 @@ module (e.g. Redis Cloud or `redis-stack` locally) for the vector index, and `RE
 ### Docker Compose (quickest)
 
 ```bash
-make docker-up      # starts Redis + the UI, builds+runs the serve image: index corpus, then interactive query CLI
-make docker-train    # STAGE=all by default; or STAGE=tokenizer|embeddings|triples|tokenize|encoder
-make docker-build    # build the serve, ui, and train images without running them
-make docker-down     # stop and remove all Compose services
+make -C deploy up      # starts Redis + the UI, builds+runs the serve image: index corpus, then interactive query CLI
+docker compose --profile train run --rm train-vector-search-retrieval
+make build SERVICE=vector-search-retrieval    # build the serve, ui, and train images without running them
+make -C deploy down     # stop and remove all Compose services
 ```
 
 `docker-up` starts a `redis-stack-server` container (RediSearch module, no persistence, throwaway
@@ -307,18 +307,18 @@ all five in order.
 
 ```bash
 make install   # uv sync
-make train     # train-cbow && train-triples && train-encoder, in order
-make serve     # the FastAPI query service (needs Redis already running)
-make test      # pytest
+make train SERVICE=vector-search-retrieval     # train-cbow && train-triples && train-encoder, in order
+make serve SERVICE=vector-search-retrieval     # the FastAPI query service (needs Redis already running)
+make test SERVICE=vector-search-retrieval      # pytest
 ```
 
 The interactive query CLI is `python -m retrieval.query_redis_ann` (a local-only loop, not a
-server). The browser UI is the unified Streamlit frontend in `ai-residency-frontend`, which calls
+server). The browser UI is the unified Streamlit frontend in `services/frontend`, which calls
 this repo's `serving/api.py` over HTTP — it is not in this repo.
 
-Local `make train*` is the fast path on Apple Silicon: CBOW training picks up the MPS
+Local `make train SERVICE=vector-search-retrieval*` is the fast path on Apple Silicon: CBOW training picks up the MPS
 backend automatically when available, benchmarked ~3.7x faster than CPU on this repo's own
-batch/vocab shape. `make docker-train` always runs CPU-only, even on this same Mac (Docker
+batch/vocab shape. `make -C deploy up  # then: docker compose --profile train run --rm train-vector-search-retrieval` always runs CPU-only, even on this same Mac (Docker
 Desktop's containers run inside a Linux VM with no GPU/MPS passthrough), so it's for portability
 and eventual real-GPU-host deployment, not local speed. (The GRU dual-encoder training in
 `models/training.py` trains one triple at a time on tiny tensors; benchmarked, MPS is

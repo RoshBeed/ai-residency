@@ -7,7 +7,7 @@ template nobody has run is a template that doesn't work.
 
 This repo is also the **source of `roshbeed/ai-residency-base`**, the Docker image every week's own
 `Dockerfile.train`/`Dockerfile.serve` builds `FROM`. Explanatory write-ups, diagrams and the UI all
-live in [`ai-residency-frontend`](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend) now, not
+live in [`services/frontend`](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend) now, not
 here — this repo (and every week repo shaped like it) is container source, not documentation.
 
 ## Instantiating it
@@ -72,47 +72,51 @@ Best validation loss 5.2824 against baseline 12.9774 (beats baseline)
 ## Commands
 
 ```bash
-make install       # uv sync
-make train         # train, checkpoint, push best to the Hub
-make serve         # FastAPI on :8000
-make check         # lint + strict mypy + tests
+# from the repository root
+make install                       # one venv for the whole workspace
+make check SERVICE=<name>          # lint + strict mypy + tests
+make build SERVICE=<name>          # both images, built from the root context
+make push SERVICE=<name>           # needs `docker login` first
+make train SERVICE=<name>
+make serve SERVICE=<name>          # FastAPI on :8000
 
-make docker-build-base    # build roshbeed/ai-residency-base (needs GITHUB_TOKEN; only step that does)
-make docker-build-train   # build the training image, FROM roshbeed/ai-residency-base
-make docker-build-serve   # build the serving image, FROM roshbeed/ai-residency-base
-make docker-up             # serve, in a container
-make docker-train          # train, in a container (profile-gated)
+# from services/<name>
+make help                          # this service's own pipeline stages
 ```
 
-`make help` lists everything, including the `docker-push-*` targets (need `docker login` first).
+The base image every service builds `FROM`:
+
+```bash
+docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+```
 
 ## Standards
 
-Shared behaviour comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag.
+Shared behaviour comes from [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag.
 Device selection, logging, checkpoint format, seeding, Hub upload and W&B tracking are defined
 once there rather than six times here.
 
 Ruff (format and lint) and mypy run in **strict mode with zero suppressions** — no `type: ignore`,
 no blanket `noqa`. The `[tool.ruff]` and `[tool.mypy]` blocks are copied verbatim from
-`ai-residency-common` so configuration cannot drift between repos.
+`libs/common` so configuration cannot drift between repos.
 
 Python is pinned at `>=3.11` with `python:3.11-slim` in every Dockerfile here, matching across the
 portfolio.
 
 ## Docker: one base image, two purposes
 
-`Dockerfile.base` installs `ai-residency-common` — the one private git dependency every repo shares — into
+`Dockerfile.base` installs `libs/common` — the one private git dependency every repo shares — into
 `roshbeed/ai-residency-base`. That's the only Dockerfile in the whole portfolio that ever needs a GitHub
 credential. `Dockerfile.train` and `Dockerfile.serve` both build `FROM roshbeed/ai-residency-base` and never
-touch git at all: `ai-residency-common` is already installed by the time their own `uv sync` runs, and `uv`
+touch git at all: `libs/common` is already installed by the time their own `uv sync` runs, and `uv`
 recognizes it as already-satisfied against the lock file rather than re-fetching it.
 
 - **`Dockerfile.serve`** is what Kubernetes runs — the FastAPI inference container.
 - **`Dockerfile.train`** is what a RunPod or AWS spot-GPU host pulls and runs for training.
 
 Build the base image once locally before building either of the other two:
-`make docker-build-base`. Once `roshbeed/ai-residency-base` is published, `docker-build-train`/
-`docker-build-serve` can instead pull it (`--build-arg BASE_IMAGE=roshbeed/ai-residency-base:latest`).
+`docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .` at the repository root.
+It carries python, uv and the CPU torch wheel, and needs no credential of its own.
 
 ## Credentials
 
@@ -122,8 +126,8 @@ Everything degrades rather than failing, so a fresh clone works without any of t
 |---|---|
 | `HF_TOKEN` | Checkpoints stay local, warning logged |
 | `WANDB_API_KEY` | Run goes offline, sync later with `wandb sync` |
-| `GITHUB_TOKEN` | Only needed for `make docker-build-base` — `ai-residency-common` is private |
 
-`docker-build-base` passes the token as a BuildKit secret rather than baking it in:
-`docker build --secret id=gh_token,env=GITHUB_TOKEN`. The Makefile fills `GITHUB_TOKEN` from
-`gh auth token` automatically.
+The base image used to install `ai-residency-common` from a private git URL, so every build
+mounted a GitHub token as a BuildKit secret and scrubbed the credential file inside one `RUN`.
+The library is a workspace member now: no token, no git in the image, nothing to leak.
+

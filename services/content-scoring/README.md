@@ -103,7 +103,7 @@ sequenceDiagram
     actor main
     participant hub as word-embeddings Hub repo
     participant pred as scorer
-    participant ui as frontend (ai-residency-frontend)
+    participant ui as frontend (services/frontend)
     participant api
 
     Note over main,pred: Process 1 — python -m content_scoring.train
@@ -170,12 +170,12 @@ in [Section 5](#5-experimental-results).
 make install
 cp .env.example .env   # HF_TOKEN, WANDB_API_KEY
 
-make train             # train the regression head (over the frozen CBOW vectors)
-make serve             # FastAPI on :8000 (POST /predict, GET /health)
+make train SERVICE=content-scoring             # train the regression head (over the frozen CBOW vectors)
+make serve SERVICE=content-scoring             # FastAPI on :8000 (POST /predict, GET /health)
 make predict TITLE="your title here"   # one-shot score from the CLI
 ```
 
-`make train` pulls the frozen CBOW checkpoint (and the vocabulary inside it) from the
+`make train SERVICE=content-scoring` pulls the frozen CBOW checkpoint (and the vocabulary inside it) from the
 word-embeddings project's Hugging Face repo unless a local copy is present at
 `checkpoints/cbow/cbow_model.pt`, then writes `checkpoints/best_predictor.pth`.
 
@@ -183,13 +183,18 @@ word-embeddings project's Hugging Face repo unless a local copy is present at
 
 Two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base`: `Dockerfile.serve` (the FastAPI
 inference container Kubernetes runs) and `Dockerfile.train` (what a RunPod/AWS GPU host pulls).
-Neither needs a git credential — `ai-residency-common` is already installed in the base image.
+Neither needs a git credential. `libs/common` used to be a private git dependency, which meant every build mounted a token; it is a workspace member now and arrives with the source.
 
 ```bash
-make docker-build-serve   # docker build -f Dockerfile.serve -t ai-residency-week1-content-scoring-serve .
-make docker-build-train   # docker build -f Dockerfile.train -t ai-residency-week1-content-scoring-train .
-make docker-up            # docker compose up --build serve       -> API at http://localhost:8000
-make docker-train         # docker compose --profile train run --rm train
+# both images for this service, built from the repository root
+make build SERVICE=content-scoring
+make push SERVICE=content-scoring
+
+# the whole stack, this service included
+make -C deploy up
+
+# train in a container
+cd deploy && docker compose --profile train run --rm train-content-scoring
 ```
 
 The scorer checkpoint isn't baked into the image: serving pulls it from this repo's Hugging Face
@@ -200,10 +205,10 @@ same way from the word-embeddings project's repo. The training service is gated 
 Without Docker:
 
 ```bash
-make serve                # uv run python -m serve
+make serve SERVICE=content-scoring                # uv run python -m serve
 ```
 
-The Streamlit UI lives in `ai-residency-frontend`, calling this API the same way.
+The Streamlit UI lives in `services/frontend`, calling this API the same way.
 
 ## 5. Experimental Results
 
@@ -221,7 +226,7 @@ example — gets test MSE 3,595.90. Sample predictions from the saved checkpoint
 | "Show HN: PromptSecure, browser extension to privacy protect ChatGPT" | 20.24 | 3.00 |
 | "If It Works, It's Not AI: A Commercial Look at AI Startups (1999)" | 17.36 | 2.00 |
 
-**Figure 5.** The Streamlit UI (in `ai-residency-frontend`) serving a live prediction from the
+**Figure 5.** The Streamlit UI (in `services/frontend`) serving a live prediction from the
 trained pipeline.
 
 ![Streamlit UI showing a live HN score prediction](assets/word-embeddings/streamlit_ui.png)

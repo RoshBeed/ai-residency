@@ -158,12 +158,7 @@ backends:
   word-embeddings:
     image: roshbeed/ai-residency-word-embeddings-serve
     trainImage: roshbeed/ai-residency-word-embeddings-train
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - word_embeddings.train
+    trainCommand: ["python", "-m", "word_embeddings.train"]
     containerPort: 8000
     memoryRequest: 2560Mi
     memoryLimit: 3584Mi
@@ -183,12 +178,7 @@ backends:
   content-scoring:
     image: roshbeed/ai-residency-content-scoring-serve
     trainImage: roshbeed/ai-residency-content-scoring-train
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - content_scoring.train
+    trainCommand: ["python", "-m", "content_scoring.train"]
     containerPort: 8000
     memoryRequest: 1536Mi
     memoryLimit: 2048Mi
@@ -204,12 +194,7 @@ backends:
     image: roshbeed/ai-residency-vector-search-retrieval-serve
     trainImage: roshbeed/ai-residency-vector-search-retrieval-train
     # The encoder towers. The CBOW and triples stages need their own data prep.
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - models.training
+    trainCommand: ["python", "-m", "models.training"]
     containerPort: 8000
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
@@ -290,12 +275,7 @@ backends:
   multimodal-captioning:
     image: roshbeed/ai-residency-multimodal-captioning-serve
     trainImage: roshbeed/ai-residency-multimodal-captioning-train
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - multimodal_captioning.training
+    trainCommand: ["python", "-m", "multimodal_captioning.training"]
     containerPort: 8000
     memoryRequest: 6144Mi
     memoryLimit: 7680Mi
@@ -320,12 +300,7 @@ backends:
   whisper-fine-tuning:
     image: roshbeed/ai-residency-whisper-fine-tuning-serve
     trainImage: roshbeed/ai-residency-whisper-fine-tuning-train
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - audio_fine_tuning.training
+    trainCommand: ["python", "-m", "whisper_fine_tuning.training"]
     containerPort: 8000
     memoryRequest: 2048Mi
     memoryLimit: 2816Mi
@@ -361,12 +336,7 @@ backends:
     image: roshbeed/ai-residency-rlhf-ppo-serve
     trainImage: roshbeed/ai-residency-rlhf-ppo-train
     # One PPO step -- this repo has no epoch loop, by design.
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - training.run_ppo
+    trainCommand: ["python", "-m", "training.run_ppo"]
     containerPort: 8000
     # Three SmolLM2-135M copies (~270MB each) + DeBERTa reward model (~1.2GB)
     # ≈ 2GB of weights. Peak during PPO step ~4-5GB with activations.

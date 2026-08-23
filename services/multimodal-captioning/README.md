@@ -113,7 +113,7 @@ flowchart TD
     config --> train
     config --> caption_fn
 
-    caption_fn --> ui["Streamlit frontend<br/>(ai-residency-frontend)"] --> out1["Generated caption"]
+    caption_fn --> ui["Streamlit frontend<br/>(services/frontend)"] --> out1["Generated caption"]
     caption_fn --> api["serving/api.py<br/>(FastAPI, POST /caption)"] --> out2["Generated caption (JSON)"]
 
     nbs["notebooks/notebook.ipynb<br/>notebooks/final.ipynb"] -.narrate.-> train
@@ -123,7 +123,7 @@ flowchart TD
 The two notebooks import and call the package rather than defining anything themselves.
 `notebook.ipynb` walks the whole pipeline end to end; `final.ipynb` is the presentation-facing one
 (caption the sample images, burn the captions onto them). Both call the same `train()` that
-`make train` runs, so there's one training loop, not two drifting copies.
+`make train SERVICE=multimodal-captioning` runs, so there's one training loop, not two drifting copies.
 
 ## 3. Method
 
@@ -243,7 +243,7 @@ three checkpoint file names were literals scattered across those scripts and ele
 with the same value written differently in different places.
 
 Shared behaviour — device selection, logging, checkpoint format, seeding, Hub upload and W&B
-tracking — comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag, so it
+tracking — comes from [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag, so it
 is defined once for the whole portfolio instead of reimplemented per repo. Checkpoints carry their
 own architecture metadata via its `extra` field, so the loader always knows what shape to expect.
 
@@ -276,38 +276,42 @@ A `Makefile` wraps the commands below so the common paths are one line each:
 ```bash
 make install       # uv sync — creates .venv from pyproject.toml/uv.lock
 make zero-shot     # Part 1 — CLIP zero-shot classification, ~10 seconds, no GPU needed
-make train         # Part 2 — fit the adapter on Flickr30k
-make serve         # FastAPI backend, POST /caption, at http://localhost:8000
+make train SERVICE=multimodal-captioning         # Part 2 — fit the adapter on Flickr30k
+make serve SERVICE=multimodal-captioning         # FastAPI backend, POST /caption, at http://localhost:8000
 make notebook      # open notebooks/notebook.ipynb
-make test          # run the test suite
+make test SERVICE=multimodal-captioning          # run the test suite
 make check         # lint + typecheck + tests
 make help          # list every target
 ```
 
-`make serve` runs the FastAPI backend, matching every other repo in this portfolio; the CLIP demo
+`make serve SERVICE=multimodal-captioning` runs the FastAPI backend, matching every other repo in this portfolio; the CLIP demo
 is `make zero-shot`. The API itself is a thin wrapper around the same `generate_caption()` the
-unified frontend in `ai-residency-frontend` calls.
+unified frontend in `services/frontend` calls.
 
-`make train` writes to `checkpoints/adapter_flickr_batched.pth`, which is the committed checkpoint
+`make train SERVICE=multimodal-captioning` writes to `checkpoints/adapter_flickr_batched.pth`, which is the committed checkpoint
 the API and the frontend load by default. Running it overwrites that file. Point `checkpoint_dir`
 or `checkpoint_name` somewhere else first if you want to keep the shipped one, which is what both
 notebooks do (they train into a scratch directory).
 
 The browser demo — upload an image, pick one of the three shipped checkpoints, generate a caption —
-is the unified frontend in `ai-residency-frontend`, not in this repo. All three checkpoints load
+is the unified frontend in `services/frontend`, not in this repo. All three checkpoints load
 and generate captions.
 
 Docker wraps the same entrypoints as two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base`:
 
 ```bash
-make docker-build-serve   # docker build -f Dockerfile.serve -t ai-residency-week4-serve .
-make docker-build-train   # docker build -f Dockerfile.train -t ai-residency-week4-train .
-make docker-up            # docker compose up --build serve — API on :8000
-make docker-train         # docker compose --profile train run --rm train
-make docker-down          # docker compose down -v
+# both images for this service, built from the repository root
+make build SERVICE=multimodal-captioning
+make push SERVICE=multimodal-captioning
+
+# the whole stack, this service included
+make -C deploy up
+
+# train in a container
+cd deploy && docker compose --profile train run --rm train-multimodal-captioning
 ```
 
-`ai-residency-common` is a private git dependency, so an image build needs a GitHub token. The Makefile
+`libs/common` is a private git dependency, so an image build needs a GitHub token. The Makefile
 takes it from `gh auth token` and passes it as a BuildKit secret, mounted for one layer and never
 written into the image. `checkpoints/` and `data/` are excluded from the build context and
 bind-mounted at run time instead, so a container always serves whatever was most recently trained
@@ -416,5 +420,5 @@ Built with Ben Liong, Kadriye Turkcan, and Joao Esteves. Figure 1 is the CLIP pa
 ## Dependencies
 
 PyTorch · Hugging Face `transformers` (CLIP, Qwen3) · Hugging Face `datasets` (Flickr30k) ·
-[`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) (device, logging, checkpoints, seeding, Hub,
+[`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) (device, logging, checkpoints, seeding, Hub,
 W&B) · Streamlit · FastAPI · Jupyter · uv · ruff · mypy · pytest

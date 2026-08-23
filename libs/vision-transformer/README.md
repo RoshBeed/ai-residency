@@ -1,8 +1,13 @@
-# `transformer/` — from-scratch building blocks
+# `libs/vision-transformer` — from-scratch building blocks
 
-Composing these by hand is the point of the week: `nn.TransformerEncoderLayer` would have
-hidden the attention maths this repo exists to demonstrate. The two models in
-[`../models/`](../models/) are assembled entirely from what is here.
+Composing these by hand is the point: `nn.TransformerEncoderLayer` would have hidden the
+attention maths these projects exist to demonstrate.
+
+Two services are assembled entirely from what is here —
+[`vit-classifier`](../../services/vit-classifier) uses the encoder, patch embedding and positional
+encodings; [`vit-seq2seq`](../../services/vit-seq2seq) adds the decoder. They are the same blocks
+wired differently, which is exactly why this is a library rather than a folder inside one of
+them.
 
 | Module | What it is |
 | --- | --- |

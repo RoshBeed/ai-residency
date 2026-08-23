@@ -2,8 +2,8 @@
 # for vector-search-retrieval, plus the portfolio frontend that calls all six backends directly over
 # HTTP. This is the docker-compose on-ramp to the Kubernetes chart in helm/.
 #
-# Every weekN image is pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train),
-# pushed there by that week repo's own `make docker-push-serve` / `docker-push-train`.
+# Every image is pulled from Docker Hub (roshbeed/ai-residency-<service>-serve / -train),
+# pushed from the repository root with `make push SERVICE=<name>`.
 # Nothing here builds from source -- this repo only *deploys* the containers the week
 # repos publish. The frontend image (roshbeed/ai-residency-frontend) is published by
 # the ai-residency-frontend repo the same way.
@@ -196,7 +196,8 @@ services:
   train-vector-search-retrieval:
     profiles: [train]
     image: roshbeed/ai-residency-vector-search-retrieval-train:latest
-    command: ["uv", "run", "python", "-m", "training"]
+    # No command override: the image's own CMD is the single source of truth for what
+    # a training container runs, so it cannot drift from the Dockerfile.
     depends_on:
       - redis
     volumes:

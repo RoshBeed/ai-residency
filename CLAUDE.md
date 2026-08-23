@@ -42,6 +42,40 @@
 > `:latest` rather than a commit SHA; the eleven old repos are pushed but not archived; and the
 > monorepo is private, so the public profile README's links 404 until it is flipped.
 
+> **Update (2026-08-23, later) — two projects split into four.** `vision-transformers` became
+> `services/vit-classifier` + `services/vit-seq2seq`, and `audio-fine-tuning` became
+> `services/whisper-fine-tuning` + `services/speech-emotion-recognition`. The shared transformer
+> blocks moved to **`libs/vision-transformer`**, a second workspace library, rather than being
+> copied into both. Nine services now, eleven workspace members.
+>
+> **The emotion half had no trainer and no API** — it was tokenizer extension plus a data
+> pipeline. That was built: `data.py`, `models.py` (which resizes the embedding table whenever it
+> loads the extended tokenizer — those two disagreeing is a crash at best), `training.py`
+> following the canonical shape with a majority-emotion baseline, and a `/predict` that scores the
+> emotion tokens at the decoder's first step so every emotion gets a probability.
+>
+> **Read every `weekN` below as its service name**, including in Kubernetes Deployments, compose
+> services and frontend page keys — those were renamed too. Notebooks live at
+> `notebooks/<service>/` and `chdir` into `services/<service>/`.
+>
+> 147 tests, ruff and strict mypy clean, 78 relative links resolving, 25 mermaid diagrams
+> compiling. **Verified on the cluster:** all eleven images built from the workspace, 11/11 pods
+> Running with 0 restarts, and a real request against each — every backend reporting
+> `checkpoint_source: "hub"`, i.e. serving from artifacts it resolved itself with nothing mounted.
+> `speech-emotion-recognition` answers 503 with `checkpoint_loaded: false`, which is the designed
+> behaviour: nothing is trained yet, and it says so rather than crash-looping.
+>
+> **Deliberately not published (decided 2026-08-23):** nothing goes to Docker Hub while the repo is
+> private. Docker Hub's free tier allows one private repository, so publishing eleven images would
+> make the source publicly pullable ahead of the repo. Local-only until the repo goes public; the
+> path is `make build SERVICE=<name>` then `make -C deploy load-images` (Kubernetes needs the
+> explicit import — the node has its own containerd store). Revisit `deploy/` pinning a commit SHA
+> instead of `:latest` at that point.
+>
+> **Still to do:** train an emotion checkpoint
+> (`make -C services/speech-emotion-recognition download-data prepare-data add-tokens`, then
+> `make train SERVICE=speech-emotion-recognition`).
+
 > **The historical narrative below predates the consolidation.** It is kept for the
 > reasoning, not the paths — every repo it names is now a directory in the monorepo.
 

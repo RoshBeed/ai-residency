@@ -303,7 +303,7 @@ with `config/` and `serving/` alongside it. No install step, no `PYTHONPATH` jug
 into `word_embeddings/data.py`.
 
 Shared behaviour — device selection, logging, checkpoint format, seeding, Hub upload and W&B
-tracking — comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag, so it
+tracking — comes from [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag, so it
 is defined once for the whole portfolio instead of reimplemented per repo.
 
 ## 5. Usage
@@ -316,13 +316,13 @@ flowchart LR
     build["1. Corpus<br/>construction"] --> pretrain["2. Embedding<br/>pretraining"] --> hub["3. Publish<br/>to the Hub"]
 ```
 
-A `Makefile` wraps each stage below in a target of the same name (`make train-corpus`,
-`make train-cbow`). `make help` lists all of them, including the Docker equivalents. The raw
+A `Makefile` wraps each stage below in a target of the same name (`make train SERVICE=word-embeddings-corpus`,
+`make train SERVICE=word-embeddings-cbow`). `make help` lists all of them, including the Docker equivalents. The raw
 commands are kept underneath each target as a reference for what actually runs.
 
-**Local `make train*` is the fast path on Apple Silicon.** Training selects the device through
+**Local `make train SERVICE=word-embeddings*` is the fast path on Apple Silicon.** Training selects the device through
 `ai_residency_common.get_device()`, which prefers CUDA, then MPS, then CPU. Docker Desktop on macOS
-runs containers inside a Linux VM with no GPU/MPS passthrough, so `make docker-train` is always
+runs containers inside a Linux VM with no GPU/MPS passthrough, so `make -C deploy up  # then: docker compose --profile train run --rm train-word-embeddings` is always
 CPU-only here regardless — fine for portability and as the on-ramp to a real GPU host later, but
 not what I'd reach for if I cared about speed on this machine. Run the `train-*` targets directly
 on the host to actually use MPS.
@@ -332,12 +332,12 @@ on the host to actually use MPS.
 ```bash
 make install
 cp .env.example .env   # HF_TOKEN, WANDB_API_KEY
-make train-corpus
+make train SERVICE=word-embeddings-corpus
 ```
 What `train-corpus` runs:
 ```bash
 uv sync                                                          # make install
-uv run python -m word_embeddings.etl                             # make train-corpus
+uv run python -m word_embeddings.etl                             # make train SERVICE=word-embeddings-corpus
 ```
 
 Downloads the Wikipedia `text8` corpus, pulls HN posts and comments from the public read-only
@@ -351,7 +351,7 @@ Point it somewhere else with `HN_DATABASE_URL`.
 ### 5.2 Embedding Pretraining
 
 ```bash
-make train-cbow
+make train SERVICE=word-embeddings-cbow
 ```
 What it runs: `uv run python -m word_embeddings.train`.
 
@@ -359,8 +359,8 @@ Every hyperparameter lives in `Config` (in `config/`), and any of them can be ov
 environment without editing code:
 
 ```bash
-AI_RESIDENCY_CBOW_NUM_EPOCHS=1 AI_RESIDENCY_CBOW_EMBED_SIZE=64 make train-cbow
-make train-cbow-sample        # a tiny built-in corpus, seconds, its own checkpoint
+AI_RESIDENCY_CBOW_NUM_EPOCHS=1 AI_RESIDENCY_CBOW_EMBED_SIZE=64 make train SERVICE=word-embeddings-cbow
+make train SERVICE=word-embeddings-cbow-sample        # a tiny built-in corpus, seconds, its own checkpoint
 ```
 
 The best checkpoint saves to `checkpoints/cbow/cbow_model.pt` and pushes to the Hub when `HF_TOKEN`
@@ -382,13 +382,18 @@ sweep-specific plumbing in the training code at all.
 
 Two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base`: `Dockerfile.serve` (the FastAPI
 inference container Kubernetes runs) and `Dockerfile.train` (what a RunPod/AWS GPU host pulls).
-Neither needs a git credential — `ai-residency-common` is already installed in the base image.
+Neither needs a git credential. `libs/common` used to be a private git dependency, which meant every build mounted a token; it is a workspace member now and arrives with the source.
 
 ```bash
-make docker-build-serve   # docker build -f Dockerfile.serve -t ai-residency-week1-serve .
-make docker-build-train   # docker build -f Dockerfile.train -t ai-residency-week1-train .
-make docker-up            # docker compose up --build serve       -> API at http://localhost:8000
-make docker-train         # docker compose --profile train run --rm train   (defaults to CBOW)
+# both images for this service, built from the repository root
+make build SERVICE=word-embeddings
+make push SERVICE=word-embeddings
+
+# the whole stack, this service included
+make -C deploy up
+
+# train in a container
+cd deploy && docker compose --profile train run --rm train-word-embeddings
 ```
 
 The CBOW checkpoint isn't baked into either image: serving pulls it from the Hugging Face Hub when
@@ -399,11 +404,11 @@ recently trained rather than a stale snapshot. The training service is gated beh
 Without Docker:
 
 ```bash
-make serve                # uv run python -m serve
+make serve SERVICE=word-embeddings                # uv run python -m serve
 ```
 
 The Streamlit UI no longer lives in this repo — it is a thin HTTP client in
-`ai-residency-frontend`, calling the nearest-neighbour/analogy API this repo serves.
+`services/frontend`, calling the nearest-neighbour/analogy API this repo serves.
 
 ## 6. Experimental Results
 
