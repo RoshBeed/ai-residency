@@ -1,6 +1,6 @@
-.PHONY: pull up down logs status index-week2 load-images \
+.PHONY: pull up down logs status index-retrieval load-images \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
-        helm-index-week2 help
+        helm-index-retrieval help
 .DEFAULT_GOAL := help
 
 # Runtime credentials for the backends and training Jobs. Read from the portfolio's
@@ -34,13 +34,13 @@ pull: ## Pull every backend + frontend image from Docker Hub
 up: ## Start every backend + the frontend
 	docker compose -f compose/docker-compose.yml up -d
 	@echo "Frontend: http://localhost:8500"
-	@echo "Backends: week1-word-embeddings:8001 week1-content-scoring:8007 week2:8002 week3:8003 week4:8004 week5:8005 week6:8006"
+	@echo "Backends: word-embeddings:8001 content-scoring:8007 vector-search-retrieval:8002 vision-transformers:8003 multimodal-captioning:8004 audio-fine-tuning:8005 rlhf-ppo:8006"
 
-index-week2: ## One-time: populate this hub's own (independent, starts-empty) week2 redis index
-	docker compose -f compose/docker-compose.yml exec week2 python -m retrieval.save_doc_embeddings_to_redis
+index-retrieval: ## One-time: populate this stack's own (independent, starts-empty) vector-search-retrieval redis index
+	docker compose -f compose/docker-compose.yml exec vector-search-retrieval python -m retrieval.save_doc_embeddings_to_redis
 
-helm-index-week2: ## One-time: populate the k8s cluster's own (independent, starts-empty) week2 redis index
-	kubectl exec -n $(HELM_NAMESPACE) deploy/week2 -- python -m retrieval.save_doc_embeddings_to_redis
+helm-index-retrieval: ## One-time: populate the k8s cluster's own (independent, starts-empty) vector-search-retrieval redis index
+	kubectl exec -n $(HELM_NAMESPACE) deploy/vector-search-retrieval -- python -m retrieval.save_doc_embeddings_to_redis
 
 down: ## Stop and remove all containers
 	docker compose -f compose/docker-compose.yml down
@@ -83,18 +83,18 @@ helm-uninstall: ## Remove the Helm release (namespace itself is left in place, n
 helm-status: ## Show pod/service status for the Helm release
 	kubectl get pods,svc -n $(HELM_NAMESPACE)
 
-helm-train: ## Run a training Job on the cluster: make helm-train WEEK=week3 [EPOCHS=1]
+helm-train: ## Run a training Job on the cluster: make helm-train SERVICE=vision-transformers [EPOCHS=1]
 	helm upgrade $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) $(HELM_SECRETS) \
 		--set train.enabled=true \
 		--set train.runName=$(TRAIN_RUN) \
-		--set train.only=$(WEEK) \
+		--set train.only=$(SERVICE) \
 		--set train.env.AI_RESIDENCY_NUM_EPOCHS=$(or $(EPOCHS),1)
 	@echo "Jobs launched. Follow with: make helm-train-logs"
 
 helm-train-logs: ## Tail whichever training Jobs are currently running
 	kubectl get jobs -n $(HELM_NAMESPACE)
 	kubectl logs -n $(HELM_NAMESPACE) -l app.kubernetes.io/name --tail=40 --prefix \
-		--selector='app.kubernetes.io/name in (week1-word-embeddings-train,week1-content-scoring-train,week2-train,week3-train,week4-train,week5-train,week6-train)'
+		--selector='app.kubernetes.io/name in (word-embeddings-train,content-scoring-train,vector-search-retrieval-train,vision-transformers-train,multimodal-captioning-train,audio-fine-tuning-train,rlhf-ppo-train)'
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'

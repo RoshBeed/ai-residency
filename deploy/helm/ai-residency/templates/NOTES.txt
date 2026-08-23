@@ -4,7 +4,7 @@ Images are pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), 
 week repo's own `make docker-push-serve` / `docker-push-train`. If you've republished any
 image, pull it and roll the pods:
 
-  docker pull roshbeed/ai-residency-week1-serve:latest   # (or whichever changed)
+  docker pull roshbeed/ai-residency-word-embeddings-serve:latest   # (or whichever changed)
   kubectl rollout restart deployment -n {{ .Release.Namespace }}
   # or just: make helm-upgrade (re-applies the chart and restarts deployments for you)
 
@@ -22,10 +22,10 @@ overridden a backend's containerPort in values.yaml, these reflect that override
   kubectl port-forward -n {{ $.Release.Namespace }} svc/{{ $name }} 800{{ trimPrefix "week" $name }}:{{ $svc.containerPort }}
 {{- end }}
 
-One-time step for week2 (same as the docker-compose version -- this cluster's own
+One-time step for vector-search-retrieval (same as the docker-compose version -- this cluster's own
 redis starts empty):
 
-  kubectl exec -n {{ .Release.Namespace }} deploy/week2 -- uv run python -m retrieval.save_doc_embeddings_to_redis
+  kubectl exec -n {{ .Release.Namespace }} deploy/vector-search-retrieval -- uv run python -m retrieval.save_doc_embeddings_to_redis
 
 Check status:
 

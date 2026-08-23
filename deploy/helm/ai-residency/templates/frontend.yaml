@@ -2,7 +2,7 @@
 <KEY>_API_URL env vars are generated from .Values.backends' keys, not hardcoded --
 adding a 7th backend to values.yaml automatically wires the frontend to it, same as
 docker-compose.yml's explicit (hand-written) WEEK1_API_URL..WEEK6_API_URL block does
-today, just data-driven instead of copy-pasted. Hyphens in a key (week1-word-embeddings)
+today, just data-driven instead of copy-pasted. Hyphens in a key (word-embeddings)
 become underscores in the env var name so the frontend's os.getenv still matches.
 */ -}}
 apiVersion: apps/v1
@@ -10,7 +10,7 @@ kind: Deployment
 metadata:
   name: frontend
   labels:
-    {{- include "ai-residency-hub.labels" . | nindent 4 }}
+    {{- include "ai-residency.labels" . | nindent 4 }}
     app.kubernetes.io/name: frontend
 spec:
   replicas: 1
@@ -75,7 +75,7 @@ kind: Service
 metadata:
   name: frontend
   labels:
-    {{- include "ai-residency-hub.labels" . | nindent 4 }}
+    {{- include "ai-residency.labels" . | nindent 4 }}
     app.kubernetes.io/name: frontend
 spec:
   type: {{ .Values.frontend.service.type }}

@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week1-word-embeddings"
-Repository = "https://github.com/RoshBeed/ai-residency-week1-word-embeddings.git"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
 
 [dependency-groups]
 dev = [

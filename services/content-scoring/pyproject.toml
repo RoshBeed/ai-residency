@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week1-content-scoring"
-Repository = "https://github.com/RoshBeed/ai-residency-week1-content-scoring.git"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
 
 [dependency-groups]
 dev = [

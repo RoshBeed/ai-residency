@@ -12,6 +12,12 @@
 ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
 FROM ${BASE_IMAGE}
 
+# openai-whisper shells out to the ffmpeg *binary* to decode audio; the pip
+# package of the same name does not provide it.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Every member's manifest plus the shared lock, before any source. The workspace

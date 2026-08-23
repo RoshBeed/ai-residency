@@ -22,9 +22,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval"
-Repository = "https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval.git"
-"Bug Tracker" = "https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval/issues"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval/issues"
 
 [dependency-groups]
 dev = [

@@ -15,7 +15,7 @@ services/*/datasets
 
 # Figures and notebooks are for GitHub. The frontend is the exception: it renders
 # its own assets, and its Dockerfile lives in that service.
-services/frontend/notebooks
+notebooks
 **/*.ipynb
 
 .env

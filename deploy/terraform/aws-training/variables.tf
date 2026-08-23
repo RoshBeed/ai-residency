@@ -42,7 +42,7 @@ variable "wandb_api_key" {
 }
 
 variable "train_image" {
-  description = "The pushed training image to pull and run, e.g. \"roshbeed/ai-residency-week3-train:latest\". Built by that week repo's own Dockerfile.train -- see that repo's Makefile docker-build-train/docker-push-train targets."
+  description = "The pushed training image to pull and run, e.g. \"roshbeed/ai-residency-vision-transformers-train:latest\". Built from services/<name>/Dockerfile.train -- see `make build SERVICE=<name>` at the repository root."
   type        = string
 }
 

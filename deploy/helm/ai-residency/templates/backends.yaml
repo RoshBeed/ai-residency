@@ -12,7 +12,7 @@ kind: Deployment
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "ai-residency-hub.labels" $ | nindent 4 }}
+    {{- include "ai-residency.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $name }}
 spec:
   replicas: 1
@@ -182,7 +182,7 @@ kind: Service
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "ai-residency-hub.labels" $ | nindent 4 }}
+    {{- include "ai-residency.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $name }}
 spec:
   type: ClusterIP

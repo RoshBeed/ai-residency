@@ -21,9 +21,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning"
-Repository = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning.git"
-"Bug Tracker" = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning/issues"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning/issues"
 
 [dependency-groups]
 dev = [

@@ -41,23 +41,25 @@ LOGO_URI = f"data:image/svg+xml;base64,{base64.b64encode(LOGO_SVG.encode()).deco
 st.logo(LOGO_URI)
 
 API_URLS = {
-    "week1-word-embeddings": os.getenv("WEEK1_WORD_EMBEDDINGS_API_URL", "http://localhost:8001"),
-    "week1-content-scoring": os.getenv("WEEK1_CONTENT_SCORING_API_URL", "http://localhost:8007"),
-    "week2": os.getenv("WEEK2_API_URL", "http://localhost:8002"),
-    "week3": os.getenv("WEEK3_API_URL", "http://localhost:8003"),
-    "week4": os.getenv("WEEK4_API_URL", "http://localhost:8004"),
-    "week5": os.getenv("WEEK5_API_URL", "http://localhost:8005"),
-    "week6": os.getenv("WEEK6_API_URL", "http://localhost:8006"),
+    "word-embeddings": os.getenv("WORD_EMBEDDINGS_API_URL", "http://localhost:8001"),
+    "content-scoring": os.getenv("CONTENT_SCORING_API_URL", "http://localhost:8007"),
+    "vector-search-retrieval": os.getenv(
+        "VECTOR_SEARCH_RETRIEVAL_API_URL", "http://localhost:8002"
+    ),
+    "vision-transformers": os.getenv("VISION_TRANSFORMERS_API_URL", "http://localhost:8003"),
+    "multimodal-captioning": os.getenv("MULTIMODAL_CAPTIONING_API_URL", "http://localhost:8004"),
+    "audio-fine-tuning": os.getenv("AUDIO_FINE_TUNING_API_URL", "http://localhost:8005"),
+    "rlhf-ppo": os.getenv("RLHF_PPO_API_URL", "http://localhost:8006"),
 }
 
 PAGES = {
-    "week1-word-embeddings": "Word Embeddings",
-    "week1-content-scoring": "Content Scoring",
-    "week2": "Vector Search & Retrieval",
-    "week3": "Vision Transformer & Seq2Seq",
-    "week4": "Multimodal Captioning",
-    "week5": "Audio Fine-Tuning",
-    "week6": "RLHF / PPO",
+    "word-embeddings": "Word Embeddings",
+    "content-scoring": "Content Scoring",
+    "vector-search-retrieval": "Vector Search & Retrieval",
+    "vision-transformers": "Vision Transformer & Seq2Seq",
+    "multimodal-captioning": "Multimodal Captioning",
+    "audio-fine-tuning": "Audio Fine-Tuning",
+    "rlhf-ppo": "RLHF / PPO",
 }
 
 TAG_URLS: dict[str, str] = {
@@ -104,7 +106,7 @@ def tag_link(t: str) -> str:
 # W&B runs, and each project's own README -- nothing invented.
 # ---------------------------------------------------------------------------
 PROJECTS: dict[str, dict[str, Any]] = {
-    "week1-word-embeddings": {
+    "word-embeddings": {
         "icon": "🧬",
         "title": "Word Embeddings",
         "subtitle": "CBOW embeddings trained from scratch, negative sampling",
@@ -145,7 +147,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "closest neighbours in the learned space, or complete the canonical "
             "`king - man + woman` analogy."
         ),
-        "docs_path": "docs/word-embeddings.md",
+        "docs_path": "services/word-embeddings/README.md",
         "diagrams": [
             (
                 "assets/word-embeddings/fig9-cbow-forward-pass.png",
@@ -163,7 +165,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "15 negative samples. ~65M parameters trained from scratch on text8.",
         ],
     },
-    "week1-content-scoring": {
+    "content-scoring": {
         "icon": "📝",
         "title": "Content Scoring",
         "subtitle": "Regression head over frozen embeddings, predict an engagement score",
@@ -202,7 +204,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "averages the vectors, and predicts a score — streamed live so each stage of "
             "the inference pipeline is visible in real time."
         ),
-        "docs_path": "docs/content-scoring.md",
+        "docs_path": "services/content-scoring/README.md",
         "diagrams": [
             (
                 "assets/word-embeddings/fig3-late-early-fusion.png",
@@ -215,7 +217,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "~17K parameters trained on 782 labelled HN posts.",
         ],
     },
-    "week2": {
+    "vector-search-retrieval": {
         "icon": "🔍",
         "title": "Vector Search & Retrieval",
         "subtitle": "Dual-encoder GRU architecture, triplet loss, Redis HNSW indexing",
@@ -262,7 +264,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "(CBOW embeddings) and intentionally stay on CPU where dispatch overhead on "
             "tiny tensors makes the GPU slower (GRU training on single triples)."
         ),
-        "docs_path": "docs/dual-encoder-retrieval.md",
+        "docs_path": "services/vector-search-retrieval/README.md",
         "diagrams": [
             (
                 "assets/dual-encoder-retrieval/fig6-offline-online-stages.png",
@@ -280,7 +282,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "~99K parameters per tower, sharing frozen CBOW embeddings from a 7,692-word vocabulary.",
         ],
     },
-    "week3": {
+    "vision-transformers": {
         "icon": "🔢",
         "title": "Vision Transformer & Seq2Seq",
         "subtitle": "Custom ViT classifier + autoregressive seq2seq decoder, no torchvision",
@@ -328,7 +330,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "and generator sharing an encoder) demonstrates how the same attention "
             "backbone serves fundamentally different tasks."
         ),
-        "docs_path": "docs/vision-transformer.md",
+        "docs_path": "services/vision-transformers/README.md",
         "diagrams": [
             (
                 "assets/vision-transformer/task_overview.png",
@@ -349,7 +351,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "Both models built from scratch — no `torch.nn.Transformer` shortcuts.",
         ],
     },
-    "week4": {
+    "multimodal-captioning": {
         "icon": "🖼️",
         "title": "Multimodal Captioning",
         "subtitle": "CLIP ViT‑B/32 encoder, trained adapter, Qwen3 decoder pipeline",
@@ -399,7 +401,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "vision-language systems. The design supports training on Flickr30k with "
             "planned expansion to VQAv2 and synthetic data."
         ),
-        "docs_path": "docs/image-captioning.md",
+        "docs_path": "services/multimodal-captioning/README.md",
         "diagrams": [
             (
                 "assets/image-captioning/fig3-paligemma-architecture.png",
@@ -422,7 +424,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "vocab 151,936. ~598M total parameters, only the adapter is trained.",
         ],
     },
-    "week5": {
+    "audio-fine-tuning": {
         "icon": "🎙️",
         "title": "Audio Fine-Tuning",
         "subtitle": "Whisper‑tiny, real gradient updates per request, transcript convergence",
@@ -474,7 +476,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "original capabilities. The system `ffmpeg` binary is a hard prerequisite "
             "(Whisper shells out to it for audio decoding)."
         ),
-        "docs_path": "docs/whisper-finetuning.md",
+        "docs_path": "services/audio-fine-tuning/README.md",
         "diagrams": [
             (
                 "assets/whisper-finetuning/fig2-whisper-architecture.png",
@@ -496,7 +498,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "`⟨emotion_angry⟩`, `⟨emotion_disgust⟩`.",
         ],
     },
-    "week6": {
+    "rlhf-ppo": {
         "icon": "🎯",
         "title": "RLHF / PPO",
         "subtitle": "From-scratch PPO, GAE, clip objective, trained reward model",
@@ -546,7 +548,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "The SFT and reward-model training stages are designed as follow-on work on "
             "preference datasets."
         ),
-        "docs_path": "docs/rlhf-ppo.md",
+        "docs_path": "services/rlhf-ppo/README.md",
         "diagrams": [
             (
                 "assets/rlhf-ppo/fig1-rlhf-three-stage.png",
@@ -1087,9 +1089,7 @@ def render_week_details(week: str) -> None:
         unsafe_allow_html=True,
     )
 
-    docs_link = (
-        f"https://github.com/RoshBeed/ai-residency-frontend/blob/main/{project['docs_path']}"
-    )
+    docs_link = f"https://github.com/RoshBeed/ai-residency/blob/main/{project['docs_path']}"
     st.caption(
         f"[Full technical write-up →]({docs_link}) "
         "(architecture diagrams, method walkthrough, experimental results, references)"
@@ -1190,7 +1190,7 @@ with st.sidebar:
                     st.rerun()
 
     st.divider()
-    st.caption("[GitHub →](https://github.com/RoshBeed/ai-residency-frontend)")
+    st.caption("[GitHub →](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend)")
     st.caption("[LinkedIn →](https://linkedin.com/in/RoshBeed)")
 
 
@@ -1220,7 +1220,7 @@ st.subheader("Try it out")
 # ---------------------------------------------------------------------------
 # Word Embeddings (nearest-neighbour + analogy)
 # ---------------------------------------------------------------------------
-if _PAGE == "week1-word-embeddings":
+if _PAGE == "word-embeddings":
     st.markdown("**Nearest neighbours** — the words closest to a query word in the learned space.")
     word = st.text_input("Word", value="python")
     if st.button("Find nearest", type="primary") and word:
@@ -1269,7 +1269,7 @@ if _PAGE == "week1-word-embeddings":
 # ---------------------------------------------------------------------------
 # Content Scoring (regression head over frozen embeddings)
 # ---------------------------------------------------------------------------
-elif _PAGE == "week1-content-scoring":
+elif _PAGE == "content-scoring":
     title = st.text_input(
         "Hacker News post title",
         value="Show HN: I built a CLI tool that writes your commit messages",
@@ -1349,7 +1349,7 @@ elif _PAGE == "week1-content-scoring":
 # ---------------------------------------------------------------------------
 # RAG & Semantic Search
 # ---------------------------------------------------------------------------
-elif _PAGE == "week2":
+elif _PAGE == "vector-search-retrieval":
     query = st.text_input("Search query", value="was ronald reagan a democrat")
     top_k = st.slider("Top K", 1, 10, 5)
     if st.button("Search", type="primary") and query:
@@ -1439,7 +1439,7 @@ elif _PAGE == "week2":
 # ---------------------------------------------------------------------------
 # Vision Transformer & Seq2Seq
 # ---------------------------------------------------------------------------
-elif _PAGE == "week3":
+elif _PAGE == "vision-transformers":
     col_draw, col_upload = st.columns(2)
     with col_draw:
         st.caption("Draw a digit")
@@ -1451,7 +1451,7 @@ elif _PAGE == "week3":
             height=280,
             width=280,
             drawing_mode="freedraw",
-            key="week3_canvas",
+            key="vision-transformers_canvas",
         )
     with col_upload:
         st.caption("Or upload one")
@@ -1554,7 +1554,7 @@ elif _PAGE == "week3":
 # ---------------------------------------------------------------------------
 # Multimodal Transfer Learning
 # ---------------------------------------------------------------------------
-elif _PAGE == "week4":
+elif _PAGE == "multimodal-captioning":
     col_upload, col_camera = st.columns(2)
     with col_upload:
         uploaded = st.file_uploader(
@@ -1631,7 +1631,7 @@ elif _PAGE == "week4":
 # ---------------------------------------------------------------------------
 # Emotion-Aware Speech Recognition
 # ---------------------------------------------------------------------------
-elif _PAGE == "week5":
+elif _PAGE == "audio-fine-tuning":
     col_record, col_upload = st.columns(2)
     with col_record:
         audio = st.audio_input("Record audio")
@@ -1715,7 +1715,7 @@ elif _PAGE == "week5":
                         hide_index=True,
                     )
                 elif stage == "done":
-                    st.session_state["week5_data"] = event
+                    st.session_state["audio-fine-tuning_data"] = event
                     tracker.empty()
                     live_curve.empty()
                     live_table.empty()
@@ -1725,7 +1725,7 @@ elif _PAGE == "week5":
         except requests.exceptions.RequestException as e:
             st.error(f"Request failed: {e}")
 
-    data = st.session_state.get("week5_data")
+    data = st.session_state.get("audio-fine-tuning_data")
     if data:
         st.markdown(
             '<div class="trace-caption">'
@@ -1775,7 +1775,7 @@ elif _PAGE == "week5":
 # ---------------------------------------------------------------------------
 # RLHF for Text Summarization
 # ---------------------------------------------------------------------------
-elif _PAGE == "week6":
+elif _PAGE == "rlhf-ppo":
     ppo_steps = st.number_input("PPO steps", min_value=1, max_value=20, value=5, step=1)
     _PPO_STAGE_LABELS = {
         "generate": "1. Sampling",
@@ -1945,8 +1945,8 @@ elif _PAGE == "week6":
                 elif stage == "done":
                     if cur:
                         step_records.append(cur)
-                    st.session_state["week6_ppo_data"] = event
-                    st.session_state["week6_step_records"] = step_records
+                    st.session_state["rlhf-ppo_ppo_data"] = event
+                    st.session_state["rlhf-ppo_step_records"] = step_records
                     status_line.empty()
                 elif stage == "error":
                     status_line.empty()
@@ -2020,9 +2020,9 @@ elif _PAGE == "week6":
         except requests.exceptions.RequestException as e:
             st.error(f"Request failed: {e}")
 
-    ppo_data = st.session_state.get("week6_ppo_data")
+    ppo_data = st.session_state.get("rlhf-ppo_ppo_data")
     if ppo_data:
-        records = st.session_state.get("week6_step_records", [])
+        records = st.session_state.get("rlhf-ppo_step_records", [])
         if records and len(records) > 1:
             r_first = records[0].get("reward", float("nan"))
             r_last = records[-1].get("reward", float("nan"))

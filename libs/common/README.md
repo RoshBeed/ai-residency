@@ -14,7 +14,7 @@ nothing else — the actual ML lives in the week repos.
 ## Install
 
 ```bash
-uv add "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3"
+uv add "ai-residency-common @ git+https://https://github.com/RoshBeed/ai-residency.git@v0.7.3"
 ```
 
 Pin by tag. Six repos depend on this, and an unpinned change would break all of them at once.

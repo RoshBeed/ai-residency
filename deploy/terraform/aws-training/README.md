@@ -6,7 +6,7 @@ the same training container every week repo's own `Dockerfile.train` already bui
 `make docker-push-train` already pushes — this module doesn't reimplement training, it's just
 another place to run the same image, on a rented GPU instead of RunPod.
 
-Moved here from `ai-residency-week3-vision-transformers/infra/` and generalized: the original only ever ran Week 3,
+Generalized from a module that only ever ran the vision-transformers project,
 by cloning its git repo and building a Python environment by hand on the instance. That approach
 predates this portfolio's move to Docker images with a shared base — now the instance just needs
 Docker and the NVIDIA Container Toolkit, and `train_image` picks which week's already-built image to
@@ -48,7 +48,7 @@ timeout — this is a backstop, not the normal path).
 
 | Variable | What it does |
 |---|---|
-| `train_image` | The image to pull and run, e.g. `roshbeed/ai-residency-week3-train:latest`. No default — always set this. |
+| `train_image` | The image to pull and run, e.g. `roshbeed/ai-residency-vision-transformers-train:latest`. No default — always set this. |
 | `train_command` | Overrides the image's own default training entrypoint. Empty runs the image's default (e.g. Week 3's classifier stage); set to `"seq2seq"` for its other trainer. |
 | `docker_hub_username` / `docker_hub_token` | Only needed if `train_image` is a private repository. |
 | `hf_token` | Training pushes its own checkpoint to the Hub via `ai-residency-common`'s `push_checkpoint` — this module never re-uploads anything separately. |

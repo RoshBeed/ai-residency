@@ -7,7 +7,7 @@ template nobody has run is a template that doesn't work.
 
 This repo is also the **source of `roshbeed/ai-residency-base`**, the Docker image every week's own
 `Dockerfile.train`/`Dockerfile.serve` builds `FROM`. Explanatory write-ups, diagrams and the UI all
-live in [`ai-residency-frontend`](https://github.com/RoshBeed/ai-residency-frontend) now, not
+live in [`ai-residency-frontend`](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend) now, not
 here — this repo (and every week repo shaped like it) is container source, not documentation.
 
 ## Instantiating it
@@ -88,7 +88,7 @@ make docker-train          # train, in a container (profile-gated)
 
 ## Standards
 
-Shared behaviour comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common), pinned by tag.
+Shared behaviour comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common), pinned by tag.
 Device selection, logging, checkpoint format, seeding, Hub upload and W&B tracking are defined
 once there rather than six times here.
 

@@ -38,13 +38,13 @@ flowchart LR
 
 | System | Architecture | Demonstrated |
 |---|---|---|
-| [Word embeddings](https://github.com/RoshBeed/ai-residency-week1-word-embeddings) | CBOW word2vec with negative sampling, trained from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy/similarity checks) |
-| [Content scoring](https://github.com/RoshBeed/ai-residency-week1-content-scoring) | Regression head over frozen CBOW embeddings | Trained end-to-end on real Hacker News post data |
-| [Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served via Redis/RediSearch ANN search |
-| [Vision Transformer](https://github.com/RoshBeed/ai-residency-week3-vision-transformers) | From-scratch ViT — single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
-| [Image captioning](https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end-to-end |
-| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency-week5-audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
-| [RLHF / PPO](https://github.com/RoshBeed/ai-residency-week6-rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against Qwen3-0.6B-Base |
+| [Word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) | CBOW word2vec with negative sampling, trained from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy/similarity checks) |
+| [Content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) | Regression head over frozen CBOW embeddings | Trained end-to-end on real Hacker News post data |
+| [Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served via Redis/RediSearch ANN search |
+| [Vision Transformer](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) | From-scratch ViT — single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
+| [Image captioning](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end-to-end |
+| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
+| [RLHF / PPO](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against Qwen3-0.6B-Base |
 
 ## The write-ups
 
@@ -117,8 +117,8 @@ ai-residency-frontend/
 
 ## Related
 
-- [`ai-residency-infrastructure`](https://github.com/RoshBeed/ai-residency-infrastructure) — compose, Helm, Terraform to run all of it.
-- [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common) — the shared helper library all the backends depend on.
+- [`ai-residency-infrastructure`](https://github.com/RoshBeed/ai-residency/tree/main/deploy) — compose, Helm, Terraform to run all of it.
+- [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) — the shared helper library all the backends depend on.
 - The backend repos linked in the table above.
 
 ---

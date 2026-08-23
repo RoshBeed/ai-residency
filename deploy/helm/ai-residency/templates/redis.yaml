@@ -1,25 +1,25 @@
 {{- /*
-week2's own HNSW retrieval index -- ephemeral, no PVC, matching docker-compose's
+the retrieval service's own HNSW retrieval index -- ephemeral, no PVC, matching docker-compose's
 `--save "" --appendonly no` (ephemeral by design there too). Not bound to a host port
-or LoadBalancer -- only week2's own pod needs to reach this, over the cluster's
-internal DNS (service name "week2-redis"), same as it was compose-internal-only there.
+or LoadBalancer -- only the retrieval pod needs to reach this, over the cluster's
+internal DNS (service name "redis"), same as it was compose-internal-only there.
 */ -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: week2-redis
+  name: {{ .Values.redis.serviceName }}
   labels:
-    {{- include "ai-residency-hub.labels" . | nindent 4 }}
-    app.kubernetes.io/name: week2-redis
+    {{- include "ai-residency.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Values.redis.serviceName }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: week2-redis
+      app.kubernetes.io/name: {{ .Values.redis.serviceName }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: week2-redis
+        app.kubernetes.io/name: {{ .Values.redis.serviceName }}
     spec:
       containers:
         - name: redis
@@ -45,12 +45,12 @@ kind: Service
 metadata:
   name: {{ .Values.redis.serviceName }}
   labels:
-    {{- include "ai-residency-hub.labels" . | nindent 4 }}
-    app.kubernetes.io/name: week2-redis
+    {{- include "ai-residency.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Values.redis.serviceName }}
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: week2-redis
+    app.kubernetes.io/name: {{ .Values.redis.serviceName }}
   ports:
     - port: {{ .Values.redis.port }}
       targetPort: {{ .Values.redis.port }}

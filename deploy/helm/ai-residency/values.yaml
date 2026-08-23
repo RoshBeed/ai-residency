@@ -1,4 +1,4 @@
-# Default values for ai-residency-hub.
+# Default values for ai-residency.
 #
 # This chart is the Kubernetes analog of this repo's own docker-compose.yml -- see
 # that file's comments for *why* each volume mount exists (trained checkpoints/data
@@ -113,7 +113,7 @@ redis:
   image: redis/redis-stack-server:latest
   command: ["redis-stack-server", "--save", "", "--appendonly", "no"]
   port: 6379
-  serviceName: week2-redis
+  serviceName: redis
   memoryRequest: 128Mi
   memoryLimit: 256Mi
 
@@ -138,9 +138,9 @@ redis:
 #   kubectl exec -n ai-residency <pod> -- \
 #     sh -c 'echo $(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))Mi'
 #
-#   frontend 379Mi   week1-word-embeddings 2286Mi   week1-content-scoring 1345Mi
-#   week2 294Mi      week3 447Mi                    week4 5410Mi
-#   week5 1845Mi     week6 4640Mi                   redis 12Mi
+#   frontend 379Mi   word-embeddings 2286Mi   content-scoring 1345Mi
+#   vector-search-retrieval 294Mi      vision-transformers 447Mi                    multimodal-captioning 5410Mi
+#   audio-fine-tuning 1845Mi     rlhf-ppo 4640Mi                   redis 12Mi
 #
 # Requests are the peak rounded up, and they sum to ~18.6GiB. That is the number that
 # has to fit: this host reports 23.4GiB allocatable, so everything schedules. Read the
@@ -150,12 +150,12 @@ redis:
 #
 # memoryLimit is also set on every container (requests alone gate scheduling, not
 # runtime usage). Limits sit ~40% above the measured peak. That headroom is the point:
-# week4's limit was previously 6144Mi against a real peak of 5410Mi -- 12% of slack --
+# multimodal-captioning's limit was previously 6144Mi against a real peak of 5410Mi -- 12% of slack --
 # and it was OOMKilled in normal use. Limits may sum past allocatable; unlike requests
 # they are a burst ceiling, not a reservation.
 backends:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference (Dockerfile.serve) ---
-  week1-word-embeddings:
+  word-embeddings:
     image: roshbeed/ai-residency-word-embeddings-serve
     trainImage: roshbeed/ai-residency-word-embeddings-train
     trainCommand:
@@ -180,7 +180,7 @@ backends:
         type: DirectoryOrCreate
 
   # --- Week 1b: content-scoring — the regression head over those frozen vectors ---
-  week1-content-scoring:
+  content-scoring:
     image: roshbeed/ai-residency-content-scoring-serve
     trainImage: roshbeed/ai-residency-content-scoring-train
     trainCommand:
@@ -200,7 +200,7 @@ backends:
         type: DirectoryOrCreate
 
   # --- Week 2: needs its own Redis (HNSW retrieval index) ---
-  week2:
+  vector-search-retrieval:
     image: roshbeed/ai-residency-vector-search-retrieval-serve
     trainImage: roshbeed/ai-residency-vector-search-retrieval-train
     # The encoder towers. The CBOW and triples stages need their own data prep.
@@ -213,8 +213,8 @@ backends:
     containerPort: 8000
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
-    # Blocks on week2-redis actually accepting connections before the app container
-    # starts -- compose's own `depends_on: [week2-redis]` only orders container start,
+    # Blocks on redis actually accepting connections before the app container
+    # starts -- compose's own `depends_on: [redis]` only orders container start,
     # not readiness, but Kubernetes has no ordering primitive at all by default, so this
     # closes a real race that compose's (weaker) guarantee otherwise narrowed.
     waitForRedis: true
@@ -237,7 +237,7 @@ backends:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ""
     volumes:
-      # Gitignored -- may legitimately be absent, see week1-word-embeddings' volumes comment above.
+      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
       # The container's own code (image build) has the SSE /query/stream support;
       # this mounts only the gitignored artifacts, not the whole /app.
       - name: checkpoints
@@ -250,7 +250,7 @@ backends:
         type: DirectoryOrCreate
 
   # --- Week 3: FastAPI inference container (Dockerfile.serve) ---
-  week3:
+  vision-transformers:
     image: roshbeed/ai-residency-vision-transformers-serve
     trainImage: roshbeed/ai-residency-vision-transformers-train
     # This repo trains two models with separate epoch caps, so the classifier's is
@@ -270,7 +270,7 @@ backends:
     memoryLimit: 1024Mi
     env: {}
     volumes:
-      # Gitignored -- may legitimately be absent, see week1-word-embeddings' volumes comment above.
+      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
       - name: checkpoints
         hostPath: "{{ .Values.hostRoot }}/services/vision-transformers/checkpoints"
         mountPath: /app/checkpoints
@@ -279,7 +279,7 @@ backends:
   # --- Week 4: checkpoints mount only. The serve image already has the code
   # baked in (including /caption/stream SSE support); mounting all of /app over the
   # image would shadow those changes.
-  week4:
+  multimodal-captioning:
     image: roshbeed/ai-residency-multimodal-captioning-serve
     trainImage: roshbeed/ai-residency-multimodal-captioning-train
     trainCommand:
@@ -309,7 +309,7 @@ backends:
 
   # --- Week 5: the image doesn't carry the (gitignored) fine-tuned checkpoint, so
   # mount the real one at runtime.
-  week5:
+  audio-fine-tuning:
     image: roshbeed/ai-residency-audio-fine-tuning-serve
     trainImage: roshbeed/ai-residency-audio-fine-tuning-train
     trainCommand:
@@ -323,14 +323,14 @@ backends:
     memoryLimit: 2816Mi
     env: {}
     volumes:
-      # Gitignored -- may legitimately be absent, see week1-word-embeddings' volumes comment above.
+      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
       - name: checkpoints
         hostPath: "{{ .Values.hostRoot }}/services/audio-fine-tuning/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
   # --- Week 6: checkpoints mount so policy/value LoRA adapters persist across restart ---
-  week6:
+  rlhf-ppo:
     image: roshbeed/ai-residency-rlhf-ppo-serve
     trainImage: roshbeed/ai-residency-rlhf-ppo-train
     # One PPO step -- this repo has no epoch loop, by design.

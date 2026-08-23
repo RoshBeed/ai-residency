@@ -6,12 +6,12 @@ runs it. The code and the UI live elsewhere:
 
 | Repo | What it is |
 |---|---|
-| [`ai-residency-week1-...` … `ai-residency-week6-...`](https://github.com/RoshBeed) | The backend projects (container source only) |
-| [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common) | Shared helpers the backends depend on |
+| [`services/`](../services) | The services this deploys, one directory each |
+| [`ai-residency-common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) | Shared helpers the backends depend on |
 | `ai-residency-frontend` | The Streamlit frontend (and the full docs for all weeks) |
 | **this repo** | Compose + Helm + Terraform to run all of it |
 
-There are two equivalent ways to run the same seven containers (6 backends + frontend), plus week2's
+There are two equivalent ways to run the same seven containers (6 backends + frontend), plus vector-search-retrieval's
 Redis: a docker-compose stack for a single `docker compose up`, and a Helm chart for a real
 Kubernetes cluster. Each week stands alone as its own service, with one separate frontend service in
 front of them.
@@ -20,7 +20,7 @@ front of them.
 
 ```
 ai-residency-infrastructure/
-├── docker-compose.yml         all 6 backends + week2's Redis + the frontend, one command
+├── docker-compose.yml         all 6 backends + vector-search-retrieval's Redis + the frontend, one command
 ├── helm/ai-residency-hub/    Helm chart for the same 7 services on a Kubernetes cluster
 ├── infra/aws-training/        Terraform: AWS spot GPU training, an alternative to RunPod
 ├── Makefile                   pull / up / down / status / helm-install / helm-upgrade / helm-train
@@ -72,18 +72,18 @@ docker compose up -d
 ```
 
 Then open http://localhost:8500. Each backend is also reachable directly for debugging:
-week1-word-embeddings `:8001`, week1-content-scoring `:8007`, then week2 `:8002` … week6 `:8006`.
+word-embeddings `:8001`, content-scoring `:8007`, then vector-search-retrieval `:8002` … rlhf-ppo `:8006`.
 `make status` curls each one's `/health`, which all seven expose.
 
-**One-time step for week2:** this stack runs its own independent Redis (`week2-redis`), separate
-from — and starting empty, unlike — the original week2 repo's own persistent one. Populate it once
+**One-time step for vector-search-retrieval:** this stack runs its own independent Redis (`redis`), separate
+from — and starting empty, unlike — the original vector-search-retrieval repo's own persistent one. Populate it once
 after the first `up`:
 
 ```bash
-docker compose exec week2 uv run python -m retrieval.save_doc_embeddings_to_redis
+docker compose exec vector-search-retrieval uv run python -m retrieval.save_doc_embeddings_to_redis
 ```
 
-Without this, week2's `/query` page returns an empty result set (not an error — just nothing to
+Without this, vector-search-retrieval's `/query` page returns an empty result set (not an error — just nothing to
 retrieve yet).
 
 All seven backends answering `/health` under compose, and the frontend serving the portfolio
@@ -94,7 +94,7 @@ at `:8500`:
 **Known constraint, confirmed empirically, not just theoretical:** Docker Desktop's VM has a fixed
 memory ceiling (~7.65GB on the machine this was built on — check `docker stats`/Docker Desktop's
 resource settings on yours). Running all the backends for an extended period eventually OOM-kills
-one of the heavier ones (observed here: week4 after ~25 hours, week6 shortly after that) —
+one of the heavier ones (observed here: multimodal-captioning after ~25 hours, rlhf-ppo shortly after that) —
 `docker compose ps -a` will show `Exited (137)` for whichever one got killed. This isn't a bug in
 this repo — it's Docker Desktop's own memory ceiling. Fix: `docker compose up -d weekN` restarts
 just that one; give Docker Desktop more memory in its settings if you want long sustained uptime
@@ -107,7 +107,7 @@ it looked in, so mounting `checkpoints` read-only turns "fall back to the Hub" i
 ## Kubernetes (Helm)
 
 `helm/ai-residency-hub/` is the Kubernetes analog of `docker-compose.yml` — the same 7 services
-(6 backends + frontend) plus week2's Redis, expressed as Deployments/Services instead of compose
+(6 backends + frontend) plus vector-search-retrieval's Redis, expressed as Deployments/Services instead of compose
 services.
 
 ```bash
@@ -117,12 +117,12 @@ make helm-install         # helm install ai-residency-hub ./helm/ai-residency-hu
 Then open http://localhost:8500 — Docker Desktop's Kubernetes auto-binds `LoadBalancer` services to
 localhost, so the frontend Service is reachable with no port-forward needed. The backends are
 deliberately `ClusterIP`-only (mirrors the real shape: only the frontend talks to them directly) —
-reach one directly for debugging with `kubectl port-forward -n ai-residency svc/week1-word-embeddings 8001:8000`
+reach one directly for debugging with `kubectl port-forward -n ai-residency svc/word-embeddings 8001:8000`
 (repeat per backend, ports 8001–8007 to match compose's numbering). Same one-time step as the compose
-version to populate week2's (independent, starts-empty) Redis index:
+version to populate vector-search-retrieval's (independent, starts-empty) Redis index:
 
 ```bash
-kubectl exec -n ai-residency deploy/week2 -- uv run python -m retrieval.save_doc_embeddings_to_redis
+kubectl exec -n ai-residency deploy/vector-search-retrieval -- uv run python -m retrieval.save_doc_embeddings_to_redis
 ```
 
 `make helm-upgrade` re-applies the chart *and* runs `kubectl rollout restart deployment` afterward —
@@ -164,8 +164,8 @@ hang and restarted in a loop.
 the replacement pod before retiring the old one, so the node needs two copies' worth of memory at
 once. These pods request 1.5–6GiB each and the full set already sits near a single node's
 allocatable, so the surge pod stays `Pending` — and since the old pod is only retired once the new
-one is Ready, the rollout deadlocks instead of finishing (observed on `make helm-upgrade`: week2,
-week4 and week6 all stuck on `Insufficient memory`). A few seconds of downtime per deploy is the
+one is Ready, the rollout deadlocks instead of finishing (observed on `make helm-upgrade`: vector-search-retrieval,
+multimodal-captioning and rlhf-ppo all stuck on `Insufficient memory`). A few seconds of downtime per deploy is the
 right trade here. On a real multi-node cluster, drop it. Note that switching an existing release to
 `Recreate` needs a reinstall, since the live Deployment still carries `rollingUpdate` fields.
 
@@ -189,9 +189,9 @@ kubectl get node -o jsonpath='{.items[0].status.allocatable.memory}'
 At 23.4GiB allocatable all nine schedule and stay `Running` with zero restarts. Otherwise, either
 raise Docker Desktop's memory (the VM restart bounces every pod, and one that was already
 `Pending` beforehand may need a `kubectl delete pod <name>` nudge to be re-evaluated) or free room
-with `kubectl scale deploy/week4 -n ai-residency --replicas=0`.
+with `kubectl scale deploy/multimodal-captioning -n ai-residency --replicas=0`.
 
-Real inference through the cluster — the frontend on the `LoadBalancer`, calling week1's
+Real inference through the cluster — the frontend on the `LoadBalancer`, calling word-embeddings'
 `ClusterIP` Service, which resolved its checkpoint and returned genuine nearest neighbours:
 
 ![Word Embeddings page served from Kubernetes, returning real nearest neighbours for "python" with cosine scores](assets/kubernetes-inference.png)
@@ -294,10 +294,10 @@ The frontend and the full documentation for all weeks live in `ai-residency-fron
 backend repos are container source only: two Dockerfiles (`Dockerfile.train` for a RunPod/AWS
 GPU host, `Dockerfile.serve` for Kubernetes) and a short technical README:
 
-[Week 1 — word embeddings](https://github.com/RoshBeed/ai-residency-week1-word-embeddings) ·
-[Week 1 — content scoring](https://github.com/RoshBeed/ai-residency-week1-content-scoring) ·
-[Week 2](https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval) ·
-[Week 3](https://github.com/RoshBeed/ai-residency-week3-vision-transformers) ·
-[Week 4](https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning) ·
-[Week 5](https://github.com/RoshBeed/ai-residency-week5-audio-fine-tuning) ·
-[Week 6](https://github.com/RoshBeed/ai-residency-week6-rlhf-ppo)
+[Week 1 — word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) ·
+[Week 1 — content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) ·
+[Week 2](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) ·
+[Week 3](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) ·
+[Week 4](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) ·
+[Week 5](https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning) ·
+[Week 6](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo)

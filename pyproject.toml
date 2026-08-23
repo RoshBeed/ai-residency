@@ -70,7 +70,7 @@ convention = "google"
 # Walkthrough notebooks introduce imports beside the markdown cell that explains
 # them, rather than all at the top. Their printed output is prose, so it uses real
 # typographic characters (en dash, multiplication sign) that RUF001 reads as typos.
-"services/frontend/notebooks/**/*.ipynb" = ["E402", "I001", "RUF001"]
+"notebooks/**/*.ipynb" = ["E402", "I001", "RUF001"]
 
 # The frontend is one Streamlit page per service, and most of its length is display
 # content rather than logic: an inline SVG logo, the copy shown on each page, and
@@ -81,7 +81,7 @@ convention = "google"
 
 # The original exploratory notebook the rlhf-ppo package was refactored out of.
 # Kept as a historical record, not held to the package's standard.
-"services/frontend/notebooks/week6-rlhf-ppo/rosh.ipynb" = [
+"notebooks/rlhf-ppo/rosh.ipynb" = [
     "B007", "B905", "E501", "F401", "F811", "F821",
     "I001", "RUF010", "RUF015", "SIM108",
 ]
