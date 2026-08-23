@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images \
+.PHONY: pull up down logs status index-retrieval load-images pin-images \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -61,6 +61,12 @@ status: ## Show which backends are currently reachable (via /health)
 K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 IMAGE_TAG ?= latest
 IMAGES := $(shell grep -oE 'roshb/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
+
+pin-images: ## Repoint compose and the chart at a published tag: make pin-images TAG=sha-abc123
+	@test -n "$(TAG)" || (echo "Usage: make pin-images TAG=sha-<commit>   (CI prints it, or check Docker Hub)" && exit 1)
+	@sed -i '' -E 's|(image: roshb/ai-residency-[a-z0-9-]+):\$$\{IMAGE_TAG:-[^}]*\}|\1:$$\{IMAGE_TAG:-$(TAG)\}|' compose/docker-compose.yml
+	@sed -i '' -E 's|^  tag: .*|  tag: $(TAG)|' helm/ai-residency/values.yaml
+	@echo "Pinned compose and the chart to $(TAG)"
 
 load-images: ## Import locally-built images into the cluster node's own image store
 	@for img in $(IMAGES); do \

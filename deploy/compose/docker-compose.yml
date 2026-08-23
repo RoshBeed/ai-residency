@@ -11,12 +11,17 @@
 # is not a deployment, and the mounts that used to be here hid exactly that.
 #
 # `train` services are profile-gated, so a bare `docker compose up` never trains.
+#
+# Images are pinned to a commit, not to `latest`. One tag names the exact set that
+# was built and verified together, so `docker compose up` a month from now brings
+# up what it brought up today. Override with IMAGE_TAG=latest to track the tip, or
+# IMAGE_TAG=sha-<other> to roll back.
 
 
 services:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
   word-embeddings:
-    image: roshb/ai-residency-word-embeddings-serve:latest
+    image: roshb/ai-residency-word-embeddings-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8001:8000"
     environment:
@@ -25,7 +30,7 @@ services:
 
   # --- Week 1b: content-scoring — the regression head that consumes those vectors ---
   content-scoring:
-    image: roshb/ai-residency-content-scoring-serve:latest
+    image: roshb/ai-residency-content-scoring-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8007:8000"
     environment:
@@ -42,7 +47,7 @@ services:
     # persistent redis container, which already owns host port 6390.
 
   vector-search-retrieval:
-    image: roshb/ai-residency-vector-search-retrieval-serve:latest
+    image: roshb/ai-residency-vector-search-retrieval-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     depends_on:
       - redis
     environment:
@@ -61,7 +66,7 @@ services:
 
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
-    image: roshb/ai-residency-vit-classifier-serve:latest
+    image: roshb/ai-residency-vit-classifier-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8003:8000"
     environment:
@@ -70,7 +75,7 @@ services:
 
   # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
   vit-seq2seq:
-    image: roshb/ai-residency-vit-seq2seq-serve:latest
+    image: roshb/ai-residency-vit-seq2seq-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8008:8000"
     environment:
@@ -78,7 +83,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   multimodal-captioning:
-    image: roshb/ai-residency-multimodal-captioning-serve:latest
+    image: roshb/ai-residency-multimodal-captioning-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     working_dir: /app
     ports:
       - "8004:8000"
@@ -87,7 +92,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   whisper-fine-tuning:
-    image: roshb/ai-residency-whisper-fine-tuning-serve:latest
+    image: roshb/ai-residency-whisper-fine-tuning-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8005:8000"
     environment:
@@ -96,7 +101,7 @@ services:
 
   # --- Emotion-aware Whisper: FastAPI inference container ---
   speech-emotion-recognition:
-    image: roshb/ai-residency-speech-emotion-recognition-serve:latest
+    image: roshb/ai-residency-speech-emotion-recognition-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8009:8000"
     environment:
@@ -104,7 +109,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   rlhf-ppo:
-    image: roshb/ai-residency-rlhf-ppo-serve:latest
+    image: roshb/ai-residency-rlhf-ppo-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
@@ -115,7 +120,7 @@ services:
       HF_HOME: /root/.cache/huggingface
 
   frontend:
-    image: roshb/ai-residency-frontend:latest
+    image: roshb/ai-residency-frontend:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     depends_on:
       - word-embeddings
       - content-scoring
@@ -152,7 +157,7 @@ services:
 
   train-word-embeddings:
     profiles: [train]
-    image: roshb/ai-residency-word-embeddings-train:latest
+    image: roshb/ai-residency-word-embeddings-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ../../services/word-embeddings/data:/app/data
     environment:
@@ -162,7 +167,7 @@ services:
 
   train-content-scoring:
     profiles: [train]
-    image: roshb/ai-residency-content-scoring-train:latest
+    image: roshb/ai-residency-content-scoring-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -170,7 +175,7 @@ services:
 
   train-vector-search-retrieval:
     profiles: [train]
-    image: roshb/ai-residency-vector-search-retrieval-train:latest
+    image: roshb/ai-residency-vector-search-retrieval-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     # No command override: the image's own CMD is the single source of truth for what
     # a training container runs, so it cannot drift from the Dockerfile.
     depends_on:
@@ -187,7 +192,7 @@ services:
 
   train-vit-classifier:
     profiles: [train]
-    image: roshb/ai-residency-vit-classifier-train:latest
+    image: roshb/ai-residency-vit-classifier-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ../../services/vit-classifier/data:/app/data
     environment:
@@ -199,7 +204,7 @@ services:
 
   train-vit-seq2seq:
     profiles: [train]
-    image: roshb/ai-residency-vit-seq2seq-train:latest
+    image: roshb/ai-residency-vit-seq2seq-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ../../services/vit-seq2seq/data:/app/data
     environment:
@@ -210,7 +215,7 @@ services:
 
   train-multimodal-captioning:
     profiles: [train]
-    image: roshb/ai-residency-multimodal-captioning-train:latest
+    image: roshb/ai-residency-multimodal-captioning-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     working_dir: /app
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -221,7 +226,7 @@ services:
 
   train-whisper-fine-tuning:
     profiles: [train]
-    image: roshb/ai-residency-whisper-fine-tuning-train:latest
+    image: roshb/ai-residency-whisper-fine-tuning-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ../../services/whisper-fine-tuning/data:/app/data
     environment:
@@ -231,7 +236,7 @@ services:
 
   train-speech-emotion-recognition:
     profiles: [train]
-    image: roshb/ai-residency-speech-emotion-recognition-train:latest
+    image: roshb/ai-residency-speech-emotion-recognition-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     volumes:
       - ../../services/speech-emotion-recognition/data:/app/data
       - ../../services/speech-emotion-recognition/datasets:/app/datasets
@@ -242,7 +247,7 @@ services:
 
   train-rlhf-ppo:
     profiles: [train]
-    image: roshb/ai-residency-rlhf-ppo-train:latest
+    image: roshb/ai-residency-rlhf-ppo-train:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     # One PPO step -- this repo has no epoch loop, by design.
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
