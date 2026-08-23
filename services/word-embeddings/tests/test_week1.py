@@ -157,7 +157,6 @@ def test_cbow_training_runs_and_is_reproducible(tmp_path: Any) -> None:
 def test_cbow_checkpoint_carries_its_vocabulary(tmp_path: Any) -> None:
     """Embeddings are meaningless without the mapping they were trained against."""
     from ai_residency_common import load_checkpoint
-
     from word_embeddings.train import train_cbow
 
     config = Config(

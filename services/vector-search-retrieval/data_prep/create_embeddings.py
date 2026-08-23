@@ -9,10 +9,10 @@ weights, and the difference between the two is what those weights bought.
 import json
 
 import torch
-from ai_residency_common import get_logger, set_seed
 from torch import nn
 from tqdm import tqdm
 
+from ai_residency_common import get_logger, set_seed
 from cbow.vocabulary import load_words_to_ids
 from config import Config
 from data_prep.generate_triples import SPLITS

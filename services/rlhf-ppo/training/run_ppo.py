@@ -7,6 +7,8 @@ demonstrate learning. One step that provably executes every stage of the algorit
 the honest artefact.
 """
 
+from peft import get_peft_model_state_dict
+
 from ai_residency_common import (
     finish_tracking,
     get_logger,
@@ -15,8 +17,6 @@ from ai_residency_common import (
     push_checkpoint,
     save_checkpoint,
 )
-from peft import get_peft_model_state_dict
-
 from config import PPOConfig
 from ppo_trainer import PPOStepResult, PPOTrainer
 

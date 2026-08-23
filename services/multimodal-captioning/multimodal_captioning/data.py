@@ -13,12 +13,12 @@ the other four are perfectly good supervision this repo simply never touches.
 from typing import Any
 
 import torch
-from ai_residency_common import get_logger
-from datasets import load_dataset
 from PIL.Image import Image
 from torch.utils.data import Dataset, random_split
 
+from ai_residency_common import get_logger
 from config import Config
+from datasets import load_dataset
 from multimodal_captioning.models import Backbones
 
 __all__ = ["Batch", "Example", "FlickrDataset", "build_collate_fn", "build_datasets"]

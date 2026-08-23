@@ -1,0 +1,27 @@
+.git
+.venv
+**/.venv
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+
+# Trained artifacts and datasets are resolved from the Hugging Face Hub at run
+# time, never baked into an image.
+services/*/checkpoints
+services/*/data
+
+# `datasets/` means two different things across these services: raw third-party
+# corpora in the audio ones, and a Python package of dataset wrappers in the vision
+# ones. Exclude only the corpora -- a blanket rule silently drops the vision
+# services' own package, and the image then fails on import rather than on build.
+services/whisper-fine-tuning/datasets
+services/speech-emotion-recognition/datasets
+**/wandb
+
+# Figures and notebooks are for GitHub. The frontend is the exception: it renders
+# its own assets, and its Dockerfile lives in that service.
+notebooks
+**/*.ipynb
+
+.env

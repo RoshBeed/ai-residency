@@ -7,7 +7,6 @@ a file by path instead of as a module costs you. It is
 """
 
 from ai_residency_common import get_logger
-
 from config import Config
 from retrieval.query_engine import run_query
 

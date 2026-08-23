@@ -17,8 +17,9 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ai_residency_common import get_logger
 from transformers import PretrainedConfig, PreTrainedModel
+
+from ai_residency_common import get_logger
 
 __all__ = ["CBOWNS", "CBOWConfig", "load_cbow_embeddings"]
 

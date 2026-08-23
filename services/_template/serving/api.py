@@ -11,10 +11,10 @@ multipart uploads, matching the convention the existing week repos already use.
 from typing import Any
 
 import torch
-from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from config import Config
 from template.models import Predictor
 

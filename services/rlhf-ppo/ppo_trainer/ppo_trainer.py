@@ -4,6 +4,8 @@ from collections.abc import Callable
 from typing import Any, TypedDict
 
 import torch
+
+from advantage import GAEAdvantage, ReturnCalculator, TDError
 from ai_residency_common import (
     get_device,
     get_logger,
@@ -12,8 +14,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-
-from advantage import GAEAdvantage, ReturnCalculator, TDError
 from base_setup import BaseModelSetup
 from config import PPOConfig
 from experience_buffer import ExperienceBuffer

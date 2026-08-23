@@ -8,9 +8,10 @@ the loss without that context would overstate the result.
 from typing import Any
 
 import torch
-from ai_residency_common import get_logger
 from torch import nn
 from torch.utils.data import DataLoader
+
+from ai_residency_common import get_logger
 
 __all__ = ["compute_baseline", "evaluate_scorer"]
 

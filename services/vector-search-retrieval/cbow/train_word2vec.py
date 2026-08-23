@@ -10,6 +10,10 @@ there.
 import datetime
 
 import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from ai_residency_common import (
     finish_tracking,
     get_device,
@@ -20,10 +24,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from cbow.dataset import Example, Wiki
 from cbow.evaluate import nearest_words
 from cbow.model import CBOW

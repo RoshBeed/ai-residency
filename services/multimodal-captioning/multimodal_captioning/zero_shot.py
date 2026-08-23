@@ -13,9 +13,9 @@ which is what makes the result checkable at a glance.
 from dataclasses import dataclass
 
 import torch
-from ai_residency_common import get_logger
 from PIL import Image
 
+from ai_residency_common import get_logger
 from config import Config
 from multimodal_captioning.models import load_backbones
 from multimodal_captioning.samples import sample_image

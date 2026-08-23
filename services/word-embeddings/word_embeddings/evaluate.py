@@ -25,10 +25,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from scipy.stats import spearmanr
 from sklearn.manifold import TSNE
 
+from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from config import Config
 
 __all__ = ["evaluate_embeddings", "main", "visualise_embeddings"]

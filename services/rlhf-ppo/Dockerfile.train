@@ -1,23 +1,46 @@
 # syntax=docker/dockerfile:1
 #
-# Training image — runs ONE PPO step end to end (generation, reward scoring, KL
-# penalty, GAE advantage, one value-model gradient step, one policy-model gradient
-# step). There is no multi-epoch training loop here and no reward-model or SFT
-# training script — that is architecturally absent, not trimmed for the container.
-# FROM roshbeed/ai-residency-base (built by ai-residency-repo-template's Dockerfile.base, the shared
-# base every repo in the portfolio builds on). ai-residency-common is already installed
-# there, so this file never touches git or needs a credential of any kind.
+# Training image for rlhf-ppo.
 #
-# Build: docker build -f Dockerfile.train -t ai-residency-week6-train .
+# The build context is the repository root, not this directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
+# none of which live inside a service.
+#
+#   docker build -f services/rlhf-ppo/Dockerfile.train -t roshbeed/ai-residency-rlhf-ppo-train:latest .
+#   (or: make build SERVICE=rlhf-ppo)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
+
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+# --- workspace manifests (generated: make sync-dockerfiles) ---
+COPY libs/common/pyproject.toml libs/common/
+COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
+COPY services/_template/pyproject.toml services/_template/
+COPY services/content-scoring/pyproject.toml services/content-scoring/
+COPY services/frontend/pyproject.toml services/frontend/
+COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
+COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
+COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
+COPY services/vit-classifier/pyproject.toml services/vit-classifier/
+COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
+COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
+COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# --- end workspace manifests ---
+# libs/common is a real installable package, so it has to be present before the
+# dependency sync can build it -- a manifest alone is not enough.
+COPY libs/common libs/common
+RUN uv sync --frozen --no-install-project --package ai-residency-rlhf-ppo
 
-COPY . .
-RUN uv sync --frozen
+COPY services/rlhf-ppo services/rlhf-ppo
+RUN uv sync --frozen --package ai-residency-rlhf-ppo
 
-CMD ["uv", "run", "python", "-m", "training.run_ppo"]
+WORKDIR /app/services/rlhf-ppo
+
+CMD ["python", "-m", "training.run_ppo"]

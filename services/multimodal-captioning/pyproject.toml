@@ -1,12 +1,12 @@
 [project]
-name = "ai-residency-week4-multimodal-captioning"
+name = "ai-residency-multimodal-captioning"
 version = "0.1.0"
 description = "CLIP + Qwen3 image captioning (zero-shot classification, and a CLIP-vision -> adapter -> Qwen3 captioning pipeline), built for Week 4 of the Machine Learning Institute residency"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "RoshBeed" }]
 dependencies = [
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "transformers>=4.40",
     "torch>=2.0",
     "torchvision>=0.15",
@@ -21,9 +21,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning"
-Repository = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning.git"
-"Bug Tracker" = "https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning/issues"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning/issues"
 
 [dependency-groups]
 dev = [
@@ -43,6 +43,7 @@ package = false
 pythonpath = ["."]
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 torchvision = [{ index = "pytorch-cpu" }]
 
@@ -50,56 +51,3 @@ torchvision = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all six
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-# `transformers` ships partial annotations that leak `no-untyped-call` out of
-# `PreTrainedModel` internals under strict mode. Skipping the follow keeps checking of
-# our own code strict while treating the library itself as untyped.
-[[tool.mypy.overrides]]
-module = ["transformers.*"]
-follow_imports = "skip"
-ignore_missing_imports = true
-
-# Third-party packages that ship no type stubs. These waive stubs for the library,
-# not type checking of our own code — no `type: ignore` is used anywhere in this repo.
-[[tool.mypy.overrides]]
-module = [
-    "datasets.*",
-    "matplotlib.*",
-    "torchvision.*",
-    "wandb.*",
-]
-ignore_missing_imports = true

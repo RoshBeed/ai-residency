@@ -19,11 +19,11 @@ from typing import Any
 
 import numpy as np
 import redis
-from ai_residency_common import format_sse, get_logger, run_app
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ai_residency_common import format_sse, get_logger, run_app
 from config import Config
 from retrieval import query_engine
 from retrieval.query_engine import (

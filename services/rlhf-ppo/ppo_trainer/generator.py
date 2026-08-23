@@ -5,8 +5,8 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from ai_residency_common import get_logger
 
+from ai_residency_common import get_logger
 from config import PPOConfig
 from models import PolicyModel, SFTModel
 from sa_pair import SAPair

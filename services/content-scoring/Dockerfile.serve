@@ -1,23 +1,47 @@
 # syntax=docker/dockerfile:1
 #
-# Serving (inference) image — the container Kubernetes runs. FROM roshbeed/ai-residency-base;
-# see Dockerfile.train for why this never needs a git credential either.
+# Serving (inference) image for content-scoring.
 #
-# Model artifacts are NOT baked in — they're large and generated. This image pulls
-# them from the Hub via resolve_checkpoint() when none is bind-mounted locally (see
-# docker-compose.yml), so a freshly-trained model is always what's served.
+# The build context is the repository root, not this directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
+# none of which live inside a service.
 #
-# Build: docker build -f Dockerfile.serve -t ai-residency-week1-content-scoring-serve .
+#   docker build -f services/content-scoring/Dockerfile.serve -t roshbeed/ai-residency-content-scoring-serve:latest .
+#   (or: make build SERVICE=content-scoring)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
 
-COPY . .
-RUN uv sync --frozen
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
+COPY pyproject.toml uv.lock ./
+# --- workspace manifests (generated: make sync-dockerfiles) ---
+COPY libs/common/pyproject.toml libs/common/
+COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
+COPY services/_template/pyproject.toml services/_template/
+COPY services/content-scoring/pyproject.toml services/content-scoring/
+COPY services/frontend/pyproject.toml services/frontend/
+COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
+COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
+COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
+COPY services/vit-classifier/pyproject.toml services/vit-classifier/
+COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
+COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
+COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# --- end workspace manifests ---
+# libs/common is a real installable package, so it has to be present before the
+# dependency sync can build it -- a manifest alone is not enough.
+COPY libs/common libs/common
+RUN uv sync --frozen --no-install-project --package ai-residency-content-scoring
+
+COPY services/content-scoring services/content-scoring
+RUN uv sync --frozen --package ai-residency-content-scoring
+
+WORKDIR /app/services/content-scoring
 
 EXPOSE 8000
-CMD ["uv", "run", "python", "-m", "serving.api"]
+CMD ["python", "-m", "serving.api"]

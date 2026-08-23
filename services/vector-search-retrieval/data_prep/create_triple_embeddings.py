@@ -18,10 +18,10 @@ import json
 
 import numpy as np
 import torch
-from ai_residency_common import get_logger
 from torch import nn
 from tqdm import tqdm
 
+from ai_residency_common import get_logger
 from cbow.vocabulary import build_embedding_layer
 from config import Config
 from data_prep.generate_triples import SPLITS

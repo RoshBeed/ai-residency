@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import torch
-from ai_residency_common import format_sse, get_logger, run_app
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ai_residency_common import format_sse, get_logger, run_app
 from config import Config
 from content_scoring.predict import ModelState, create_title_embedding, load_models, predict_score
 

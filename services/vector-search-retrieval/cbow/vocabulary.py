@@ -10,9 +10,9 @@ import pickle
 from pathlib import Path
 
 import torch
-from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from torch import nn
 
+from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from config import Config
 
 __all__ = [

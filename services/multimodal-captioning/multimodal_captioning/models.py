@@ -20,7 +20,6 @@ from functools import lru_cache
 from pathlib import Path
 
 import torch
-from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from torch import nn
 from transformers import (
     AutoModelForCausalLM,
@@ -31,6 +30,7 @@ from transformers import (
     PreTrainedModel,
 )
 
+from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from config import CHECKPOINTS, Config
 
 __all__ = ["Backbones", "build_adapter", "load_adapter", "load_backbones"]

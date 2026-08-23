@@ -1,5 +1,5 @@
 [project]
-name = "ai-residency-week1-word-embeddings"
+name = "ai-residency-word-embeddings"
 version = "0.1.0"
 description = "Word2vec CBOW embeddings trained from scratch, exposed through a FastAPI nearest-neighbour and analogy API"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
     # together and re-verified (model instantiation + forward pass, not just
     # `uv sync` succeeding) — see TODO.md for what was actually exercised.
     "torch>=2.9.0",
-    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "ai-residency-common",
     "numpy>=2.3.0",
     "scikit-learn>=1.7.0",
     "wandb>=0.23.0",
@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency-week1-word-embeddings"
-Repository = "https://github.com/RoshBeed/ai-residency-week1-word-embeddings.git"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
 
 [dependency-groups]
 dev = [
@@ -53,79 +53,10 @@ package = false
 pythonpath = ["."]
 
 [tool.uv.sources]
+ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-# ---------------------------------------------------------------------------
-# Canonical lint/type config, identical in ai-residency-common, the template and all six
-# week repos.
-# ---------------------------------------------------------------------------
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # import sorting (replaces isort)
-    "N",   # pep8-naming — enforces the naming spec
-    "UP",  # pyupgrade
-    "B",   # bugbear
-    "SIM", # simplify
-    "RUF", # ruff-specific
-]
-
-# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
-# it in every repo, so it is waived once here rather than per file.
-ignore = ["N812"]
-
-[tool.ruff.lint.per-file-ignores]
-# The normalization tests assert on the very characters RUF001 calls ambiguous.
-"tests/test_week1.py" = ["RUF001"]
-
-# `word_embeddings/etl.py` IS a unicode->ASCII normalization table, so it necessarily
-# contains the "ambiguous" characters RUF001/RUF003 flag (en dash, multiplication sign,
-# smart quotes). Flagging it here is the rule misreading intent.
-"word_embeddings/etl.py" = ["RUF001", "RUF003"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unreachable = true
-show_error_codes = true
-
-# Third-party packages that ship no type stubs. These waive stubs for the
-# library, not type checking of our own code — no `type: ignore` is used anywhere
-# in this repo.
-# transformers ships incomplete annotations; subclassing PreTrainedModel/PretrainedConfig
-# otherwise reports untyped calls to its own internals, which we cannot fix from here.
-[[tool.mypy.overrides]]
-module = ["transformers.*"]
-follow_imports = "skip"
-ignore_missing_imports = true
-
-# Subclassing PreTrainedModel/PretrainedConfig, which are Any under the skip above.
-[[tool.mypy.overrides]]
-module = ["word_embeddings.model"]
-disallow_subclassing_any = false
-
-[[tool.mypy.overrides]]
-module = [
-    "matplotlib.*",
-    "nltk.*",
-    "scipy.*",
-    "psycopg2.*",
-    "sklearn.*",
-    "transformers.*",
-    "wandb.*",
-]
-ignore_missing_imports = true

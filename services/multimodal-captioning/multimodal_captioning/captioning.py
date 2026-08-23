@@ -20,10 +20,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
-from ai_residency_common import get_logger
 from PIL.Image import Image
 from torch import nn
 
+from ai_residency_common import get_logger
 from config import Config
 from multimodal_captioning.models import (
     Backbones,

@@ -1,0 +1,153 @@
+# One workflow for the whole workspace.
+#
+# There was no CI in any of the eleven repos this replaced, and the reason was
+# structural: ai-residency-common was a private git dependency, so every repo
+# needed its own personal access token configured before it could even install.
+# As a workspace member it needs no credential at all, and the only secrets here
+# are the ones that publish images.
+#
+# Isolation comes from path filters rather than from separate repositories: a
+# commit touching one service checks and builds that service. A commit touching
+# libs/common checks everything, which is correct -- it is the one thing they
+# genuinely share.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: roshbeed
+
+jobs:
+  changes:
+    name: Which services changed
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      any: ${{ steps.detect.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        run: |
+          base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            base=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+          fi
+          changed=$(git diff --name-only "$base" HEAD)
+          all=$(ls -d services/*/ | sed 's|services/||;s|/||' | grep -v '^_template$')
+
+          # The shared library, the lockfile, the lint config and CI itself all
+          # affect every service.
+          if echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
+            selected="$all"
+          else
+            selected=$(for s in $all; do
+              echo "$changed" | grep -q "^services/$s/" && echo "$s"
+            done)
+          fi
+
+          json=$(printf '%s\n' $selected | jq -R . | jq -sc .)
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+          echo "any=$([ -n "$selected" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Selected: ${selected:-none}"
+
+  lint:
+    name: Lint (whole workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+
+  check:
+    name: ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install this service only
+        run: uv sync --frozen --package ai-residency-${{ matrix.service }}
+
+      # mypy runs from inside the service: each one has its own top-level
+      # `config` package, so a single invocation across the tree sees several
+      # modules named `config` and refuses to start.
+      - name: Type-check
+        working-directory: services/${{ matrix.service }}
+        run: uv run --project . mypy --config-file ../../pyproject.toml .
+
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        run: uv run --project . pytest -q
+
+  images:
+    name: Publish ${{ matrix.service }}
+    needs: [changes, lint, check]
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The base image carries python, uv and the CPU torch wheel. It needs no
+      # credential of its own any more -- there is no private dependency in it.
+      - name: Build base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          tags: ${{ env.REGISTRY }}/ai-residency-base:latest
+          load: true
+
+      # Both tags come off one commit, which is what makes a deployment
+      # reproducible: deploy/ pins the SHA, not a moving `latest`.
+      # The frontend's image has no -serve suffix: it is the only service with one
+      # image rather than a serving/training pair.
+      - name: Image name
+        id: image
+        run: |
+          if [ "${{ matrix.service }}" = "frontend" ]; then
+            echo "name=${{ env.REGISTRY }}/ai-residency-frontend" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile.serve
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest

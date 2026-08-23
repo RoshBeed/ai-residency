@@ -1,0 +1,88 @@
+{{- /*
+One training Job per backend that declares a `trainCommand`, opt-in behind
+`--set train.enabled=true` so a normal install only ever serves.
+
+Each Job runs that backend's own `trainImage` -- built from its Dockerfile.train,
+a real, distinct image from the one the serving Deployment runs (Dockerfile.serve).
+`docker compose build` builds both.
+
+Jobs are named with a suffix from .Values.train.runName so a second run does not
+collide with a completed Job of the same name (a Job's pod template is immutable, so
+`helm upgrade` cannot simply update one in place).
+
+`train.only` restricts this to a single backend. Six training Jobs alongside eight
+serving pods does not fit on one node, so running them one at a time is the normal
+case, not the exception.
+*/ -}}
+{{- if .Values.train.enabled }}
+{{- range $name, $svc := .Values.backends }}
+{{- if and $svc.trainCommand (or (not $.Values.train.only) (eq $.Values.train.only $name)) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-train-{{ $.Values.train.runName }}
+  labels:
+    {{- include "ai-residency.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}-train
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}-train
+    spec:
+      # Never: a failed training run should be inspected, not silently retried at
+      # cost. backoffLimit: 0 above says the same thing to the Job controller.
+      restartPolicy: Never
+      containers:
+        - name: train
+          image: "{{ $svc.trainImage }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command:
+            {{- toYaml $svc.trainCommand | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ $.Values.secrets.name }}
+                optional: true
+          env:
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k }}
+              value: {{ tpl ($v | toString) $ | quote }}
+            {{- end }}
+            {{- range $k, $v := $.Values.train.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $k, $v := $svc.trainEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if $svc.trainMemoryLimit }}
+          resources:
+            requests:
+              memory: {{ $svc.trainMemoryRequest | default $svc.memoryRequest }}
+            limits:
+              memory: {{ $svc.trainMemoryLimit }}
+          {{- end }}
+          {{- if $svc.volumes }}
+          volumeMounts:
+            {{- range $vol := $svc.volumes }}
+            - name: {{ $vol.name }}
+              # Deliberately not read-only, unlike the serving mounts: this is the
+              # process that writes the checkpoint.
+              mountPath: {{ $vol.mountPath }}
+            {{- end }}
+          {{- end }}
+      {{- if $svc.volumes }}
+      volumes:
+        {{- range $vol := $svc.volumes }}
+        - name: {{ $vol.name }}
+          hostPath:
+            path: {{ tpl $vol.hostPath $ }}
+            type: {{ $vol.type }}
+        {{- end }}
+      {{- end }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

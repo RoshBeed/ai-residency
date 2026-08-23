@@ -11,8 +11,8 @@ import collections
 import pickle
 
 import requests
-from ai_residency_common import get_logger
 
+from ai_residency_common import get_logger
 from config import Config
 
 __all__ = ["build_vocabulary", "download_corpus", "main", "preprocess"]

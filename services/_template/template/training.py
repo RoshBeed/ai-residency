@@ -15,6 +15,9 @@ repo the trained model turned out not to beat predicting the mean.
 """
 
 import torch
+from torch import nn
+from torch.utils.data import DataLoader
+
 from ai_residency_common import (
     finish_tracking,
     get_device,
@@ -25,9 +28,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn
-from torch.utils.data import DataLoader
-
 from config import Config
 from template.data import Example, build_datasets
 from template.models import Predictor

@@ -12,9 +12,9 @@ from typing import cast
 import numpy as np
 import redis
 import torch
-from ai_residency_common import get_logger, load_model, resolve_required
 from tqdm import tqdm
 
+from ai_residency_common import get_logger, load_model, resolve_required
 from cbow.vocabulary import build_embedding_placeholder
 from config import Config
 from models.towers import GruTower, encode

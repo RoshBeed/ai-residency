@@ -12,6 +12,9 @@ import json
 from typing import Any
 
 import torch
+from torch import nn
+from torch.utils.data import DataLoader, random_split
+
 from ai_residency_common import (
     finish_tracking,
     get_device,
@@ -24,9 +27,6 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
-from torch import nn
-from torch.utils.data import DataLoader, random_split
-
 from config import Config
 from content_scoring.data import TitleScoreDataset, create_title_embeddings
 from content_scoring.embeddings import load_cbow_embeddings, load_cbow_vocabulary

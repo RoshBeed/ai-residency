@@ -11,11 +11,11 @@ this stays as the team wrote it.
 import json
 import random
 
-from ai_residency_common import get_logger, set_seed
-from datasets import load_dataset
 from tqdm import tqdm
 
+from ai_residency_common import get_logger, set_seed
 from config import Config
+from datasets import load_dataset
 
 __all__ = ["generate_triples", "main"]
 

@@ -1,0 +1,15 @@
+.DEFAULT_GOAL := help
+.PHONY: train serve test help
+
+train:  ## Train the single-digit classifier
+	uv run python -m vit_classifier.trainer
+
+serve:  ## Run the FastAPI backend on :8000
+	uv run python -m serving.api
+
+test:  ## Run the test suite
+	uv run pytest -q
+
+help:  ## List available targets
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'

@@ -1,68 +1,60 @@
-# ML Systems Portfolio — built end to end
+# `services/frontend` — the Streamlit app
 
-Machine-learning systems, each taken from scratch to a containerized microservice, plus the
-frontend and deployment infrastructure that run them all. The point isn't just the models — it's the
-engineering: real architectures implemented from the ground up, one shared library across the
-repos, and identical deployment on three runtimes (macOS, docker-compose, Kubernetes).
+One page per system, each a thin HTTP client calling that system's own backend. **No inference
+logic lives here** — only request/response wiring and display. The models run in their own
+containers; this renders.
 
-This repo is the human-facing entry point: the Streamlit UI that talks to all the backends, and the
-full write-up for each system.
+The portfolio overview lives in the [root README](../../README.md); this file is about the app.
 
 ```mermaid
 flowchart LR
-    subgraph clients["Client"]
-        UI["Streamlit frontend (this repo)"]
+    UI["Streamlit frontend<br/>(this service)"]
+    subgraph backends["One container per service"]
+        B1["word-embeddings"]
+        B2["content-scoring"]
+        B3["vector-search-retrieval"]
+        B4["vit-classifier"]
+        B5["vit-seq2seq"]
+        B6["multimodal-captioning"]
+        B7["whisper-fine-tuning"]
+        B8["speech-emotion-recognition"]
+        B9["rlhf-ppo"]
     end
-    subgraph cluster["Kubernetes / docker-compose"]
-        W1["HN score"]
-        W2["Retrieval"]
-        W3["ViT"]
-        W4["Captioning"]
-        W5["Whisper"]
-        W6["PPO"]
-        R[("Redis<br/>HNSW index")]
-    end
-    C["ai-residency-common<br/>shared lib"]
-    H[("HuggingFace Hub<br/>weights")]
-
-    UI --> W1 & W2 & W3 & W4 & W5 & W6
-    W2 --> R
-    W1 & W2 & W3 & W4 & W5 & W6 --> C
-    C --> H
-    subgraph train["Training box (RunPod / AWS spot GPU)"]
-        T["train image"] --> H
-    end
+    UI -->|HTTP| B1 & B2 & B3 & B4 & B5 & B6 & B7 & B8 & B9
 ```
 
 ## What each system does
 
 | System | Architecture | Demonstrated |
 |---|---|---|
-| [Word embeddings](https://github.com/RoshBeed/ai-residency-week1-word-embeddings) | CBOW word2vec with negative sampling, trained from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy/similarity checks) |
-| [Content scoring](https://github.com/RoshBeed/ai-residency-week1-content-scoring) | Regression head over frozen CBOW embeddings | Trained end-to-end on real Hacker News post data |
-| [Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency-week2-vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served via Redis/RediSearch ANN search |
-| [Vision Transformer](https://github.com/RoshBeed/ai-residency-week3-vision-transformers) | From-scratch ViT — single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
-| [Image captioning](https://github.com/RoshBeed/ai-residency-week4-multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end-to-end |
-| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency-week5-audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
-| [RLHF / PPO](https://github.com/RoshBeed/ai-residency-week6-rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against Qwen3-0.6B-Base |
+| [Word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) | CBOW word2vec with negative sampling, trained from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy/similarity checks) |
+| [Content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) | Regression head over frozen CBOW embeddings | Trained end-to-end on real Hacker News post data |
+| [Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served via Redis/RediSearch ANN search |
+| [Vision Transformer](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) | From-scratch ViT — single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
+| [Image captioning](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end-to-end |
+| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
+| [RLHF / PPO](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against Qwen3-0.6B-Base |
 
 ## The write-ups
 
-Each system has a full write-up — architecture, method, results, references — in `docs/`:
+Each system's write-up — architecture, method, results, references — is that service's own
+`README.md`, so it is both the GitHub landing page for the service and the document this app links
+to. They used to live here, in a separate repo from the code they describe, because relative links
+between repos 404 on GitHub.
 
 | System | Write-up |
 |---|---|
-| Word embeddings (CBOW from scratch) | [`docs/word-embeddings.md`](docs/word-embeddings.md) |
-| Content scoring (regression head over frozen vectors) | [`docs/content-scoring.md`](docs/content-scoring.md) |
-| Dual-encoder document retrieval | [`docs/dual-encoder-retrieval.md`](docs/dual-encoder-retrieval.md) |
-| Vision Transformer for digit recognition | [`docs/vision-transformer.md`](docs/vision-transformer.md) |
-| Image captioning (CLIP + Qwen3) | [`docs/image-captioning.md`](docs/image-captioning.md) |
-| Whisper fine-tuning | [`docs/whisper-finetuning.md`](docs/whisper-finetuning.md) |
-| RLHF / PPO | [`docs/rlhf-ppo.md`](docs/rlhf-ppo.md) |
+| Word embeddings (CBOW from scratch) | [`services/word-embeddings`](../word-embeddings) |
+| Content scoring (regression head over frozen vectors) | [`services/content-scoring`](../content-scoring) |
+| Dual-encoder document retrieval | [`services/vector-search-retrieval`](../vector-search-retrieval) |
+| ViT classifier (single digit) | [`services/vit-classifier`](../vit-classifier) |
+| ViT seq2seq (multi-digit) | [`services/vit-seq2seq`](../vit-seq2seq) |
+| Image captioning (CLIP + Qwen3) | [`services/multimodal-captioning`](../multimodal-captioning) |
+| Whisper fine-tuning | [`services/whisper-fine-tuning`](../whisper-fine-tuning) |
+| Speech emotion recognition | [`services/speech-emotion-recognition`](../speech-emotion-recognition) |
+| RLHF / PPO | [`services/rlhf-ppo`](../rlhf-ppo) |
 
-The week repos are container source only, so their exploratory notebooks and module-level
-documentation live here too: `notebooks/` (one folder per week) and `docs/vision-transformer-modules/`
-(the per-module READMEs from Week 3's `datasets/`, `models/`, `serving/` and `transformer/` packages).
+The exploratory notebooks live at [`notebooks/`](../../notebooks), one folder per service.
 
 ## The app
 
@@ -84,20 +76,28 @@ make install          # uv sync
 make run              # uv run streamlit run app.py
 ```
 
-The app talks to each backend at `WEEK1_API_URL` … `WEEK6_API_URL` (default `http://localhost:8001`
-… `:8006`), so point them at whichever backends are up — the compose stack, the Helm cluster (via
-port-forward), or individual `make serve` processes.
+Each page reads its backend's URL from an environment variable named after the service —
+`WORD_EMBEDDINGS_API_URL`, `VIT_CLASSIFIER_API_URL`, `SPEECH_EMOTION_RECOGNITION_API_URL` and so
+on, defaulting to `http://localhost:8001`–`:8009`. Point them at whichever backends are up: the
+compose stack, the Helm cluster via `kubectl port-forward`, or individual `make serve` processes.
+
+The Helm chart derives these names from its `backends` keys, so adding a service needs no
+frontend-side wiring beyond a page.
 
 ```bash
-WEEK1_API_URL=http://localhost:8001 make run
+WORD_EMBEDDINGS_API_URL=http://localhost:8001 make -C services/frontend run
 ```
 
 ## Docker
 
 ```bash
-make docker-build     # docker build -t roshbeed/ai-residency-frontend .
-make docker-push      # docker push roshbeed/ai-residency-frontend:latest
+# from the repository root
+docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-frontend:latest .
+docker push roshbeed/ai-residency-frontend:latest
 ```
+
+It does not build `FROM ai-residency-base`, deliberately — that image carries a torch install this
+one has no use for.
 
 The image is deliberately lightweight — `streamlit` + `requests` + `pillow` only. Every model runs in
 its own backend container.
@@ -105,20 +105,18 @@ its own backend container.
 ## Layout
 
 ```
-ai-residency-frontend/
-├── app.py                    the whole Streamlit app, one page per system
-├── assets/                   figures rendered inline by the app
-├── docs/                     each system's full write-up + assets/ + week-3 module docs
-├── notebooks/                the week repos' exploratory notebooks, one folder per week
-├── Dockerfile                the published roshbeed/ai-residency-frontend image
-├── Makefile                  run / docker-build / docker-push
-└── pyproject.toml            streamlit + requests only — no ML dependencies
+services/frontend/
+├── app.py            the whole app, one page per system
+├── assets/           figures the pages render inline
+├── Dockerfile        the published roshbeed/ai-residency-frontend image
+├── Makefile          run
+└── pyproject.toml    streamlit + requests + pillow — no ML dependencies
 ```
 
 ## Related
 
-- [`ai-residency-infrastructure`](https://github.com/RoshBeed/ai-residency-infrastructure) — compose, Helm, Terraform to run all of it.
-- [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common) — the shared helper library all the backends depend on.
+- [`deploy`](https://github.com/RoshBeed/ai-residency/tree/main/deploy) — compose, Helm, Terraform to run all of it.
+- [`libs/common`](https://github.com/RoshBeed/ai-residency/tree/main/libs/common) — the shared helper library all the backends depend on.
 - The backend repos linked in the table above.
 
 ---

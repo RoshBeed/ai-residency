@@ -14,11 +14,11 @@ matching the convention the other week repos already use.
 import queue
 from typing import Any
 
-from ai_residency_common import decode_image, get_device, get_logger, run_app, stream_sse
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ai_residency_common import decode_image, get_device, get_logger, run_app, stream_sse
 from config import CHECKPOINTS, Config
 from multimodal_captioning.captioning import (
     CaptionResult,

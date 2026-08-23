@@ -8,10 +8,9 @@ import json
 from typing import TypedDict
 
 from ai_residency_common import get_logger
-from datasets import load_dataset
-
 from config import Config
 from data_prep.generate_triples import SPLITS
+from datasets import load_dataset
 
 __all__ = ["ExtractedQuery", "extract_queries_and_documents", "main"]
 
