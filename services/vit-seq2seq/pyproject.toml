@@ -1,0 +1,54 @@
+[project]
+name = "ai-residency-vit-seq2seq"
+version = "0.1.0"
+description = "From-scratch encoder-decoder Vision Transformer reading multi-digit images one token at a time, served via FastAPI"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "ai-residency-common",
+    "ai-residency-vision-transformer",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "tqdm>=4.64.0",
+    "matplotlib>=3.5.0",
+    "numpy>=1.21.0",
+    "Pillow>=9.0.0",
+    "pydantic",
+    "uvicorn",
+    "fastapi",
+    "wandb>=0.23.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers"
+Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers/issues"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "types-tqdm>=4.70",
+]
+
+[tool.uv]
+package = false
+
+# torch resolves to the CUDA build on linux/arm64 otherwise, which bloats images
+# roughly 5-10x. This portfolio runs CPU-only in containers.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv.sources]
+ai-residency-common = { workspace = true }
+ai-residency-vision-transformer = { workspace = true }
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

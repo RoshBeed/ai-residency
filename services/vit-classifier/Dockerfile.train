@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+#
+# Training image for vit-classifier.
+#
+# The build context is the repository root, not this directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
+# none of which live inside a service.
+#
+#   docker build -f services/vit-classifier/Dockerfile.train -t roshbeed/ai-residency-vit-classifier-train:latest .
+#   (or: make build SERVICE=vit-classifier)
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
+COPY pyproject.toml uv.lock ./
+# --- workspace manifests (generated: make sync-dockerfiles) ---
+COPY libs/common/pyproject.toml libs/common/
+COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
+COPY services/_template/pyproject.toml services/_template/
+COPY services/content-scoring/pyproject.toml services/content-scoring/
+COPY services/frontend/pyproject.toml services/frontend/
+COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
+COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
+COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
+COPY services/vit-classifier/pyproject.toml services/vit-classifier/
+COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
+COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
+COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# --- end workspace manifests ---
+# libs/common is a real installable package, so it has to be present before the
+# dependency sync can build it -- a manifest alone is not enough.
+COPY libs/common libs/common
+COPY libs/vision-transformer libs/vision-transformer
+RUN uv sync --frozen --no-install-project --package ai-residency-vit-classifier
+
+COPY services/vit-classifier services/vit-classifier
+RUN uv sync --frozen --package ai-residency-vit-classifier
+
+WORKDIR /app/services/vit-classifier
+
+CMD ["python", "-m", "vit_classifier.trainer"]

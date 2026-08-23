@@ -139,8 +139,8 @@ redis:
 #     sh -c 'echo $(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))Mi'
 #
 #   frontend 379Mi   word-embeddings 2286Mi   content-scoring 1345Mi
-#   vector-search-retrieval 294Mi      vision-transformers 447Mi                    multimodal-captioning 5410Mi
-#   audio-fine-tuning 1845Mi     rlhf-ppo 4640Mi                   redis 12Mi
+#   vector-search-retrieval 294Mi      vit-classifier / vit-seq2seq 447Mi combined                    multimodal-captioning 5410Mi
+#   whisper-fine-tuning 1845Mi     rlhf-ppo 4640Mi                   redis 12Mi
 #
 # Requests are the peak rounded up, and they sum to ~18.6GiB. That is the number that
 # has to fit: this host reports 23.4GiB allocatable, so everything schedules. Read the
@@ -249,22 +249,15 @@ backends:
         mountPath: /app/data
         type: DirectoryOrCreate
 
-  # --- Week 3: FastAPI inference container (Dockerfile.serve) ---
-  vision-transformers:
-    image: roshbeed/ai-residency-vision-transformers-serve
-    trainImage: roshbeed/ai-residency-vision-transformers-train
-    # This repo trains two models with separate epoch caps, so the classifier's is
-    # classifier_epochs, not num_epochs -- train.env's AI_RESIDENCY_NUM_EPOCHS alone would not
-    # shorten it. trainEnv is merged in after train.env, so it can add or override.
+  # --- Single-digit ViT classifier (Dockerfile.serve) ---
+  vit-classifier:
+    image: roshbeed/ai-residency-vit-classifier-serve
+    trainImage: roshbeed/ai-residency-vit-classifier-train
+    # The epoch cap is its own field, so train.env's AI_RESIDENCY_NUM_EPOCHS alone would
+    # not shorten a run. trainEnv is merged in after train.env, so it can override.
     trainEnv:
       AI_RESIDENCY_CLASSIFIER_EPOCHS: "1"
-    # The classifier; the seq2seq trainer is the other, slower one.
-    trainCommand:
-      - uv
-      - run
-      - python
-      - -m
-      - models.classifier.trainer
+    trainCommand: ["python", "-m", "vit_classifier.trainer"]
     containerPort: 8000
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
@@ -272,7 +265,22 @@ backends:
     volumes:
       # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/vision-transformers/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/vit-classifier/checkpoints"
+        mountPath: /app/checkpoints
+        type: DirectoryOrCreate
+
+  # --- Multi-digit encoder-decoder ViT (Dockerfile.serve) ---
+  vit-seq2seq:
+    image: roshbeed/ai-residency-vit-seq2seq-serve
+    trainImage: roshbeed/ai-residency-vit-seq2seq-train
+    trainCommand: ["python", "-m", "vit_seq2seq.trainer"]
+    containerPort: 8000
+    memoryRequest: 512Mi
+    memoryLimit: 1024Mi
+    env: {}
+    volumes:
+      - name: checkpoints
+        hostPath: "{{ .Values.hostRoot }}/services/vit-seq2seq/checkpoints"
         mountPath: /app/checkpoints
         type: DirectoryOrCreate
 
@@ -309,9 +317,9 @@ backends:
 
   # --- Week 5: the image doesn't carry the (gitignored) fine-tuned checkpoint, so
   # mount the real one at runtime.
-  audio-fine-tuning:
-    image: roshbeed/ai-residency-audio-fine-tuning-serve
-    trainImage: roshbeed/ai-residency-audio-fine-tuning-train
+  whisper-fine-tuning:
+    image: roshbeed/ai-residency-whisper-fine-tuning-serve
+    trainImage: roshbeed/ai-residency-whisper-fine-tuning-train
     trainCommand:
       - uv
       - run
@@ -325,8 +333,27 @@ backends:
     volumes:
       # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
       - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/audio-fine-tuning/checkpoints"
+        hostPath: "{{ .Values.hostRoot }}/services/whisper-fine-tuning/checkpoints"
         mountPath: /app/checkpoints
+        type: DirectoryOrCreate
+
+  # --- Emotion-aware Whisper (Dockerfile.serve) ---
+  speech-emotion-recognition:
+    image: roshbeed/ai-residency-speech-emotion-recognition-serve
+    trainImage: roshbeed/ai-residency-speech-emotion-recognition-train
+    trainCommand: ["python", "-m", "speech_emotion_recognition.training"]
+    containerPort: 8000
+    memoryRequest: 2048Mi
+    memoryLimit: 2816Mi
+    env: {}
+    volumes:
+      - name: checkpoints
+        hostPath: "{{ .Values.hostRoot }}/services/speech-emotion-recognition/checkpoints"
+        mountPath: /app/checkpoints
+        type: DirectoryOrCreate
+      - name: hf-cache
+        hostPath: "{{ .Values.hfCachePath }}"
+        mountPath: /root/.cache/huggingface
         type: DirectoryOrCreate
 
   # --- Week 6: checkpoints mount so policy/value LoRA adapters persist across restart ---

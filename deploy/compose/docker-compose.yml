@@ -68,13 +68,24 @@ services:
     ports:
       - "8002:8000"
 
-  # --- Week 3: FastAPI inference container (both classifier and seq2seq) ---
-  vision-transformers:
-    image: roshbeed/ai-residency-vision-transformers-serve:latest
+  # --- Single-digit ViT classifier: FastAPI inference container ---
+  vit-classifier:
+    image: roshbeed/ai-residency-vit-classifier-serve:latest
     volumes:
-      - ../../services/vision-transformers/checkpoints:/app/checkpoints
+      - ../../services/vit-classifier/checkpoints:/app/checkpoints
     ports:
       - "8003:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
+  vit-seq2seq:
+    image: roshbeed/ai-residency-vit-seq2seq-serve:latest
+    volumes:
+      - ../../services/vit-seq2seq/checkpoints:/app/checkpoints
+    ports:
+      - "8008:8000"
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -92,12 +103,23 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
-  audio-fine-tuning:
-    image: roshbeed/ai-residency-audio-fine-tuning-serve:latest
+  whisper-fine-tuning:
+    image: roshbeed/ai-residency-whisper-fine-tuning-serve:latest
     volumes:
-      - ../../services/audio-fine-tuning/checkpoints:/app/checkpoints
+      - ../../services/whisper-fine-tuning/checkpoints:/app/checkpoints
     ports:
       - "8005:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  # --- Emotion-aware Whisper: FastAPI inference container ---
+  speech-emotion-recognition:
+    image: roshbeed/ai-residency-speech-emotion-recognition-serve:latest
+    volumes:
+      - ../../services/speech-emotion-recognition/checkpoints:/app/checkpoints
+    ports:
+      - "8009:8000"
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -120,17 +142,21 @@ services:
       - word-embeddings
       - content-scoring
       - vector-search-retrieval
-      - vision-transformers
+      - vit-classifier
+      - vit-seq2seq
       - multimodal-captioning
-      - audio-fine-tuning
+      - whisper-fine-tuning
+      - speech-emotion-recognition
       - rlhf-ppo
     environment:
       WORD_EMBEDDINGS_API_URL: http://word-embeddings:8000
       CONTENT_SCORING_API_URL: http://content-scoring:8000
       VECTOR_SEARCH_RETRIEVAL_API_URL: http://vector-search-retrieval:8000
-      VISION_TRANSFORMERS_API_URL: http://vision-transformers:8000
+      VIT_CLASSIFIER_API_URL: http://vit-classifier:8000
+      VIT_SEQ2SEQ_API_URL: http://vit-seq2seq:8000
       MULTIMODAL_CAPTIONING_API_URL: http://multimodal-captioning:8000
-      AUDIO_FINE_TUNING_API_URL: http://audio-fine-tuning:8000
+      WHISPER_FINE_TUNING_API_URL: http://whisper-fine-tuning:8000
+      SPEECH_EMOTION_RECOGNITION_API_URL: http://speech-emotion-recognition:8000
       RLHF_PPO_API_URL: http://rlhf-ppo:8000
     ports:
       - "8500:8501"
@@ -141,7 +167,7 @@ services:
   # the serving one). AI_RESIDENCY_NUM_EPOCHS (read by every repo's Config, see ai-residency-common's
   # BaseConfig) keeps these to a smoke run by default; override it for a real one.
   #
-  #   HF_TOKEN=... docker compose --profile train run --rm train-vision-transformers
+  #   HF_TOKEN=... docker compose --profile train run --rm train-vit-classifier
   #
   # Checkpoint mounts are writable here, unlike the read-only serving mounts: this is
   # the process that writes them.
@@ -184,22 +210,30 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
-  train-vision-transformers:
+  train-vit-classifier:
     profiles: [train]
-    image: roshbeed/ai-residency-vision-transformers-train:latest
-    # Dockerfile.train's own default is the classifier; pass
-    # `command: ["uv", "run", "python", "-m", "models.seq2seq.trainer"]`
-    # for the seq2seq trainer.
+    image: roshbeed/ai-residency-vit-classifier-train:latest
     volumes:
-      - ../../services/vision-transformers/checkpoints:/app/checkpoints
-      - ../../services/vision-transformers/data:/app/data
+      - ../../services/vit-classifier/checkpoints:/app/checkpoints
+      - ../../services/vit-classifier/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
-      # This repo trains two models with separate epoch caps, so the classifier's is
-      # classifier_epochs, not num_epochs -- AI_RESIDENCY_NUM_EPOCHS alone would not shorten it.
-      AI_RESIDENCY_CLASSIFIER_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+      # The classifier's epoch cap is its own field, so AI_RESIDENCY_NUM_EPOCHS alone
+      # would not shorten a run.
+      AI_RESIDENCY_CLASSIFIER_EPOCHS: ${AI_RESIDENCY_CLASSIFIER_EPOCHS:-1}
+
+  train-vit-seq2seq:
+    profiles: [train]
+    image: roshbeed/ai-residency-vit-seq2seq-train:latest
+    volumes:
+      - ../../services/vit-seq2seq/checkpoints:/app/checkpoints
+      - ../../services/vit-seq2seq/data:/app/data
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
 
   train-multimodal-captioning:
     profiles: [train]
@@ -214,12 +248,24 @@ services:
       # Never overwrite the committed adapter during a smoke run.
       AI_RESIDENCY_CHECKPOINT_NAME: ${AI_RESIDENCY_CHECKPOINT_NAME:-adapter_smoke.pth}
 
-  train-audio-fine-tuning:
+  train-whisper-fine-tuning:
     profiles: [train]
-    image: roshbeed/ai-residency-audio-fine-tuning-train:latest
+    image: roshbeed/ai-residency-whisper-fine-tuning-train:latest
     volumes:
-      - ../../services/audio-fine-tuning/checkpoints:/app/checkpoints
-      - ../../services/audio-fine-tuning/data:/app/data
+      - ../../services/whisper-fine-tuning/checkpoints:/app/checkpoints
+      - ../../services/whisper-fine-tuning/data:/app/data
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
+  train-speech-emotion-recognition:
+    profiles: [train]
+    image: roshbeed/ai-residency-speech-emotion-recognition-train:latest
+    volumes:
+      - ../../services/speech-emotion-recognition/checkpoints:/app/checkpoints
+      - ../../services/speech-emotion-recognition/data:/app/data
+      - ../../services/speech-emotion-recognition/datasets:/app/datasets
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}

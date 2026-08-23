@@ -1,5 +1,5 @@
-        docker-build-train docker-build-serve docker-push-train docker-push-serve \
-        docker-up docker-train docker-down clean help
+.DEFAULT_GOAL := help
+.PHONY: train serve test help
 
 train:  ## Run ONE PPO step on two example prompts (this repo has no multi-epoch loop)
 	uv run python -m training.run_ppo

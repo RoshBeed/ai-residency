@@ -1,5 +1,5 @@
-        docker-build-train docker-build-serve docker-push-train docker-push-serve \
-        docker-up docker-train docker-down clean help
+.DEFAULT_GOAL := help
+.PHONY: train serve zero-shot test help
 
 train:  ## Train the CLIP-to-Qwen3 adapter on Flickr30k
 	uv run python -m multimodal_captioning.training

@@ -1,11 +1,5 @@
-        docker-build-base docker-push-base docker-build-train docker-build-serve \
-        docker-push-train docker-push-serve docker-up docker-train docker-down clean help
-
-# ai-residency-common is a private repo, so only building the shared base image needs a
-# token — `gh auth token` supplies it without it ever being stored in a file.
-# Every image below builds FROM that base and never touches git.
-GITHUB_TOKEN ?= $(shell gh auth token)
-export GITHUB_TOKEN
+.DEFAULT_GOAL := help
+.PHONY: train serve test help
 
 train:  ## Run training
 	uv run python -m template.training

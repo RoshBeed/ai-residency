@@ -21,15 +21,18 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "ai-residency-audio-fine-tuning",
     "ai-residency-common",
     "ai-residency-content-scoring",
     "ai-residency-frontend",
     "ai-residency-multimodal-captioning",
     "ai-residency-rlhf-ppo",
+    "ai-residency-speech-emotion-recognition",
     "ai-residency-template",
     "ai-residency-vector-search-retrieval",
-    "ai-residency-vision-transformers",
+    "ai-residency-vision-transformer",
+    "ai-residency-vit-classifier",
+    "ai-residency-vit-seq2seq",
+    "ai-residency-whisper-fine-tuning",
     "ai-residency-word-embeddings",
 ]
 
@@ -60,66 +63,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8d/75/94cd5d389649578aca399e5aa822637eec18319a1dadc400ffe2f9a7493f/accelerate-1.14.0.tar.gz", hash = "sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d", size = 412167, upload-time = "2026-06-11T13:45:52.326Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/db/253133d7e7cb40d3af384bb2f5c0b4a2b7fdcffbc95c688cc67a20a3c103/accelerate-1.14.0-py3-none-any.whl", hash = "sha256:e94390c2863b873be18f623f9df48a0d8fe5eff13ea7f1a00092b0a7904888c6", size = 389246, upload-time = "2026-06-11T13:45:50.477Z" },
-]
-
-[[package]]
-name = "ai-residency-audio-fine-tuning"
-version = "0.1.0"
-source = { virtual = "services/audio-fine-tuning" }
-dependencies = [
-    { name = "ai-residency-common" },
-    { name = "fastapi" },
-    { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "librosa", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "matplotlib" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openai-whisper" },
-    { name = "requests" },
-    { name = "seaborn" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
-    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
-    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
-    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
-    { name = "transformers" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "types-requests" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ai-residency-common", editable = "libs/common" },
-    { name = "fastapi" },
-    { name = "librosa" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "openai-whisper" },
-    { name = "requests" },
-    { name = "seaborn" },
-    { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchaudio", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "transformers" },
-    { name = "uvicorn" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "types-requests", specifier = ">=2.32" },
 ]
 
 [[package]]
@@ -334,6 +277,57 @@ dev = [
 ]
 
 [[package]]
+name = "ai-residency-speech-emotion-recognition"
+version = "0.1.0"
+source = { virtual = "services/speech-emotion-recognition" }
+dependencies = [
+    { name = "ai-residency-common" },
+    { name = "fastapi" },
+    { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "librosa", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "requests" },
+    { name = "seaborn" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "transformers" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-residency-common", editable = "libs/common" },
+    { name = "fastapi" },
+    { name = "librosa" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "requests" },
+    { name = "seaborn" },
+    { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchaudio", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "transformers" },
+    { name = "uvicorn" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
 name = "ai-residency-template"
 version = "0.1.0"
 source = { virtual = "services/_template" }
@@ -431,11 +425,24 @@ dev = [
 ]
 
 [[package]]
-name = "ai-residency-vision-transformers"
+name = "ai-residency-vision-transformer"
 version = "0.1.0"
-source = { virtual = "services/vision-transformers" }
+source = { editable = "libs/vision-transformer" }
+dependencies = [
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "torch", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" }]
+
+[[package]]
+name = "ai-residency-vit-classifier"
+version = "0.1.0"
+source = { virtual = "services/vit-classifier" }
 dependencies = [
     { name = "ai-residency-common" },
+    { name = "ai-residency-vision-transformer" },
     { name = "fastapi" },
     { name = "matplotlib" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -463,6 +470,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ai-residency-common", editable = "libs/common" },
+    { name = "ai-residency-vision-transformer", editable = "libs/vision-transformer" },
     { name = "fastapi" },
     { name = "matplotlib", specifier = ">=3.5.0" },
     { name = "numpy", specifier = ">=1.21.0" },
@@ -482,6 +490,110 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-tqdm", specifier = ">=4.70" },
+]
+
+[[package]]
+name = "ai-residency-vit-seq2seq"
+version = "0.1.0"
+source = { virtual = "services/vit-seq2seq" }
+dependencies = [
+    { name = "ai-residency-common" },
+    { name = "ai-residency-vision-transformer" },
+    { name = "fastapi" },
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.28.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "tqdm" },
+    { name = "uvicorn" },
+    { name = "wandb" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-residency-common", editable = "libs/common" },
+    { name = "ai-residency-vision-transformer", editable = "libs/vision-transformer" },
+    { name = "fastapi" },
+    { name = "matplotlib", specifier = ">=3.5.0" },
+    { name = "numpy", specifier = ">=1.21.0" },
+    { name = "pillow", specifier = ">=9.0.0" },
+    { name = "pydantic" },
+    { name = "torch", specifier = ">=2.0.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchvision", specifier = ">=0.15.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "tqdm", specifier = ">=4.64.0" },
+    { name = "uvicorn" },
+    { name = "wandb", specifier = ">=0.23.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "types-tqdm", specifier = ">=4.70" },
+]
+
+[[package]]
+name = "ai-residency-whisper-fine-tuning"
+version = "0.1.0"
+source = { virtual = "services/whisper-fine-tuning" }
+dependencies = [
+    { name = "ai-residency-common" },
+    { name = "fastapi" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openai-whisper" },
+    { name = "requests" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "torchaudio", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-residency-common", editable = "libs/common" },
+    { name = "fastapi" },
+    { name = "numpy" },
+    { name = "openai-whisper" },
+    { name = "requests" },
+    { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchaudio", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "uvicorn" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "types-requests", specifier = ">=2.32" },
 ]
 
 [[package]]

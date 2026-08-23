@@ -46,9 +46,13 @@ API_URLS = {
     "vector-search-retrieval": os.getenv(
         "VECTOR_SEARCH_RETRIEVAL_API_URL", "http://localhost:8002"
     ),
-    "vision-transformers": os.getenv("VISION_TRANSFORMERS_API_URL", "http://localhost:8003"),
+    "vit-classifier": os.getenv("VIT_CLASSIFIER_API_URL", "http://localhost:8003"),
+    "vit-seq2seq": os.getenv("VIT_SEQ2SEQ_API_URL", "http://localhost:8008"),
     "multimodal-captioning": os.getenv("MULTIMODAL_CAPTIONING_API_URL", "http://localhost:8004"),
-    "audio-fine-tuning": os.getenv("AUDIO_FINE_TUNING_API_URL", "http://localhost:8005"),
+    "whisper-fine-tuning": os.getenv("WHISPER_FINE_TUNING_API_URL", "http://localhost:8005"),
+    "speech-emotion-recognition": os.getenv(
+        "SPEECH_EMOTION_RECOGNITION_API_URL", "http://localhost:8009"
+    ),
     "rlhf-ppo": os.getenv("RLHF_PPO_API_URL", "http://localhost:8006"),
 }
 
@@ -56,9 +60,11 @@ PAGES = {
     "word-embeddings": "Word Embeddings",
     "content-scoring": "Content Scoring",
     "vector-search-retrieval": "Vector Search & Retrieval",
-    "vision-transformers": "Vision Transformer & Seq2Seq",
+    "vit-classifier": "ViT Classifier",
+    "vit-seq2seq": "ViT Seq2Seq",
     "multimodal-captioning": "Multimodal Captioning",
-    "audio-fine-tuning": "Audio Fine-Tuning",
+    "whisper-fine-tuning": "Whisper Fine-Tuning",
+    "speech-emotion-recognition": "Speech Emotion Recognition",
     "rlhf-ppo": "RLHF / PPO",
 }
 
@@ -282,16 +288,15 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "~99K parameters per tower, sharing frozen CBOW embeddings from a 7,692-word vocabulary.",
         ],
     },
-    "vision-transformers": {
+    "vit-classifier": {
         "icon": "🔢",
-        "title": "Vision Transformer & Seq2Seq",
-        "subtitle": "Custom ViT classifier + autoregressive seq2seq decoder, no torchvision",
+        "title": "ViT Classifier",
+        "subtitle": "Encoder-only Vision Transformer for a single MNIST digit, no torchvision",
         "description": (
-            "Patch embeddings, multi-head self-attention, and autoregressive "
-            "decoding power a vision classifier and sequence-to-sequence model "
-            "for digit recognition."
+            "Patch embeddings and multi-head self-attention, written from scratch, "
+            "classifying one handwritten digit."
         ),
-        "techniques": ["Computer Vision", "Vision Transformer", "Self-Attention", "Seq2Seq"],
+        "techniques": ["Computer Vision", "Vision Transformer", "Self-Attention"],
         "papers": [
             (
                 "Dosovitskiy et al.",
@@ -303,52 +308,86 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
         "model_links": [],
         "stats": [
-            ("Classifier accuracy", "~94%"),
-            ("Seq2seq exact match", "68.0%"),
-            ("Random baseline", "0.10%"),
-            ("Both models", "built from scratch"),
+            ("Test accuracy", "91.78%"),
+            ("Majority baseline", "11.35%"),
+            ("Trained for", "1 epoch"),
         ],
         "intro": (
-            "Two from-scratch Vision Transformer models built without torchvision or "
-            "pretrained components. Patch embeddings, multi-head self-attention, encoder "
-            "and decoder blocks — every module implemented directly from the original "
-            "papers.\n\n"
-            "**Architecture.** Both models share the same ViT encoder: images are split "
-            "into patches, linearly projected, and fed through multi-head self-attention "
-            "blocks with post-norm (matching the original Transformer paper's design). "
-            "The classifier adds a [CLS] token and MLP head to predict a single MNIST "
-            "digit. The encoder-decoder model reads composited multi-digit images and "
-            "adds a causal decoder that attends to the encoder output at each generation "
-            "step, producing digits autoregressively until an EOS token. Both models are "
-            "served through one FastAPI app that loads both checkpoints at startup.\n\n"
-            "**Approach.** Building every component from scratch — the attention "
-            "mechanism, positional encodings, the encoder-decoder cross-attention "
-            "bridge — forces a deep understanding of what makes Transformers work at "
-            "the tensor-operation level. The seq2seq decoder generates sequences token "
-            "by token with per-token probability tracing, making the autoregressive "
-            "decoding process visible step by step. The dual-model design (classifier "
-            "and generator sharing an encoder) demonstrates how the same attention "
-            "backbone serves fundamentally different tasks."
+            "An image is not a sequence, so the first thing a Vision Transformer has to do "
+            "is invent one: cut the image into fixed-size patches, project each into a "
+            "vector, and hand the transformer a sequence of patch tokens the way a language "
+            "model gets word tokens. Everything after that is the transformer architecture "
+            "applied unchanged to a new modality.\n\n"
+            "**Architecture.** Images are split into 4x4 patches, linearly projected, and fed "
+            "through six multi-head self-attention blocks with post-norm, matching the "
+            "original Transformer paper rather than ViT's pre-norm. A [CLS] token and MLP "
+            "head produce the ten-way prediction.\n\n"
+            "**Shared blocks.** The attention, encoder and patch-embedding modules live in "
+            "`libs/vision-transformer`, shared with the seq2seq model rather than duplicated "
+            "— the two models are the same blocks wired differently."
         ),
-        "docs_path": "services/vision-transformers/README.md",
+        "docs_path": "services/vit-classifier/README.md",
         "diagrams": [
             (
                 "assets/vision-transformer/task_overview.png",
-                "Two tasks sharing one encoder — a ViT classifier for single-digit recognition and "
-                "an encoder-decoder model that reads composited multi-digit images and generates "
-                "the number autoregressively.",
-            ),
-            (
-                "assets/vision-transformer/seq2seq_slide_architecture.png",
-                "Encoder-decoder with cross-attention — the decoder attends to encoder output at "
-                "each generation step, producing digits token by token until EOS.",
+                "Recognizing one digit versus recognizing several — the two tasks these "
+                "models split between them.",
             ),
         ],
         "model_specs": [
-            "**Classifier** — 6 encoder layers, d_model=128, 8 heads, FF hidden=512, 4×4 patches. ~1.7M parameters.",
-            "**Seq2Seq** — 6 encoder + 6 decoder layers, d_model=256, 8 heads, FF hidden=1024, 16×16 patches. "
+            "6 encoder layers, d_model=128, 8 heads, FF hidden=512, 4x4 patches. ~1.7M parameters.",
+            "Built from scratch — no `torch.nn.Transformer` shortcuts.",
+        ],
+    },
+    "vit-seq2seq": {
+        "icon": "🔠",
+        "title": "ViT Seq2Seq",
+        "subtitle": "Encoder-decoder Vision Transformer reading multi-digit numbers",
+        "description": (
+            "An encoder reads an image of three digits; a causal decoder generates the "
+            "number one digit at a time, until it decides it is finished."
+        ),
+        "techniques": ["Computer Vision", "Vision Transformer", "Seq2Seq", "Cross-Attention"],
+        "papers": [
+            (
+                "Dosovitskiy et al.",
+                "An Image is Worth 16x16 Words",
+                "https://arxiv.org/abs/2010.11929",
+            ),
+            ("Vaswani et al.", "Attention Is All You Need", "https://arxiv.org/abs/1706.03762"),
+        ],
+        "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
+        "model_links": [],
+        "stats": [
+            ("Exact-sequence match", "68.0%"),
+            ("Random baseline", "0.10%"),
+            ("Held-out sequences", "500"),
+        ],
+        "intro": (
+            "Classifying one digit needs a single label. Reading a number needs an ordered "
+            "sequence, of a length the model decides on, which is a different problem: the "
+            "model has to know when it has finished.\n\n"
+            "**Architecture.** The encoder is the same stack the classifier uses, over 16x16 "
+            "patches of an 84x84 composite. The decoder adds a start token, a causal mask so "
+            "each position only sees what came before it, cross-attention onto the encoded "
+            "image, and an EOS token it emits when the number is done.\n\n"
+            "**Per-sequence termination.** Generation tracks completion per sequence within a "
+            "batch. Stopping the whole batch at the first EOS silently truncates every other "
+            "sequence still decoding — including inside the trainer's own evaluation loop, "
+            "which makes the reported accuracy wrong rather than merely noisy."
+        ),
+        "docs_path": "services/vit-seq2seq/README.md",
+        "diagrams": [
+            (
+                "assets/vision-transformer/seq2seq_slide_architecture.png",
+                "Encoder-decoder with cross-attention — the decoder attends to encoder output "
+                "at each generation step, producing digits token by token until EOS.",
+            ),
+        ],
+        "model_specs": [
+            "6 encoder + 6 decoder layers, d_model=256, 8 heads, FF hidden=1024, 16x16 patches. "
             "~7.2M parameters. Vocab of 12 tokens (0-9 + START + EOS), max sequence length 5.",
-            "Both models built from scratch — no `torch.nn.Transformer` shortcuts.",
+            "Built from scratch — no `torch.nn.Transformer` shortcuts.",
         ],
     },
     "multimodal-captioning": {
@@ -424,9 +463,9 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "vocab 151,936. ~598M total parameters, only the adapter is trained.",
         ],
     },
-    "audio-fine-tuning": {
+    "whisper-fine-tuning": {
         "icon": "🎙️",
-        "title": "Audio Fine-Tuning",
+        "title": "Whisper Fine-Tuning",
         "subtitle": "Whisper‑tiny, real gradient updates per request, transcript convergence",
         "description": (
             "Extends a speech model with emotion tokens while preserving its "
@@ -476,7 +515,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "original capabilities. The system `ffmpeg` binary is a hard prerequisite "
             "(Whisper shells out to it for audio decoding)."
         ),
-        "docs_path": "services/audio-fine-tuning/README.md",
+        "docs_path": "services/whisper-fine-tuning/README.md",
         "diagrams": [
             (
                 "assets/whisper-finetuning/fig2-whisper-architecture.png",
@@ -496,6 +535,60 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "**Custom tokens** — 6 emotion tokens injected into the decoder vocabulary: "
             "`⟨emotion_happy⟩`, `⟨emotion_sad⟩`, `⟨emotion_fearful⟩`, `⟨emotion_neutral⟩`, "
             "`⟨emotion_angry⟩`, `⟨emotion_disgust⟩`.",
+        ],
+    },
+    "speech-emotion-recognition": {
+        "icon": "😐",
+        "title": "Speech Emotion Recognition",
+        "subtitle": "Whisper fine-tuned to emit an emotion token, not a separate classifier head",
+        "description": (
+            "Predicts the emotion in a clip through the same mechanism Whisper already "
+            "uses for language and task: a special token its decoder emits."
+        ),
+        "techniques": ["ASR", "Speech Emotion Recognition", "Fine-tuning", "Tokenization"],
+        "papers": [
+            (
+                "Radford et al.",
+                "Robust Speech Recognition via Large-Scale Weak Supervision",
+                "https://arxiv.org/abs/2212.04356",
+            ),
+        ],
+        "datasets": [
+            ("EmoDB", "http://emodb.bilderbar.info/"),
+            ("CREMA-D", "https://github.com/CheyneyComputerScience/CREMA-D"),
+        ],
+        "model_links": [
+            ("Whisper-small", "https://huggingface.co/openai/whisper-small"),
+        ],
+        "stats": [
+            ("Emotions", "6"),
+            ("Corpora", "EmoDB + CREMA-D"),
+            ("Baseline", "majority emotion"),
+        ],
+        "intro": (
+            "Emotion could be a classifier head bolted onto the encoder. It is not, here. "
+            "Whisper's decoder already emits special tokens for language and task, so "
+            "adding one per emotion to the same vocabulary lets the model say which "
+            "emotion it heard through the mechanism it already has.\n\n"
+            "**The pipeline.** Two corpora, each encoding the emotion inside the audio "
+            "filename in a different format at a different position. That is resolved "
+            "once, in configuration, into manifests of `audio_path, label` — the whole "
+            "interface between the data pipeline and training.\n\n"
+            "**What the target is.** EmoDB and CREMA-D are fixed-sentence corpora: every "
+            "speaker reads the same handful of sentences and what varies is delivery. So "
+            "the manifests carry no transcript, and the training target is the emotion "
+            "token alone rather than a transcript with an emotion attached.\n\n"
+            "**Baseline.** Six emotions are not evenly represented, so always answering "
+            "the most common one is a genuinely competitive score on a corpus this size. "
+            "That is what the model is reported against."
+        ),
+        "docs_path": "services/speech-emotion-recognition/README.md",
+        "diagrams": [],
+        "model_specs": [
+            "Whisper-small, with the tokenizer extended by one special token per emotion and "
+            "the embedding table resized to match.",
+            "The emotion is read off the decoder's first step, which gives every emotion's "
+            "probability rather than only the winner.",
         ],
     },
     "rlhf-ppo": {
@@ -1439,7 +1532,7 @@ elif _PAGE == "vector-search-retrieval":
 # ---------------------------------------------------------------------------
 # Vision Transformer & Seq2Seq
 # ---------------------------------------------------------------------------
-elif _PAGE == "vision-transformers":
+elif _PAGE == "vit-classifier":
     col_draw, col_upload = st.columns(2)
     with col_draw:
         st.caption("Draw a digit")
@@ -1451,7 +1544,7 @@ elif _PAGE == "vision-transformers":
             height=280,
             width=280,
             drawing_mode="freedraw",
-            key="vision-transformers_canvas",
+            key="vit_classifier_canvas",
         )
     with col_upload:
         st.caption("Or upload one")
@@ -1471,13 +1564,11 @@ elif _PAGE == "vision-transformers":
 
     if image_bytes is not None and st.button("Classify", type="primary"):
         b64_image = bytes_to_b64(image_bytes)
-
-        # Classifier is instant -- fetch it first regardless of stream mode.
         vit_data: dict[str, Any] | None = None
         try:
             r = requests.post(
-                f"{API_URLS[_PAGE]}/predict/vit",
-                json={"image_data": b64_image, "model_type": "vit"},
+                f"{API_URLS[_PAGE]}/predict",
+                json={"image_data": b64_image},
                 timeout=15,
             )
             r.raise_for_status()
@@ -1486,70 +1577,94 @@ elif _PAGE == "vision-transformers":
             st.error(f"Classifier request failed: {e}")
 
         if vit_data:
-            vit_pred = vit_data
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Classifier (single digit)")
-                st.caption(
-                    f"Input: {vit_pred['img_size']}×{vit_pred['img_size']}px, "
-                    f"{vit_pred['patch_size']}×{vit_pred['patch_size']} patches."
+            st.caption(
+                f"Input: {vit_data['img_size']}x{vit_data['img_size']}px, "
+                f"{vit_data['patch_size']}x{vit_data['patch_size']} patches."
+            )
+            st.image(
+                draw_patch_grid(image_bytes, vit_data["img_size"], vit_data["patch_size"]),
+                width=260,
+            )
+            st.markdown(f"**Predicted: {vit_data['pred']}**")
+            if vit_data.get("class_probabilities"):
+                st.markdown(
+                    render_probability_bars(vit_data["class_probabilities"], vit_data["pred"]),
+                    unsafe_allow_html=True,
                 )
-                st.image(
-                    draw_patch_grid(image_bytes, vit_pred["img_size"], vit_pred["patch_size"]),
-                    width=220,
-                )
-                st.markdown(f"**Predicted: {vit_pred['pred']}**")
-                if vit_pred.get("class_probabilities"):
-                    st.markdown(
-                        render_probability_bars(vit_pred["class_probabilities"], vit_pred["pred"]),
+
+# ---------------------------------------------------------------------------
+# ViT Seq2Seq -- multi-digit, decoded one token at a time
+# ---------------------------------------------------------------------------
+elif _PAGE == "vit-seq2seq":
+    col_draw, col_upload = st.columns(2)
+    with col_draw:
+        st.caption("Draw a multi-digit number")
+        seq_canvas = st_canvas(
+            fill_color="rgba(255, 255, 255, 1)",
+            stroke_width=14,
+            stroke_color="#ffffff",
+            background_color="#000000",
+            height=280,
+            width=280,
+            drawing_mode="freedraw",
+            key="vit_seq2seq_canvas",
+        )
+    with col_upload:
+        st.caption("Or upload one")
+        seq_uploaded = st.file_uploader(
+            "Upload a multi-digit image (PNG/JPG)",
+            type=["png", "jpg", "jpeg"],
+            label_visibility="collapsed",
+        )
+        if seq_uploaded is not None:
+            st.image(seq_uploaded, width=150)
+
+    seq_bytes: bytes | None = None
+    if seq_canvas.image_data is not None:
+        seq_bytes = canvas_to_png_bytes(seq_canvas.image_data)
+    elif seq_uploaded is not None:
+        seq_bytes = seq_uploaded.getvalue()
+
+    if seq_bytes is not None and st.button("Read the number", type="primary"):
+        b64_seq = bytes_to_b64(seq_bytes)
+        st.caption("Input: 84x84px, 16x16 patches. Decoded autoregressively.")
+        st.image(draw_patch_grid(seq_bytes, 84, 16), width=260)
+
+        st.caption("Live -- each digit below appears the moment the model emits it:")
+        digit_display = st.empty()
+        seq2seq_data = None
+        digit_trace_sofar: list[dict[str, Any]] = []
+        try:
+            for event in stream_sse(
+                f"{API_URLS[_PAGE]}/predict/stream",
+                {"image_data": b64_seq},
+                timeout=30,
+            ):
+                stage = event["stage"]
+                if stage == "digit" and event["digit"]:
+                    digit_trace_sofar.append(
+                        {"digit": event["digit"], "confidence": event["confidence"]}
+                    )
+                    digit_display.markdown(
+                        render_digit_trace(digit_trace_sofar),
                         unsafe_allow_html=True,
                     )
+                elif stage == "done":
+                    seq2seq_data = event
+                    digit_display.empty()
+                elif stage == "error":
+                    digit_display.empty()
+                    st.error(f"Seq2seq generation failed: {event['detail']}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"SSE request failed: {e}")
 
-            with col2:
-                st.subheader("Seq2seq (multi-digit)")
-                st.caption("Input: 84×84px, 16×16 patches. Decoded autoregressively.")
-                st.image(
-                    draw_patch_grid(image_bytes, 84, 16),
-                    width=220,
-                )
-
-                st.caption("Live -- each digit below appears the moment the model emits it:")
-                digit_display = st.empty()
-                seq2seq_data = None
-                digit_trace_sofar: list[dict[str, Any]] = []
-                try:
-                    for event in stream_sse(
-                        f"{API_URLS[_PAGE]}/predict/seq2seq/stream",
-                        {"image_data": b64_image, "model_type": "seq2seq"},
-                        timeout=30,
-                    ):
-                        stage = event["stage"]
-                        if stage == "digit" and event["digit"]:
-                            digit_trace_sofar.append(
-                                {"digit": event["digit"], "confidence": event["confidence"]}
-                            )
-                            digit_display.markdown(
-                                render_digit_trace(digit_trace_sofar),
-                                unsafe_allow_html=True,
-                            )
-                        elif stage == "done":
-                            seq2seq_data = event
-                            digit_display.empty()
-                        elif stage == "error":
-                            digit_display.empty()
-                            st.error(f"Seq2seq generation failed: {event['detail']}")
-                except requests.exceptions.RequestException as e:
-                    st.error(f"SSE request failed: {e}")
-
-                if seq2seq_data:
-                    st.markdown(f"**Predicted: {seq2seq_data['pred']}**")
-                    if seq2seq_data.get("digit_trace"):
-                        st.caption("Darker = higher confidence at each step:")
-                        st.markdown(
-                            render_digit_trace(seq2seq_data["digit_trace"]), unsafe_allow_html=True
-                        )
-                    with st.expander("Raw SSE response"):
-                        st.json(seq2seq_data)
+        if seq2seq_data:
+            st.markdown(f"**Predicted: {seq2seq_data['pred']}**")
+            if seq2seq_data.get("digit_trace"):
+                st.caption("Darker = higher confidence at each step:")
+                st.markdown(render_digit_trace(seq2seq_data["digit_trace"]), unsafe_allow_html=True)
+            with st.expander("Raw SSE response"):
+                st.json(seq2seq_data)
 
 # ---------------------------------------------------------------------------
 # Multimodal Transfer Learning
@@ -1631,7 +1746,7 @@ elif _PAGE == "multimodal-captioning":
 # ---------------------------------------------------------------------------
 # Emotion-Aware Speech Recognition
 # ---------------------------------------------------------------------------
-elif _PAGE == "audio-fine-tuning":
+elif _PAGE == "whisper-fine-tuning":
     col_record, col_upload = st.columns(2)
     with col_record:
         audio = st.audio_input("Record audio")
@@ -1771,6 +1886,49 @@ elif _PAGE == "audio-fine-tuning":
             st.text(data["ft_output"])
         with st.expander("Raw response"):
             st.json(data)
+
+
+# ---------------------------------------------------------------------------
+# Speech Emotion Recognition -- the emotion is a token the decoder emits
+# ---------------------------------------------------------------------------
+elif _PAGE == "speech-emotion-recognition":
+    st.caption(
+        "Upload a clip. The model predicts which of six emotions it hears, by scoring the "
+        "emotion tokens its decoder can emit."
+    )
+    emotion_upload = st.file_uploader(
+        "Upload audio (WAV/MP3)", type=["wav", "mp3", "m4a"], label_visibility="collapsed"
+    )
+    if emotion_upload is not None:
+        st.audio(emotion_upload)
+
+    if emotion_upload is not None and st.button("Predict emotion", type="primary"):
+        try:
+            response = requests.post(
+                f"{API_URLS[_PAGE]}/predict",
+                json={"audio_data": bytes_to_b64(emotion_upload.getvalue())},
+                timeout=120,
+            )
+        except requests.exceptions.RequestException as error:
+            st.error(f"Request failed: {error}")
+        else:
+            if response.status_code == 503:
+                st.info(
+                    "No trained checkpoint is loaded. The pipeline, trainer and API are "
+                    "wired up; train one with `make train SERVICE=speech-emotion-recognition`."
+                )
+            elif response.status_code != 200:
+                st.error(f"Backend returned {response.status_code}: {response.text[:200]}")
+            else:
+                result = response.json()
+                st.markdown(f"**Predicted: {result['emotion']}**")
+                st.caption(f"Checkpoint source: `{result['checkpoint_source']}`")
+                st.markdown(
+                    render_probability_bars(result["scores"], result["emotion"]),
+                    unsafe_allow_html=True,
+                )
+                with st.expander("Raw response"):
+                    st.json(result)
 
 # ---------------------------------------------------------------------------
 # RLHF for Text Summarization

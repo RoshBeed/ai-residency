@@ -18,16 +18,21 @@ RUN pip install --no-cache-dir uv
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY pyproject.toml uv.lock ./
+# --- workspace manifests (generated: make sync-dockerfiles) ---
 COPY libs/common/pyproject.toml libs/common/
+COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
 COPY services/_template/pyproject.toml services/_template/
-COPY services/audio-fine-tuning/pyproject.toml services/audio-fine-tuning/
 COPY services/content-scoring/pyproject.toml services/content-scoring/
 COPY services/frontend/pyproject.toml services/frontend/
 COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
 COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
 COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
-COPY services/vision-transformers/pyproject.toml services/vision-transformers/
+COPY services/vit-classifier/pyproject.toml services/vit-classifier/
+COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
+COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
 COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# --- end workspace manifests ---
 COPY libs/common libs/common
 RUN uv sync --frozen --no-install-project --package ai-residency-frontend
 

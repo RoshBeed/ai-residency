@@ -19,3 +19,6 @@ services/*/datasets/
 wandb/
 
 .DS_Store
+
+# setuptools build metadata
+*.egg-info/

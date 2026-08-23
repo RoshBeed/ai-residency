@@ -1,0 +1,39 @@
+[project]
+name = "ai-residency-speech-emotion-recognition"
+version = "0.1.0"
+description = "Whisper fine-tuned to emit an emotion token per clip, with the corpus pipeline that feeds it, served via FastAPI"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "ai-residency-common",
+    "torch",
+    "torchaudio",
+    "transformers",
+    "librosa",
+    "matplotlib",
+    "seaborn",
+    "numpy",
+    "requests",
+    "fastapi",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = ["mypy>=1.11", "pytest>=8.0", "ruff>=0.6"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv.sources]
+ai-residency-common = { workspace = true }
+torch = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

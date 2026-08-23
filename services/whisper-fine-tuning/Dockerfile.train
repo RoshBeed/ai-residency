@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+#
+# Training image for whisper-fine-tuning.
+#
+# The build context is the repository root, not this directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
+# none of which live inside a service.
+#
+#   docker build -f services/whisper-fine-tuning/Dockerfile.train -t roshbeed/ai-residency-whisper-fine-tuning-train:latest .
+#   (or: make build SERVICE=whisper-fine-tuning)
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
+FROM ${BASE_IMAGE}
+
+# openai-whisper shells out to the ffmpeg *binary* to decode audio; the pip
+# package of the same name does not provide it.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
+COPY pyproject.toml uv.lock ./
+# --- workspace manifests (generated: make sync-dockerfiles) ---
+COPY libs/common/pyproject.toml libs/common/
+COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
+COPY services/_template/pyproject.toml services/_template/
+COPY services/content-scoring/pyproject.toml services/content-scoring/
+COPY services/frontend/pyproject.toml services/frontend/
+COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
+COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
+COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
+COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
+COPY services/vit-classifier/pyproject.toml services/vit-classifier/
+COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
+COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
+COPY services/word-embeddings/pyproject.toml services/word-embeddings/
+# --- end workspace manifests ---
+# libs/common is a real installable package, so it has to be present before the
+# dependency sync can build it -- a manifest alone is not enough.
+COPY libs/common libs/common
+RUN uv sync --frozen --no-install-project --package ai-residency-whisper-fine-tuning
+
+COPY services/whisper-fine-tuning services/whisper-fine-tuning
+RUN uv sync --frozen --package ai-residency-whisper-fine-tuning
+
+WORKDIR /app/services/whisper-fine-tuning
+
+CMD ["python", "-m", "whisper_fine_tuning.training"]

@@ -31,14 +31,17 @@ target-version = "py311"
 # moved up a level. Without this, isort reclassifies every intra-service import.
 src = [
     "libs/common/src",
+    "libs/vision-transformer/src",
     "services/_template",
-    "services/audio-fine-tuning",
+    "services/speech-emotion-recognition",
+    "services/whisper-fine-tuning",
     "services/content-scoring",
     "services/frontend",
     "services/multimodal-captioning",
     "services/rlhf-ppo",
     "services/vector-search-retrieval",
-    "services/vision-transformers",
+    "services/vit-classifier",
+    "services/vit-seq2seq",
     "services/word-embeddings",
 ]
 

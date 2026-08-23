@@ -1,6 +1,5 @@
-        test fmt lint typecheck check redis \
-        docker-build-train docker-build-serve docker-push-train docker-push-serve \
-        docker-up docker-train docker-down clean help
+.DEFAULT_GOAL := help
+.PHONY: train-cbow train-triples train-encoder train index query serve redis test help
 
 # Note on train-* vs docker-train: the local targets pick up Apple Silicon's MPS backend
 # where it helps, which for this repo means the CBOW stage only (~3.7x faster than CPU on
