@@ -89,6 +89,9 @@ those builds are native rather than the slow emulation a Mac would do.
 - **Training images must target the GPU host's architecture.** `make build` passes
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.
+- **`helm uninstall` returns before deletion finishes.** An install started right after can have
+  its objects deleted by the tail of the previous release — a reinstall once came up with all
+  eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **`AI_RESIDENCY_<FIELD>` overrides any `Config` field** — `AI_RESIDENCY_NUM_EPOCHS=1` for a smoke
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.

@@ -85,6 +85,13 @@ helm-upgrade: ## Re-apply the Helm chart after repulling images, then roll pods 
 
 helm-uninstall: ## Remove the Helm release (namespace itself is left in place, not deleted)
 	helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)
+	# Wait for the resources to actually go. `helm uninstall` returns before the
+	# API server has finished deleting them, so an install started immediately
+	# after can have its own objects deleted by the tail of the previous release
+	# -- which is how a reinstall once came up with every pod running and the
+	# frontend Service simply absent.
+	@kubectl wait --for=delete pod --all -n $(HELM_NAMESPACE) --timeout=120s 2>/dev/null || true
+	@kubectl wait --for=delete svc --all -n $(HELM_NAMESPACE) --timeout=60s 2>/dev/null || true
 
 helm-status: ## Show pod/service status for the Helm release
 	kubectl get pods,svc -n $(HELM_NAMESPACE)
