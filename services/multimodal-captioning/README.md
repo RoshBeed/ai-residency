@@ -297,7 +297,7 @@ The browser demo — upload an image, pick one of the three shipped checkpoints,
 is the unified frontend in `services/frontend`, not in this repo. All three checkpoints load
 and generate captions.
 
-Docker wraps the same entrypoints as two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base-serve`:
+Docker wraps the same entrypoints as two single-purpose Dockerfiles, both `FROM roshb/ai-residency-base-serve`:
 
 ```bash
 # both images for this service, built from the repository root

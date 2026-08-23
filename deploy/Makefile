@@ -24,7 +24,7 @@ HELM_SECRETS := --set-string secrets.hfToken=$(HF_TOKEN) \
 # run needs a new name; the epoch second is the cheapest thing that is always unique.
 TRAIN_RUN ?= $(shell date +%s)
 
-# Every image is pulled from Docker Hub (roshbeed/ai-residency-<service>-serve / -train),
+# Every image is pulled from Docker Hub (roshb/ai-residency-<service>-serve / -train),
 # built and pushed from the repository root with `make build SERVICE=<name>` and
 # `make push SERVICE=<name>`. This directory only deploys them.
 
@@ -60,7 +60,7 @@ status: ## Show which backends are currently reachable (via /health)
 # `kubectl describe` to suggest the image is months old. Run this after every rebuild.
 K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 IMAGE_TAG ?= latest
-IMAGES := $(shell grep -oE 'roshbeed/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
+IMAGES := $(shell grep -oE 'roshb/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
 
 load-images: ## Import locally-built images into the cluster node's own image store
 	@for img in $(IMAGES); do \

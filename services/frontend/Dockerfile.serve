@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1-labs
 #
-# The published frontend image (roshbeed/ai-residency-frontend): streamlit and
+# The published frontend image (roshb/ai-residency-frontend): streamlit and
 # requests, no ML dependencies at all. Every model runs in its own service's
 # container; this one renders pages and makes HTTP calls.
 #
@@ -9,7 +9,7 @@
 #
 # The build context is the repository root, not this directory.
 #
-#   docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-frontend:latest .
+#   docker build -f services/frontend/Dockerfile.serve -t roshb/ai-residency-frontend:latest .
 #   (or: make build SERVICE=frontend)
 #
 # Named Dockerfile.serve like every other service's, so the one CI job and the one

@@ -381,8 +381,8 @@ sweep-specific plumbing in the training code at all.
 ### 5.3 Deployment
 
 Two single-purpose Dockerfiles: `Dockerfile.serve` builds `FROM
-roshbeed/ai-residency-base-serve` (CPU torch — the FastAPI container Kubernetes runs), and
-`Dockerfile.train` builds `FROM roshbeed/ai-residency-base-train` (CUDA torch — what a rented GPU
+roshb/ai-residency-base-serve` (CPU torch — the FastAPI container Kubernetes runs), and
+`Dockerfile.train` builds `FROM roshb/ai-residency-base-train` (CUDA torch — what a rented GPU
 host pulls).
 Neither needs a git credential. `libs/common` used to be a private git dependency, which meant every build mounted a token; it is a workspace member now and arrives with the source.
 

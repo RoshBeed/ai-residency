@@ -92,8 +92,8 @@ WORD_EMBEDDINGS_API_URL=http://localhost:8001 make -C services/frontend run
 
 ```bash
 # from the repository root
-docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-frontend:latest .
-docker push roshbeed/ai-residency-frontend:latest
+docker build -f services/frontend/Dockerfile.serve -t roshb/ai-residency-frontend:latest .
+docker push roshb/ai-residency-frontend:latest
 ```
 
 It does not build `FROM ai-residency-base-serve`, deliberately — that image carries a torch install this
@@ -108,7 +108,7 @@ its own backend container.
 services/frontend/
 ├── app.py            the whole app, one page per system
 ├── assets/           figures the pages render inline
-├── Dockerfile        the published roshbeed/ai-residency-frontend image
+├── Dockerfile        the published roshb/ai-residency-frontend image
 ├── Makefile          run
 └── pyproject.toml    streamlit + requests + pillow — no ML dependencies
 ```

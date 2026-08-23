@@ -6,10 +6,10 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/vit-classifier/Dockerfile.train -t roshbeed/ai-residency-vit-classifier-train:latest .
+#   docker build -f services/vit-classifier/Dockerfile.train -t roshb/ai-residency-vit-classifier-train:latest .
 #   (or: make build SERVICE=vit-classifier)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base-train:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app

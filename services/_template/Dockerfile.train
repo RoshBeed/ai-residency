@@ -9,7 +9,7 @@
 #   docker build -f services/_template/Dockerfile.train -t roshbeed/ai-residency-_template-train:latest .
 #   (or: make build SERVICE=_template)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base-train:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app

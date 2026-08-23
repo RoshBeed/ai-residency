@@ -1,6 +1,6 @@
 # Every backend and the frontend, in one stack.
 #
-# Images are pulled as roshbeed/ai-residency-<service>-serve:latest (or -train),
+# Images are pulled as roshb/ai-residency-<service>-serve:latest (or -train),
 # built and pushed from the repository root with `make build SERVICE=<name>` and
 # `make push SERVICE=<name>`.
 #
@@ -16,7 +16,7 @@
 services:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
   word-embeddings:
-    image: roshbeed/ai-residency-word-embeddings-serve:latest
+    image: roshb/ai-residency-word-embeddings-serve:latest
     ports:
       - "8001:8000"
     environment:
@@ -25,7 +25,7 @@ services:
 
   # --- Week 1b: content-scoring — the regression head that consumes those vectors ---
   content-scoring:
-    image: roshbeed/ai-residency-content-scoring-serve:latest
+    image: roshb/ai-residency-content-scoring-serve:latest
     ports:
       - "8007:8000"
     environment:
@@ -42,7 +42,7 @@ services:
     # persistent redis container, which already owns host port 6390.
 
   vector-search-retrieval:
-    image: roshbeed/ai-residency-vector-search-retrieval-serve:latest
+    image: roshb/ai-residency-vector-search-retrieval-serve:latest
     depends_on:
       - redis
     environment:
@@ -61,7 +61,7 @@ services:
 
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
-    image: roshbeed/ai-residency-vit-classifier-serve:latest
+    image: roshb/ai-residency-vit-classifier-serve:latest
     ports:
       - "8003:8000"
     environment:
@@ -70,7 +70,7 @@ services:
 
   # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
   vit-seq2seq:
-    image: roshbeed/ai-residency-vit-seq2seq-serve:latest
+    image: roshb/ai-residency-vit-seq2seq-serve:latest
     ports:
       - "8008:8000"
     environment:
@@ -78,7 +78,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   multimodal-captioning:
-    image: roshbeed/ai-residency-multimodal-captioning-serve:latest
+    image: roshb/ai-residency-multimodal-captioning-serve:latest
     working_dir: /app
     ports:
       - "8004:8000"
@@ -87,7 +87,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   whisper-fine-tuning:
-    image: roshbeed/ai-residency-whisper-fine-tuning-serve:latest
+    image: roshb/ai-residency-whisper-fine-tuning-serve:latest
     ports:
       - "8005:8000"
     environment:
@@ -96,7 +96,7 @@ services:
 
   # --- Emotion-aware Whisper: FastAPI inference container ---
   speech-emotion-recognition:
-    image: roshbeed/ai-residency-speech-emotion-recognition-serve:latest
+    image: roshb/ai-residency-speech-emotion-recognition-serve:latest
     ports:
       - "8009:8000"
     environment:
@@ -104,7 +104,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   rlhf-ppo:
-    image: roshbeed/ai-residency-rlhf-ppo-serve:latest
+    image: roshb/ai-residency-rlhf-ppo-serve:latest
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
@@ -115,7 +115,7 @@ services:
       HF_HOME: /root/.cache/huggingface
 
   frontend:
-    image: roshbeed/ai-residency-frontend:latest
+    image: roshb/ai-residency-frontend:latest
     depends_on:
       - word-embeddings
       - content-scoring
@@ -152,7 +152,7 @@ services:
 
   train-word-embeddings:
     profiles: [train]
-    image: roshbeed/ai-residency-word-embeddings-train:latest
+    image: roshb/ai-residency-word-embeddings-train:latest
     volumes:
       - ../../services/word-embeddings/data:/app/data
     environment:
@@ -162,7 +162,7 @@ services:
 
   train-content-scoring:
     profiles: [train]
-    image: roshbeed/ai-residency-content-scoring-train:latest
+    image: roshb/ai-residency-content-scoring-train:latest
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -170,7 +170,7 @@ services:
 
   train-vector-search-retrieval:
     profiles: [train]
-    image: roshbeed/ai-residency-vector-search-retrieval-train:latest
+    image: roshb/ai-residency-vector-search-retrieval-train:latest
     # No command override: the image's own CMD is the single source of truth for what
     # a training container runs, so it cannot drift from the Dockerfile.
     depends_on:
@@ -187,7 +187,7 @@ services:
 
   train-vit-classifier:
     profiles: [train]
-    image: roshbeed/ai-residency-vit-classifier-train:latest
+    image: roshb/ai-residency-vit-classifier-train:latest
     volumes:
       - ../../services/vit-classifier/data:/app/data
     environment:
@@ -199,7 +199,7 @@ services:
 
   train-vit-seq2seq:
     profiles: [train]
-    image: roshbeed/ai-residency-vit-seq2seq-train:latest
+    image: roshb/ai-residency-vit-seq2seq-train:latest
     volumes:
       - ../../services/vit-seq2seq/data:/app/data
     environment:
@@ -210,7 +210,7 @@ services:
 
   train-multimodal-captioning:
     profiles: [train]
-    image: roshbeed/ai-residency-multimodal-captioning-train:latest
+    image: roshb/ai-residency-multimodal-captioning-train:latest
     working_dir: /app
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -221,7 +221,7 @@ services:
 
   train-whisper-fine-tuning:
     profiles: [train]
-    image: roshbeed/ai-residency-whisper-fine-tuning-train:latest
+    image: roshb/ai-residency-whisper-fine-tuning-train:latest
     volumes:
       - ../../services/whisper-fine-tuning/data:/app/data
     environment:
@@ -231,7 +231,7 @@ services:
 
   train-speech-emotion-recognition:
     profiles: [train]
-    image: roshbeed/ai-residency-speech-emotion-recognition-train:latest
+    image: roshb/ai-residency-speech-emotion-recognition-train:latest
     volumes:
       - ../../services/speech-emotion-recognition/data:/app/data
       - ../../services/speech-emotion-recognition/datasets:/app/datasets
@@ -242,7 +242,7 @@ services:
 
   train-rlhf-ppo:
     profiles: [train]
-    image: roshbeed/ai-residency-rlhf-ppo-train:latest
+    image: roshb/ai-residency-rlhf-ppo-train:latest
     # One PPO step -- this repo has no epoch loop, by design.
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface

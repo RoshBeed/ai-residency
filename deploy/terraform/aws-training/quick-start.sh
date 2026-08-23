@@ -202,7 +202,7 @@ create_tfvars() {
     local ssh_key_path=$(get_user_input "SSH key path" "~/.ssh/id_rsa")
     local hf_token=$(get_hf_token)
     local wandb_api_key=$(get_user_input "W&B API key (optional -- blank runs offline)" "")
-    local train_image=$(get_user_input "Training image (e.g. roshbeed/ai-residency-vit-classifier-train:latest -- push it first with: make push SERVICE=<name>)" "" validate_train_image)
+    local train_image=$(get_user_input "Training image (e.g. roshb/ai-residency-vit-classifier-train:latest -- push it first with: make push SERVICE=<name>)" "" validate_train_image)
     local train_command=$(get_user_input "Override the image's default training command (optional, e.g. 'seq2seq')" "")
     local max_training_time=$(get_user_input "Maximum training time (hours)" "24")
 

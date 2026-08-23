@@ -38,6 +38,11 @@ make -C services/<name> help      # that service's own pipeline stages
   their own: they copy manifests with `COPY --parents libs/*/... services/*/...`, so there is no
   per-member list to go stale.
 
+**Two registries, two usernames.** Docker Hub is **`roshb`** (image names only); Hugging Face is
+**`roshbeed`** (`hf_repo_id`, `hf_dataset_repo_id`, hub URLs). They are not interchangeable, and a
+blanket find-and-replace across `roshbeed/` will silently repoint every checkpoint at a Hugging
+Face account that does not exist.
+
 ## Standing rules
 
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face

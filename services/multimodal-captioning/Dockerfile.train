@@ -6,10 +6,10 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/multimodal-captioning/Dockerfile.train -t roshbeed/ai-residency-multimodal-captioning-train:latest .
+#   docker build -f services/multimodal-captioning/Dockerfile.train -t roshb/ai-residency-multimodal-captioning-train:latest .
 #   (or: make build SERVICE=multimodal-captioning)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base-train:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 # Pillow builds from source on platforms without a prebuilt wheel.

@@ -5,8 +5,8 @@
 # Two variants come out of this one file, because the two runtimes want different
 # builds of torch and nothing else differs:
 #
-#   make base            -> roshbeed/ai-residency-base-serve  (CPU)
-#   make base-train      -> roshbeed/ai-residency-base-train  (CUDA, linux/amd64)
+#   make base            -> roshb/ai-residency-base-serve  (CPU)
+#   make base-train      -> roshb/ai-residency-base-train  (CUDA, linux/amd64)
 #
 # Serving containers and laptops take the CPU build -- an unpinned torch drags
 # ~10 nvidia-* packages onto a node with no GPU. The training host takes CUDA, or

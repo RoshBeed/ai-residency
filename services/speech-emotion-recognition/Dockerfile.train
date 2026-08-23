@@ -6,10 +6,10 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/speech-emotion-recognition/Dockerfile.train -t roshbeed/ai-residency-speech-emotion-recognition-train:latest .
+#   docker build -f services/speech-emotion-recognition/Dockerfile.train -t roshb/ai-residency-speech-emotion-recognition-train:latest .
 #   (or: make build SERVICE=speech-emotion-recognition)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base-train:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 # openai-whisper shells out to the ffmpeg *binary* to decode audio; the pip

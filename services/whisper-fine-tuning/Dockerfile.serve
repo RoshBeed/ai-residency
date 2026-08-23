@@ -6,10 +6,10 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/whisper-fine-tuning/Dockerfile.serve -t roshbeed/ai-residency-whisper-fine-tuning-serve:latest .
+#   docker build -f services/whisper-fine-tuning/Dockerfile.serve -t roshb/ai-residency-whisper-fine-tuning-serve:latest .
 #   (or: make build SERVICE=whisper-fine-tuning)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base-serve:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-serve:latest
 FROM ${BASE_IMAGE}
 
 # openai-whisper shells out to the ffmpeg *binary* to decode audio; the pip

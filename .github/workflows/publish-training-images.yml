@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: roshbeed
+  REGISTRY: roshb
   CUDA_INDEX: https://download.pytorch.org/whl/cu126
   CUDA_LOCAL: +cu126
 

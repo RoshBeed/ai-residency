@@ -12,7 +12,7 @@ CHECKABLE := $(filter-out frontend,$(SERVICES))
 SERVICE ?=
 TARGETS := $(if $(SERVICE),$(SERVICE),$(SERVICES))
 
-REGISTRY ?= roshbeed
+REGISTRY ?= roshb
 IMAGE_TAG ?= latest
 
 install: ## Create the workspace venv and install every member's dependencies
