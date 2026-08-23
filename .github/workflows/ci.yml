@@ -17,6 +17,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Republish without inventing a commit. A dispatch selects every service,
+  # since there is no diff to narrow it down.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,7 +56,9 @@ jobs:
           # list as the loop's last command makes the whole substitution exit 1,
           # which killed this step whenever the *last* service was unchanged --
           # and on any push whose diff is empty.
-          if echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            selected="$all"
+          elif echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
             selected="$all"
           else
             selected=$(for s in $all; do
