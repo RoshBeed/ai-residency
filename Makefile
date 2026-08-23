@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        build push train serve new-service sync-dockerfiles clean help
+        build push train serve new-service clean help
 
 # Every member of the workspace. Derived, so a new service is picked up the moment
 # `make new-service` creates it -- there is no list to remember to update.
@@ -80,9 +80,6 @@ train: ## Train one service: make train SERVICE=word-embeddings
 serve: ## Serve one service locally: make serve SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make serve SERVICE=<name>" && exit 1)
 	$(MAKE) -C services/$(SERVICE) serve
-
-sync-dockerfiles: ## Regenerate the workspace-manifest COPY block in every Dockerfile
-	@python3 scripts/sync_dockerfile_manifests.py
 
 new-service: ## Scaffold a new service from the template: make new-service NAME=my-thing
 	@test -n "$(NAME)" || (echo "Usage: make new-service NAME=<name>" && exit 1)

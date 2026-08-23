@@ -34,8 +34,9 @@ make -C services/<name> help      # that service's own pipeline stages
   invocation over the tree sees nine modules named `config` and refuses to start.
 - **Images build from the repository root**, not the service directory — they need the root
   `pyproject.toml`, the shared `uv.lock` and `libs/`.
-- **After adding or renaming a workspace member**, run `make sync-dockerfiles` (regenerates the
-  manifest COPY block in every Dockerfile) and `uv lock`.
+- **After adding or renaming a workspace member**, run `uv lock`. The Dockerfiles pick it up on
+  their own: they copy manifests with `COPY --parents libs/*/... services/*/...`, so there is no
+  per-member list to go stale.
 
 ## Standing rules
 
