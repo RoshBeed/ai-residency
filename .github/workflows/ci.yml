@@ -17,13 +17,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Republish without inventing a commit. A dispatch selects every service,
+  # since there is no diff to narrow it down.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  REGISTRY: roshbeed
+  REGISTRY: roshb
 
 jobs:
   changes:
@@ -53,7 +56,9 @@ jobs:
           # list as the loop's last command makes the whole substitution exit 1,
           # which killed this step whenever the *last* service was unchanged --
           # and on any push whose diff is empty.
-          if echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            selected="$all"
+          elif echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
             selected="$all"
           else
             selected=$(for s in $all; do
@@ -109,17 +114,61 @@ jobs:
         working-directory: services/${{ matrix.service }}
         run: uv run --project . mypy --config-file ../../pyproject.toml .
 
+      # pytest exits 5 on "no tests collected", which is a fact about a service
+      # rather than a failure. The frontend is the one with no suite: app.py runs
+      # its whole page flow at import, so its helpers cannot be imported without a
+      # Streamlit runtime. Extracting them into a module is the fix, and is worth
+      # doing -- a strict type check already found a real bytes/str bug in there.
       - name: Test
         working-directory: services/${{ matrix.service }}
-        run: uv run --project . pytest -q
+        run: |
+          if [ -d tests ]; then
+            uv run --project . pytest -q
+          else
+            echo "::warning::${{ matrix.service }} has no tests/ directory"
+          fi
+
+  # The serving base, once, rather than rebuilt inside each of the ten service
+  # jobs. Multi-arch: the runners are x86-64, but a reviewer on Apple Silicon --
+  # and this project's own Kubernetes node -- are arm64, and an amd64-only image
+  # fails there with "no matching manifest" rather than anything informative.
+  # The arm64 half is QEMU-emulated, which is why the layer cache matters.
+  images-base:
+    name: Publish serving base
+    needs: [changes, lint, check]
+    # Publishing is gated on a repository variable, so it never happens by
+    # accident. Training images are not built here: they carry the CUDA stack,
+    # they are ~9GB, and amd64 is the only architecture a GPU box is. They have
+    # their own on-demand workflow.
+    if: |
+      github.ref == 'refs/heads/main'
+      && needs.changes.outputs.any == 'true'
+      && vars.PUBLISH_IMAGES == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          push: true
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=base-serve
+          cache-to: type=gha,scope=base-serve,mode=max
+          tags: |
+            ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/ai-residency-base-serve:latest
 
   images:
     name: Publish ${{ matrix.service }}
-    needs: [changes, lint, check]
-    # Nothing is published while the repository is private: Docker Hub's free tier
-    # allows one private repository, so publishing would make the source publicly
-    # pullable ahead of the repo. Set the repository variable PUBLISH_IMAGES to
-    # 'true' (with DOCKERHUB_TOKEN set) to turn this on.
+    needs: [changes, images-base]
     if: |
       github.ref == 'refs/heads/main'
       && needs.changes.outputs.any == 'true'
@@ -131,24 +180,13 @@ jobs:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # The base image carries python, uv and the CPU torch wheel. It needs no
-      # credential of its own any more -- there is no private dependency in it.
-      - name: Build base
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.base
-          tags: ${{ env.REGISTRY }}/ai-residency-base:latest
-          load: true
-
-      # Both tags come off one commit, which is what makes a deployment
-      # reproducible: deploy/ pins the SHA, not a moving `latest`.
       # The frontend's image has no -serve suffix: it is the only service with one
       # image rather than a serving/training pair.
       - name: Image name
@@ -160,12 +198,24 @@ jobs:
             echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
           fi
 
+      # Both tags come off one commit, which is what makes a deployment
+      # reproducible: deploy/ pins the SHA, not a moving `latest`. BASE_IMAGE is
+      # pinned to this commit's base for the same reason.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/${{ matrix.service }}/Dockerfile.serve
           push: true
+          platforms: linux/amd64,linux/arm64
+          # The frontend builds FROM python:3.11-slim directly -- it has no ML
+          # dependencies -- so it takes no base image.
+          build-args: |
+            ${{ matrix.service != 'frontend'
+                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                || '' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
           tags: |
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
             ${{ steps.image.outputs.name }}:latest

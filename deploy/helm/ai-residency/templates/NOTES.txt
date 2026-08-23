@@ -4,7 +4,7 @@ Images are pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), 
 `make push SERVICE=<name>` at the repository root. If you've republished any
 image, pull it and roll the pods:
 
-  docker pull roshbeed/ai-residency-word-embeddings-serve:latest   # (or whichever changed)
+  docker pull roshb/ai-residency-word-embeddings-serve:latest   # (or whichever changed)
   kubectl rollout restart deployment -n {{ .Release.Namespace }}
   # or just: make helm-upgrade (re-applies the chart and restarts deployments for you)
 

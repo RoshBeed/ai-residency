@@ -1,29 +1,37 @@
 # syntax=docker/dockerfile:1
 #
-# Shared base for every image in the workspace: python, uv, and a venv with the
-# CPU-only torch wheel already in it. Published as roshbeed/ai-residency-base.
+# The shared base, in two variants: python, uv, and the torch stack.
 #
-# It used to also install ai-residency-common from a private git URL, which meant
-# every build needed a GitHub token mounted as a BuildKit secret and a credential
-# file written and scrubbed inside a single RUN. The library is a workspace member
-# now, so it arrives with the source and none of that is needed: no token, no git
-# in the image, no secret to leak.
+# Two variants come out of this one file, because the two runtimes want different
+# builds of torch and nothing else differs:
 #
-# Build: docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+#   make base            -> roshb/ai-residency-base-serve  (CPU)
+#   make base-train      -> roshb/ai-residency-base-train  (CUDA, linux/amd64)
+#
+# Serving containers and laptops take the CPU build -- an unpinned torch drags
+# ~10 nvidia-* packages onto a node with no GPU. The training host takes CUDA, or
+# `docker run --gpus all` hands it a GPU torch cannot see and training silently
+# falls back to CPU.
+#
+# Versions match uv.lock exactly. Downstream images then sync with
+# `--no-install-package torch ... --inexact`, so uv installs everything else the
+# lock pins and leaves whichever torch build this image supplied alone. That is
+# what keeps the CUDA image from carrying a redundant CPU copy of torch.
 
 FROM python:3.11-slim
+
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+ARG TORCH_LOCAL=
 
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 RUN uv venv .venv
 
-# The CPU wheel, explicitly and first. Left to resolve on its own, torch pulls the
-# default CUDA build -- ~10 nvidia-*/cuda-* packages and a 5-10x larger image, on a
-# node with no GPU. Installing it here means every downstream `uv sync` sees the
-# requirement as already satisfied.
-RUN uv pip install --python .venv/bin/python \
-        --index-url https://download.pytorch.org/whl/cpu torch
+RUN uv pip install --python .venv/bin/python --index-url ${TORCH_INDEX} \
+        torch==2.13.0${TORCH_LOCAL} \
+        torchvision==0.28.0${TORCH_LOCAL} \
+        torchaudio==2.11.0${TORCH_LOCAL}
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv

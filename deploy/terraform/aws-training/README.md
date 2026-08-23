@@ -48,7 +48,7 @@ timeout — this is a backstop, not the normal path).
 
 | Variable | What it does |
 |---|---|
-| `train_image` | The image to pull and run, e.g. `roshbeed/ai-residency-vit-classifier-train:latest`. No default — always set this. |
+| `train_image` | The image to pull and run, e.g. `roshb/ai-residency-vit-classifier-train:latest`. No default — always set this. |
 | `train_command` | Overrides the image's own default training entrypoint. Empty runs the image's default (e.g. Week 3's classifier stage); set to `"seq2seq"` for its other trainer. |
 | `docker_hub_username` / `docker_hub_token` | Only needed if `train_image` is a private repository. |
 | `hf_token` | Training pushes its own checkpoint to the Hub via `libs/common`'s `push_checkpoint` — this module never re-uploads anything separately. |

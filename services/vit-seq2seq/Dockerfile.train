@@ -6,10 +6,10 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/vit-seq2seq/Dockerfile.train -t roshbeed/ai-residency-vit-seq2seq-train:latest .
+#   docker build -f services/vit-seq2seq/Dockerfile.train -t roshb/ai-residency-vit-seq2seq-train:latest .
 #   (or: make build SERVICE=vit-seq2seq)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
@@ -27,10 +27,14 @@ COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
 # dependency sync can build it -- a manifest alone is not enough.
 COPY libs/common libs/common
 COPY libs/vision-transformer libs/vision-transformer
-RUN uv sync --frozen --no-install-project --package ai-residency-vit-seq2seq
+# The base already carries the torch build this runtime wants, pinned to the same
+# versions as uv.lock. Excluding those three from the sync is what stops uv
+# reinstalling the lock's CPU wheels over a CUDA base -- and `--inexact` stops it
+# removing them as extraneous.
+RUN uv sync --frozen --no-install-project --no-install-package torch --no-install-package torchvision --no-install-package torchaudio --inexact --package ai-residency-vit-seq2seq
 
 COPY services/vit-seq2seq services/vit-seq2seq
-RUN uv sync --frozen --package ai-residency-vit-seq2seq
+RUN uv sync --frozen --no-install-package torch --no-install-package torchvision --no-install-package torchaudio --inexact --package ai-residency-vit-seq2seq
 
 WORKDIR /app/services/vit-seq2seq
 

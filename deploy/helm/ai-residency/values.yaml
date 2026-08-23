@@ -95,7 +95,7 @@ probes:
     failureThreshold: 3
 
 frontend:
-  image: roshbeed/ai-residency-frontend
+  image: roshb/ai-residency-frontend
   containerPort: 8501
   servicePort: 8500
   # Streamlit's own health endpoint -- the frontend is not a FastAPI backend and has
@@ -156,8 +156,8 @@ redis:
 backends:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference (Dockerfile.serve) ---
   word-embeddings:
-    image: roshbeed/ai-residency-word-embeddings-serve
-    trainImage: roshbeed/ai-residency-word-embeddings-train
+    image: roshb/ai-residency-word-embeddings-serve
+    trainImage: roshb/ai-residency-word-embeddings-train
     trainCommand: ["python", "-m", "word_embeddings.train"]
     containerPort: 8000
     memoryRequest: 2560Mi
@@ -166,8 +166,8 @@ backends:
 
   # --- Week 1b: content-scoring — the regression head over those frozen vectors ---
   content-scoring:
-    image: roshbeed/ai-residency-content-scoring-serve
-    trainImage: roshbeed/ai-residency-content-scoring-train
+    image: roshb/ai-residency-content-scoring-serve
+    trainImage: roshb/ai-residency-content-scoring-train
     trainCommand: ["python", "-m", "content_scoring.train"]
     containerPort: 8000
     memoryRequest: 1536Mi
@@ -176,8 +176,8 @@ backends:
 
   # --- Week 2: needs its own Redis (HNSW retrieval index) ---
   vector-search-retrieval:
-    image: roshbeed/ai-residency-vector-search-retrieval-serve
-    trainImage: roshbeed/ai-residency-vector-search-retrieval-train
+    image: roshb/ai-residency-vector-search-retrieval-serve
+    trainImage: roshb/ai-residency-vector-search-retrieval-train
     # The encoder towers. The CBOW and triples stages need their own data prep.
     trainCommand: ["python", "-m", "models.training"]
     containerPort: 8000
@@ -211,8 +211,8 @@ backends:
 
   # --- Single-digit ViT classifier (Dockerfile.serve) ---
   vit-classifier:
-    image: roshbeed/ai-residency-vit-classifier-serve
-    trainImage: roshbeed/ai-residency-vit-classifier-train
+    image: roshb/ai-residency-vit-classifier-serve
+    trainImage: roshb/ai-residency-vit-classifier-train
     # The epoch cap is its own field, so train.env's AI_RESIDENCY_NUM_EPOCHS alone would
     # not shorten a run. trainEnv is merged in after train.env, so it can override.
     trainEnv:
@@ -225,8 +225,8 @@ backends:
 
   # --- Multi-digit encoder-decoder ViT (Dockerfile.serve) ---
   vit-seq2seq:
-    image: roshbeed/ai-residency-vit-seq2seq-serve
-    trainImage: roshbeed/ai-residency-vit-seq2seq-train
+    image: roshb/ai-residency-vit-seq2seq-serve
+    trainImage: roshb/ai-residency-vit-seq2seq-train
     trainCommand: ["python", "-m", "vit_seq2seq.trainer"]
     containerPort: 8000
     memoryRequest: 512Mi
@@ -237,8 +237,8 @@ backends:
   # baked in (including /caption/stream SSE support); mounting all of /app over the
   # image would shadow those changes.
   multimodal-captioning:
-    image: roshbeed/ai-residency-multimodal-captioning-serve
-    trainImage: roshbeed/ai-residency-multimodal-captioning-train
+    image: roshb/ai-residency-multimodal-captioning-serve
+    trainImage: roshb/ai-residency-multimodal-captioning-train
     trainCommand: ["python", "-m", "multimodal_captioning.training"]
     containerPort: 8000
     memoryRequest: 6144Mi
@@ -253,8 +253,8 @@ backends:
 
   # --- Whisper fine-tuning ---
   whisper-fine-tuning:
-    image: roshbeed/ai-residency-whisper-fine-tuning-serve
-    trainImage: roshbeed/ai-residency-whisper-fine-tuning-train
+    image: roshb/ai-residency-whisper-fine-tuning-serve
+    trainImage: roshb/ai-residency-whisper-fine-tuning-train
     trainCommand: ["python", "-m", "whisper_fine_tuning.training"]
     containerPort: 8000
     memoryRequest: 2048Mi
@@ -263,8 +263,8 @@ backends:
 
   # --- Emotion-aware Whisper (Dockerfile.serve) ---
   speech-emotion-recognition:
-    image: roshbeed/ai-residency-speech-emotion-recognition-serve
-    trainImage: roshbeed/ai-residency-speech-emotion-recognition-train
+    image: roshb/ai-residency-speech-emotion-recognition-serve
+    trainImage: roshb/ai-residency-speech-emotion-recognition-train
     trainCommand: ["python", "-m", "speech_emotion_recognition.training"]
     containerPort: 8000
     memoryRequest: 2048Mi
@@ -278,8 +278,8 @@ backends:
 
   # --- RLHF / PPO ---
   rlhf-ppo:
-    image: roshbeed/ai-residency-rlhf-ppo-serve
-    trainImage: roshbeed/ai-residency-rlhf-ppo-train
+    image: roshb/ai-residency-rlhf-ppo-serve
+    trainImage: roshb/ai-residency-rlhf-ppo-train
     # One PPO step -- this repo has no epoch loop, by design.
     trainCommand: ["python", "-m", "training.run_ppo"]
     containerPort: 8000

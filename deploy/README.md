@@ -27,24 +27,26 @@ deploy/
 
 ## Images come from Docker Hub
 
-Every container is pulled as `roshbeed/ai-residency-<service>-serve:latest` (or `-train`, or
-`roshbeed/ai-residency-frontend`). They are built and published from the repository root:
+Every container is pulled as `roshb/ai-residency-<service>-serve:latest` (or `-train`, or
+`roshb/ai-residency-frontend`). They are built and published from the repository root:
 
 ```bash
 make build SERVICE=word-embeddings
 make push  SERVICE=word-embeddings
 ```
 
-**Nothing is published yet**, so `docker compose pull` has nothing to fetch. To run the stack
-before then, build locally — the same names compose and the chart already reference:
+Serving images are published by CI on every push to `main`, so `docker compose pull` fetches them.
+Training images are published on demand by the `Publish training images` workflow. To build locally
+instead — the same names compose and the chart already reference:
 
 ```bash
 cd ..
-docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+make base        # roshb/ai-residency-base-serve (CPU)
+make base-train  # roshb/ai-residency-base-train (CUDA)
 for s in $(ls -d services/*/ | xargs -n1 basename | grep -v _template | grep -v frontend); do
   make build SERVICE=$s
 done
-docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-frontend:latest .
+docker build -f services/frontend/Dockerfile.serve -t roshb/ai-residency-frontend:latest .
 ```
 
 The base image comes first because every `Dockerfile.serve` builds `FROM` it.
@@ -256,7 +258,7 @@ Per-repo caveats worth knowing before you rent anything:
 ### AWS EC2 spot GPU — alternative to RunPod
 
 `infra/aws-training/` is Terraform that provisions a single AWS spot GPU instance, pulls a pushed
-`roshbeed/ai-residency-<service>` image (built by that week's own `Dockerfile.train`,
+`roshb/ai-residency-<service>` image (built by that week's own `Dockerfile.train`,
 `make push SERVICE=<name>`), runs it, and terminates itself when training finishes or times out. It
 moved here from Week 3 (where it started as a Week-3-only script) because it isn't Week-3-specific
 infrastructure — `train_image` picks which week's already-built image to run.
@@ -287,8 +289,8 @@ curl localhost:8000/health
 
 No checkpoint needs copying. The first request resolves it: local file if present, Hub otherwise.
 Expect `"checkpoint_source": "hub"` on a fresh box — that is the whole mechanism working. A
-container works the same way, with no volume at all: `docker pull roshbeed/ai-residency-<service>:latest`
-then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshbeed/ai-residency-<service>:latest`.
+container works the same way, with no volume at all: `docker pull roshb/ai-residency-<service>:latest`
+then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshb/ai-residency-<service>:latest`.
 
 ## Related
 

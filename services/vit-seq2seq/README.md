@@ -178,7 +178,7 @@ to the repo root so relative paths (checkpoints, MNIST cache) resolve the same w
 do; the package itself is installed, so nothing needs to be put on the import path.
 
 **Docker Compose (Linux/CUDA servers):** two single-purpose Dockerfiles, both
-`FROM roshbeed/ai-residency-base` — `Dockerfile.serve` (the FastAPI inference container) and
+`FROM roshb/ai-residency-base-serve` — `Dockerfile.serve` (the FastAPI inference container) and
 `Dockerfile.train` (the training image, defaulting to the classifier). `uv.lock` already pins
 `torch`/`torchvision` to the CPU-only PyTorch wheel index, which otherwise resolves an unpinned
 `torch` to a multi-GB CUDA build on `linux/arm64` — a real GPU host would need its own

@@ -305,7 +305,7 @@ pytest -q
 
 ### Docker
 
-Two single-purpose Dockerfiles, both `FROM roshbeed/ai-residency-base`: `Dockerfile.serve` (the FastAPI
+Two single-purpose Dockerfiles, both `FROM roshb/ai-residency-base-serve`: `Dockerfile.serve` (the FastAPI
 generation service) and `Dockerfile.train` (one PPO step on a GPU host). Neither needs a git
 credential — `libs/common` is already installed in the base image.
 

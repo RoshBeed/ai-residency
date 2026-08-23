@@ -38,6 +38,11 @@ make -C services/<name> help      # that service's own pipeline stages
   their own: they copy manifests with `COPY --parents libs/*/... services/*/...`, so there is no
   per-member list to go stale.
 
+**Two registries, two usernames.** Docker Hub is **`roshb`** (image names only); Hugging Face is
+**`roshbeed`** (`hf_repo_id`, `hf_dataset_repo_id`, hub URLs). They are not interchangeable, and a
+blanket find-and-replace across `roshbeed/` will silently repoint every checkpoint at a Hugging
+Face account that does not exist.
+
 ## Standing rules
 
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
@@ -55,10 +60,14 @@ Verify wiring, not accuracy; don't propose training runs as the next step.
 actual request, not by inspecting code — a service that builds, starts and passes `/health` can
 still 500 on the first real call. Health checks are not verification.
 
-**Nothing is published to Docker Hub** while the repo is private: the free tier allows one private
-repository, so publishing would make the source publicly pullable ahead of the repo. Build locally
-and use `make -C deploy load-images`. Revisit, along with pinning `deploy/` to a commit SHA
-instead of `:latest`, when the repo goes public.
+**Images are published to Docker Hub publicly** (the free tier allows one private repository, and
+there are twelve images). CI pushes the serving base and the nine `-serve` images on every push to
+`main`, gated behind the `PUBLISH_IMAGES` repository variable and the `DOCKERHUB_TOKEN` secret.
+
+Training images go through the separate `Publish training images` workflow, run on demand: they are
+~9GB each, and the base plus one service does not fit in a runner's default free disk, so that
+workflow clears the preinstalled toolchains and builds one service per job. Runners are x86-64, so
+those builds are native rather than the slow emulation a Mac would do.
 
 ## Environment gotchas that still bite
 
@@ -69,8 +78,17 @@ instead of `:latest`, when the repo goes public.
 - **`datasets/` means two different things.** Raw corpora in the audio services, a Python package
   in the vision ones. Both `.gitignore` and `.dockerignore` exclude only the audio ones; a blanket
   rule silently drops source and produces an image that builds fine and fails at import.
-- **Check the lock for CUDA after any `uv lock`**: `grep -c 'name = "nvidia-' uv.lock` must be 0.
-  A newer torch re-resolves the CUDA build and bloats every image several-fold.
+- **Two base images, one Dockerfile.** `make base` builds `ai-residency-base-serve` (CPU torch);
+  `make base-train` builds `ai-residency-base-train` (CUDA, `linux/amd64`). Same `Dockerfile.base`,
+  different build args. Serving images build `FROM` the first, training images `FROM` the second.
+- **Downstream images sync with the torch stack excluded**:
+  `uv sync --frozen --no-install-package torch --no-install-package torchvision
+  --no-install-package torchaudio --inexact`. Without that, uv reinstalls the lock's CPU wheels over
+  a CUDA base; `--inexact` stops it removing them as extraneous. `grep -c 'name = "nvidia-' uv.lock`
+  must stay 0 — the lock is CPU-only by design, and CUDA comes from the base, not from uv.
+- **Training images must target the GPU host's architecture.** `make build` passes
+  `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
+  linux/arm64 and will not run on an x86-64 instance.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **`AI_RESIDENCY_<FIELD>` overrides any `Config` field** — `AI_RESIDENCY_NUM_EPOCHS=1` for a smoke
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.
@@ -99,6 +117,10 @@ CI is one path-filtered workflow: lint, then per-service mypy and pytest, then a
 behind a `PUBLISH_IMAGES` repository variable. 147 tests.
 
 Open:
+- `services/frontend` has no tests. `app.py` runs its whole page flow at import, so its display
+  helpers cannot be imported without a Streamlit runtime; extracting them into a module is the fix,
+  and worth doing — strict typing already found a real bytes/str bug in there. CI warns rather than
+  failing on a service with no `tests/`.
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503. Its pipeline, trainer
   and API are wired and verified.
 - `rlhf-ppo` has one `xfail`: the PPO ratio can differ for one element because the generator

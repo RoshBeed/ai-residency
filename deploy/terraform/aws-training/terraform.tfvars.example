@@ -13,7 +13,7 @@ hf_token      = "hf_your_token_here" # https://huggingface.co/settings/tokens
 wandb_api_key = ""                   # optional -- omit and the run just logs offline
 
 # Which service to train. Push its image first: `make push SERVICE=<name>`.
-train_image   = "roshbeed/ai-residency-vit-classifier-train:latest"
+train_image   = "roshb/ai-residency-vit-classifier-train:latest"
 train_command = "" # e.g. "seq2seq" to override Week 3's default classifier stage
 
 # Only needed if train_image is a private Docker Hub repository.
