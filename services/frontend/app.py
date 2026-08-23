@@ -1073,8 +1073,14 @@ def stream_sse(
     """
     with requests.post(url, json=json_body, stream=True, timeout=timeout) as r:
         r.raise_for_status()
-        for line in r.iter_lines(decode_unicode=True):
-            if line and line.startswith("data: "):
+        # Decode explicitly rather than via decode_unicode=True: the flag does
+        # yield str at run time, but requests' stubs type iter_lines as bytes
+        # either way, so the str comparison below has no basis under strict mypy.
+        for raw in r.iter_lines():
+            if not raw:
+                continue
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            if line.startswith("data: "):
                 yield json.loads(line[len("data: ") :])
 
 

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1-labs
 #
 # Training image for content-scoring.
 #
@@ -18,21 +18,11 @@ WORKDIR /app
 # then resolves exactly as it does on a developer machine, and this layer stays
 # cached until a dependency actually changes rather than on every code edit.
 COPY pyproject.toml uv.lock ./
-# --- workspace manifests (generated: make sync-dockerfiles) ---
-COPY libs/common/pyproject.toml libs/common/
-COPY libs/vision-transformer/pyproject.toml libs/vision-transformer/
-COPY services/_template/pyproject.toml services/_template/
-COPY services/content-scoring/pyproject.toml services/content-scoring/
-COPY services/frontend/pyproject.toml services/frontend/
-COPY services/multimodal-captioning/pyproject.toml services/multimodal-captioning/
-COPY services/rlhf-ppo/pyproject.toml services/rlhf-ppo/
-COPY services/speech-emotion-recognition/pyproject.toml services/speech-emotion-recognition/
-COPY services/vector-search-retrieval/pyproject.toml services/vector-search-retrieval/
-COPY services/vit-classifier/pyproject.toml services/vit-classifier/
-COPY services/vit-seq2seq/pyproject.toml services/vit-seq2seq/
-COPY services/whisper-fine-tuning/pyproject.toml services/whisper-fine-tuning/
-COPY services/word-embeddings/pyproject.toml services/word-embeddings/
-# --- end workspace manifests ---
+# Every workspace member's manifest, before any source, so uv resolves the
+# workspace exactly as it does locally and this layer stays cached until a
+# dependency actually changes. `--parents` keeps the directory structure, which
+# is why this needs no per-member enumeration to go stale.
+COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
 # libs/common is a real installable package, so it has to be present before the
 # dependency sync can build it -- a manifest alone is not enough.
 COPY libs/common libs/common

@@ -37,31 +37,17 @@ that has never trained anything.
 
 ## 1. Introduction
 
-Every project so far has worked on text or images. Audio is a third modality,
-and the first question is how to make it look like something a transformer can already handle.
-Raw waveform samples are too dense and too weakly structured to feed a transformer directly at
-30,000+ samples per second — the practical move (and the one Whisper itself makes) is to unbundle
-the signal into frequencies first.
+Whisper transcribes. It does not, out of the box, tell you how something was said — and *how* is
+often the point: the same sentence read angrily and sadly is the same transcript and a different
+message.
 
-**Figure 1.** From raw waveform to something transformer-shaped.
-```mermaid
-flowchart LR
-    audio["Raw waveform<br/>(amplitude over time)"] --> fft["Fourier Transform<br/>(which frequencies are present?)"]
-    fft --> mel["Log-Mel spectrogram<br/>(frequency x time, log-scaled)"]
-    mel --> cnn["2D array — Whisper treats this<br/>like an image, not raw audio"]
-```
+The obvious move is a classifier head on the encoder. This does something else, because Whisper's
+decoder already emits special tokens for language and task as ordinary vocabulary entries. Adding
+one token per emotion to that same vocabulary lets the model say what it heard through machinery
+it already has, trained by the same cross-entropy that trains everything else.
 
-A Fourier Transform decomposes a signal into how much each frequency contributes to it; doing that
-in short overlapping windows across a clip produces a spectrogram: frequency on one axis, time on
-the other, intensity as the value. That's a 2D array, the same shape a small stack of convolutions
-(and then a transformer) can consume. This is also, not coincidentally, close to how the
-[vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) treats images: turn
-the input into patches/tokens a transformer encoder can attend over.
-
-Once the audio is a spectrogram, the actual task ("what words are these" or "what emotion is
-this") is a sequence-generation problem no different in kind from the vision transformer project's multi-digit decoding or
-the image captioning project's captioning: an encoder makes sense of the input, a decoder generates tokens one at a
-time.
+The [sibling service](../whisper-fine-tuning) fine-tunes the same model for a different reason: to
+get one speaker's name right. They share the base checkpoint and nothing else.
 
 ## 2. System Architecture
 

@@ -60,7 +60,7 @@ ai-residency/
 │   ├── common/           device, logging, checkpoints, config, Hub, tracking — used by all
 │   └── vision-transformer/  attention, encoder, decoder, patch embedding — used by the two ViTs
 ├── services/             one directory per service — package, tests, Dockerfiles, write-up
-│   ├── _template/        what `make new-service` copies; a working service, not a skeleton
+│   ├── _template/        the shape a new service starts from; a working one, not a skeleton
 │   └── frontend/         the Streamlit app, one page per system
 ├── deploy/               docker-compose, the Helm chart, Terraform for a GPU training host
 ├── notebooks/            exploratory notebooks, one folder per system
@@ -106,12 +106,12 @@ See [`deploy/README.md`](deploy/README.md) for the cluster details, and
 
 ## Adding a service
 
-```bash
-make new-service NAME=my-thing
-```
+Copy `services/_template/` to `services/<name>/`, rename its package directory and the
+`template` references inside it, then `uv lock`. It is a working service — it trains, serves and
+passes its own checks — so the copy runs before you have changed anything.
 
-Copies `services/_template/`, renames its package and project, and re-locks. The result is
-already in the workspace, already linted and type-checked, already picked up by CI.
+Everything else picks it up on its own: `SERVICES` in the Makefile is derived from the directory
+listing, CI's matrix from the same, and the Dockerfiles copy manifests by glob.
 
 ---
 

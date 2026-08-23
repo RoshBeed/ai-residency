@@ -18,6 +18,10 @@ services/*/checkpoints/
 services/*/data/
 wandb/
 
+# Intermediates from synthesizing demo audio, which land in whatever directory
+# the caller happens to be in.
+*.aiff
+
 # `datasets/` is raw third-party corpora in the audio services and a Python
 # package of dataset wrappers in the vision ones. Ignoring it wholesale silently
 # dropped the vision services' own source -- the same collision the .dockerignore
