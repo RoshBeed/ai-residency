@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+#
+# Serving (inference) image — the container Kubernetes runs, the real FastAPI
+# retrieval service. FROM roshbeed/ai-residency-base; see Dockerfile.train for why this never
+# needs a git credential either.
+#
+# The interactive query CLI (`query_redis_ann.py`) is not a Docker stage here — it
+# needs an attached tty and is a local-only `make query` target instead.
+#
+# Build: docker build -f Dockerfile.serve -t ai-residency-week2-serve .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+EXPOSE 8000
+CMD ["uv", "run", "python", "-m", "serving.api"]
