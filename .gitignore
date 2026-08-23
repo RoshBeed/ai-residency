@@ -11,12 +11,19 @@ __pycache__/
 .env
 !.env.example
 
-# Trained artifacts and datasets live on the Hugging Face Hub, never in git --
-# every service resolves them locally-then-Hub at run time.
+# Trained artifacts and corpora live on the Hugging Face Hub, never in git. The
+# runtime is ephemeral: every service pulls what it needs at run time and pushes
+# what it trains, so nothing here should ever depend on a local copy.
 services/*/checkpoints/
 services/*/data/
-services/*/datasets/
 wandb/
+
+# `datasets/` is raw third-party corpora in the audio services and a Python
+# package of dataset wrappers in the vision ones. Ignoring it wholesale silently
+# dropped the vision services' own source -- the same collision the .dockerignore
+# had, where it produced an image that built fine and failed at import.
+services/whisper-fine-tuning/datasets/
+services/speech-emotion-recognition/datasets/
 
 .DS_Store
 

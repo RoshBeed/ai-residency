@@ -1,21 +1,17 @@
-# Orchestrates all six AI Residency week repos' published containers plus one shared Redis
-# for vector-search-retrieval, plus the portfolio frontend that calls all six backends directly over
-# HTTP. This is the docker-compose on-ramp to the Kubernetes chart in helm/.
+# Every backend and the frontend, in one stack.
 #
-# Every image is pulled from Docker Hub (roshbeed/ai-residency-<service>-serve / -train),
-# pushed from the repository root with `make push SERVICE=<name>`.
-# Nothing here builds from source -- this repo only *deploys* the containers the week
-# repos publish. The frontend image (roshbeed/ai-residency-frontend) is published by
-# the ai-residency-frontend repo the same way.
+# Images are pulled as roshbeed/ai-residency-<service>-serve:latest (or -train),
+# built and pushed from the repository root with `make build SERVICE=<name>` and
+# `make push SERVICE=<name>`.
 #
-# Trained checkpoints are still bind-mounted from the sibling ai-residency-weekN-... repos on
-# this host (the fast local path); each backend also falls back to pulling them from
-# the Hugging Face Hub when a mount is absent (see ai-residency-common's resolve_checkpoint).
+# There are no checkpoint mounts. The runtime is ephemeral -- a container, a CI
+# runner and a rented GPU box all start with an empty disk -- so every service
+# resolves its weights from the Hugging Face Hub at startup and training pushes
+# them back. A path that works only because a file happens to sit on one machine
+# is not a deployment, and the mounts that used to be here hid exactly that.
 #
-# Those mounts are deliberately writable, not :ro. resolve_checkpoint's Hub fallback
-# *downloads into the same directory*, so a read-only mount turns the fallback into a
-# guaranteed failure (`[Errno 30] Read-only file system`) on exactly the hosts that need
-# it -- the ones without a local copy.
+# `train` services are profile-gated, so a bare `docker compose up` never trains.
+
 
 services:
   # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
@@ -23,8 +19,6 @@ services:
     image: roshbeed/ai-residency-word-embeddings-serve:latest
     ports:
       - "8001:8000"
-    volumes:
-      - ../../services/word-embeddings/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -34,8 +28,6 @@ services:
     image: roshbeed/ai-residency-content-scoring-serve:latest
     ports:
       - "8007:8000"
-    volumes:
-      - ../../services/content-scoring/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -63,7 +55,6 @@ services:
       # Trained towers + CBOW vocab/embeddings, gitignored from the image -- mount
       # from the sibling repo at runtime. data/ holds tokenized_triples.json, needed
       # once to (re)populate this hub's own (fresh, empty) redis index.
-      - ../../services/vector-search-retrieval/checkpoints:/app/checkpoints
       - ../../services/vector-search-retrieval/data:/app/data
     ports:
       - "8002:8000"
@@ -71,8 +62,6 @@ services:
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
     image: roshbeed/ai-residency-vit-classifier-serve:latest
-    volumes:
-      - ../../services/vit-classifier/checkpoints:/app/checkpoints
     ports:
       - "8003:8000"
     environment:
@@ -82,8 +71,6 @@ services:
   # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
   vit-seq2seq:
     image: roshbeed/ai-residency-vit-seq2seq-serve:latest
-    volumes:
-      - ../../services/vit-seq2seq/checkpoints:/app/checkpoints
     ports:
       - "8008:8000"
     environment:
@@ -92,10 +79,6 @@ services:
 
   multimodal-captioning:
     image: roshbeed/ai-residency-multimodal-captioning-serve:latest
-    volumes:
-      # Week 4's adapter checkpoints are gitignored from the build context, so this
-      # mount is what actually supplies them at run time.
-      - ../../services/multimodal-captioning/checkpoints:/app/checkpoints
     working_dir: /app
     ports:
       - "8004:8000"
@@ -105,8 +88,6 @@ services:
 
   whisper-fine-tuning:
     image: roshbeed/ai-residency-whisper-fine-tuning-serve:latest
-    volumes:
-      - ../../services/whisper-fine-tuning/checkpoints:/app/checkpoints
     ports:
       - "8005:8000"
     environment:
@@ -116,8 +97,6 @@ services:
   # --- Emotion-aware Whisper: FastAPI inference container ---
   speech-emotion-recognition:
     image: roshbeed/ai-residency-speech-emotion-recognition-serve:latest
-    volumes:
-      - ../../services/speech-emotion-recognition/checkpoints:/app/checkpoints
     ports:
       - "8009:8000"
     environment:
@@ -127,7 +106,6 @@ services:
   rlhf-ppo:
     image: roshbeed/ai-residency-rlhf-ppo-serve:latest
     volumes:
-      - ../../services/rlhf-ppo/checkpoints:/app/checkpoints
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
       - "8006:8000"
@@ -176,7 +154,6 @@ services:
     profiles: [train]
     image: roshbeed/ai-residency-word-embeddings-train:latest
     volumes:
-      - ../../services/word-embeddings/checkpoints:/app/checkpoints
       - ../../services/word-embeddings/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -186,8 +163,6 @@ services:
   train-content-scoring:
     profiles: [train]
     image: roshbeed/ai-residency-content-scoring-train:latest
-    volumes:
-      - ../../services/content-scoring/checkpoints:/app/checkpoints
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -201,7 +176,6 @@ services:
     depends_on:
       - redis
     volumes:
-      - ../../services/vector-search-retrieval/checkpoints:/app/checkpoints
       - ../../services/vector-search-retrieval/data:/app/data
     environment:
       REDIS_HOST: redis
@@ -215,7 +189,6 @@ services:
     profiles: [train]
     image: roshbeed/ai-residency-vit-classifier-train:latest
     volumes:
-      - ../../services/vit-classifier/checkpoints:/app/checkpoints
       - ../../services/vit-classifier/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -228,7 +201,6 @@ services:
     profiles: [train]
     image: roshbeed/ai-residency-vit-seq2seq-train:latest
     volumes:
-      - ../../services/vit-seq2seq/checkpoints:/app/checkpoints
       - ../../services/vit-seq2seq/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -239,8 +211,6 @@ services:
   train-multimodal-captioning:
     profiles: [train]
     image: roshbeed/ai-residency-multimodal-captioning-train:latest
-    volumes:
-      - ../../services/multimodal-captioning/checkpoints:/app/checkpoints
     working_dir: /app
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -253,7 +223,6 @@ services:
     profiles: [train]
     image: roshbeed/ai-residency-whisper-fine-tuning-train:latest
     volumes:
-      - ../../services/whisper-fine-tuning/checkpoints:/app/checkpoints
       - ../../services/whisper-fine-tuning/data:/app/data
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
@@ -264,7 +233,6 @@ services:
     profiles: [train]
     image: roshbeed/ai-residency-speech-emotion-recognition-train:latest
     volumes:
-      - ../../services/speech-emotion-recognition/checkpoints:/app/checkpoints
       - ../../services/speech-emotion-recognition/data:/app/data
       - ../../services/speech-emotion-recognition/datasets:/app/datasets
     environment:
@@ -277,7 +245,6 @@ services:
     image: roshbeed/ai-residency-rlhf-ppo-train:latest
     # One PPO step -- this repo has no epoch loop, by design.
     volumes:
-      - ../../services/rlhf-ppo/checkpoints:/app/checkpoints
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     environment:
       HF_HOME: /root/.cache/huggingface
