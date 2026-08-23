@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+#
+# Training image — runs ONE PPO step end to end (generation, reward scoring, KL
+# penalty, GAE advantage, one value-model gradient step, one policy-model gradient
+# step). There is no multi-epoch training loop here and no reward-model or SFT
+# training script — that is architecturally absent, not trimmed for the container.
+# FROM roshbeed/ai-residency-base (built by ai-residency-repo-template's Dockerfile.base, the shared
+# base every repo in the portfolio builds on). ai-residency-common is already installed
+# there, so this file never touches git or needs a credential of any kind.
+#
+# Build: docker build -f Dockerfile.train -t ai-residency-week6-train .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+CMD ["uv", "run", "python", "-m", "training.run_ppo"]
