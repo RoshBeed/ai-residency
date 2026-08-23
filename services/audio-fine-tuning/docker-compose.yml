@@ -1,0 +1,40 @@
+# serve starts by default; train is profile-gated so a plain `docker compose up`
+# never kicks off a training run. Both build FROM roshbeed/ai-residency-base — build that
+# locally first with `make -C ../ai-residency-repo-template docker-build-base` (or pull it
+# once it's published).
+services:
+  serve:
+    build:
+      context: .
+      dockerfile: Dockerfile.serve
+    ports: ["8000:8000"]
+    volumes:
+      - ./checkpoints:/app/checkpoints
+    environment:
+      # Serving pulls a checkpoint from the Hub when the container has no local
+      # one, so the token belongs here too, not only on train.
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      LOG_LEVEL: INFO
+
+  train:
+    profiles: [train]
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
+    environment:
+      LOG_LEVEL: INFO
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    # Uncomment on a real GPU host. Whisper-tiny single-example fine-tuning does not
+    # need one; a full-corpus run would.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
