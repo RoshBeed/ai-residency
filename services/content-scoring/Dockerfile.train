@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+#
+# Training image — what a RunPod/AWS GPU host pulls and runs. FROM roshbeed/ai-residency-base
+# (built by ai-residency-repo-template's Dockerfile.base, the one shared base every repo in
+# the portfolio builds on). ai-residency-common is already installed there, so this file
+# never touches git or needs a credential of any kind.
+#
+# Trains the regression head over the frozen CBOW embeddings pulled from the
+# word-embeddings repo's Hugging Face repo.
+#
+# Build: docker build -f Dockerfile.train -t ai-residency-week1-content-scoring-train .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+CMD ["uv", "run", "python", "-m", "content_scoring.train"]
