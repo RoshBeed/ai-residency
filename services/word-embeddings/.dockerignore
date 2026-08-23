@@ -26,10 +26,14 @@ coverage.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
+notebooks/
+*.ipynb
 
 # Environment variables
 .env
 .venv
+.venv-run
+.venv*
 env/
 venv/
 ENV/
@@ -61,11 +65,23 @@ docker-compose*
 README.md
 *.md
 
-# Large data files (will be mounted as volumes)
+# Large data files and model artifacts (bind-mounted at runtime instead — see
+# docker-compose.yml's ./data:/app/data — so baking them into the image would only
+# bloat the build context and layers).
+#
+# The vocabulary used to be excepted here because the serving path loaded it from
+# data/. It does not any more: the vocabulary travels inside the CBOW checkpoint, so
+# the whole directory can go.
 data/*
-!data/combined_word_to_lemma_index.json
 wandb/
 logs/
+
+# Course slides / team presentation (never committed, never needed in-image)
+slides/
+*.pptx
+
+# Generated README screenshots/plots — not needed inside any container
+assets/
 
 # Temporary files
 *.tmp

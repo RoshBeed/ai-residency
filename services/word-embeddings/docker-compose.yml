@@ -1,74 +1,51 @@
-version: '3.8'
-
+# serve starts by default; train is profile-gated so a plain `docker compose up`
+# never kicks off a training run. Both build FROM roshbeed/ai-residency-base — build that
+# locally first via ai-residency-repo-template's `make docker-build-base` (or pull it once
+# it's published).
+#
+# Trained artifacts are bind-mounted rather than baked into the images, so the
+# containers always serve whatever was most recently trained. They all now live
+# under checkpoints/ — the CBOW weights used to sit inside the source tree, which
+# does not belong in an installable package.
 services:
-  # ML Training Service
-  # ml_training:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.ml
-  #   container_name: mlx_training
-  #   env_file:
-  #     - .env
-  #   volumes:
-  #     - .:/app
-  #     - ./data:/app/data
-  #     - ./models:/app/models
-  #   networks:
-  #     - mlx_network
-  #   command: python cbow.py
-
-  # API Service
-  api:
+  serve:
     build:
       context: .
-      dockerfile: Dockerfile.api
-    container_name: mlx_api
+      dockerfile: Dockerfile.serve
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
-      - ./models:/app/models
-    # depends_on:
-    #   - ml_training
+      - ./checkpoints:/app/checkpoints:ro
+      - ./data:/app/data:ro
+    environment:
+      # Serving pulls a checkpoint from the Hub when the container has no local
+      # one, so the token belongs here too, not only on train.
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
 
-    networks:
-      - mlx_network
-
-  # Streamlit Service (Frontend)
-  streamlit:
+  train:
+    profiles: ["train"]
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
-    container_name: mlx_streamlit
-    ports:
-      - "8501:8501"
+      dockerfile: Dockerfile.train
     volumes:
-      - .:/app
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
     environment:
-      - API_URL=http://api:8000
-    depends_on:
-      - api
-    networks:
-      - mlx_network
-
-  # Jupyter Notebook Service (Optional)
-  # jupyter:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.ml
-  #   container_name: mlx_jupyter
-  #   ports:
-  #     - "8888:8888"
-  #   volumes:
-  #     - ./EDA:/app/EDA
-  #     - ./data:/app/data
-  #     - ./models:/app/models
-  #   networks:
-  #     - mlx_network
-  #   command: ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''"]
-  #   profiles:
-  #     - development
-
-networks:
-  mlx_network:
-    driver: bridge 
+      LOG_LEVEL: INFO
+      # Taken from the shell, which is where `.env` has already been loaded. An
+      # `env_file:` was used here before and silently did nothing useful: that file
+      # was written with shell `export KEY=value` syntax, which compose reads
+      # literally, producing a variable actually named "export WANDB_API_KEY".
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    # GPU reservation (inert on this host — no CUDA base image pinned here; this
+    # repo's CBOW model is small enough to train on CPU, but a real GPU host can
+    # uncomment this):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
