@@ -1,0 +1,238 @@
+# Orchestrates all six AI Residency week repos' published containers plus one shared Redis
+# for week2, plus the portfolio frontend that calls all six backends directly over
+# HTTP. This is the docker-compose on-ramp to the Kubernetes chart in helm/.
+#
+# Every weekN image is pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train),
+# pushed there by that week repo's own `make docker-push-serve` / `docker-push-train`.
+# Nothing here builds from source -- this repo only *deploys* the containers the week
+# repos publish. The frontend image (roshbeed/ai-residency-frontend) is published by
+# the ai-residency-frontend repo the same way.
+#
+# Trained checkpoints are still bind-mounted from the sibling ai-residency-weekN-... repos on
+# this host (the fast local path); each backend also falls back to pulling them from
+# the Hugging Face Hub when a mount is absent (see ai-residency-common's resolve_checkpoint).
+#
+# Those mounts are deliberately writable, not :ro. resolve_checkpoint's Hub fallback
+# *downloads into the same directory*, so a read-only mount turns the fallback into a
+# guaranteed failure (`[Errno 30] Read-only file system`) on exactly the hosts that need
+# it -- the ones without a local copy.
+
+services:
+  # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
+  week1-word-embeddings:
+    image: roshbeed/ai-residency-week1-serve:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - ../ai-residency-week1-word-embeddings/checkpoints:/app/checkpoints
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  # --- Week 1b: content-scoring — the regression head that consumes those vectors ---
+  week1-content-scoring:
+    image: roshbeed/ai-residency-week1-content-scoring-serve:latest
+    ports:
+      - "8007:8000"
+    volumes:
+      - ../ai-residency-week1-content-scoring/checkpoints:/app/checkpoints
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  # --- Week 2: needs its own Redis (HNSW retrieval index) ---
+  week2-redis:
+    image: redis/redis-stack-server:latest
+    command: ["redis-stack-server", "--save", "", "--appendonly", "no"]
+    # No host port mapping -- only week2's own serve container needs to reach this,
+    # over the internal compose network (service name "week2-redis"). Deliberately
+    # not bound to the host to avoid colliding with the original Week2 repo's own
+    # persistent redis container, which already owns host port 6390.
+
+  week2:
+    image: roshbeed/ai-residency-week2-serve:latest
+    depends_on:
+      - week2-redis
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      REDIS_HOST: week2-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+    volumes:
+      # Trained towers + CBOW vocab/embeddings, gitignored from the image -- mount
+      # from the sibling repo at runtime. data/ holds tokenized_triples.json, needed
+      # once to (re)populate this hub's own (fresh, empty) redis index.
+      - ../ai-residency-week2-vector-search-retrieval/checkpoints:/app/checkpoints
+      - ../ai-residency-week2-vector-search-retrieval/data:/app/data
+    ports:
+      - "8002:8000"
+
+  # --- Week 3: FastAPI inference container (both classifier and seq2seq) ---
+  week3:
+    image: roshbeed/ai-residency-week3-serve:latest
+    volumes:
+      - ../ai-residency-week3-vision-transformers/checkpoints:/app/checkpoints
+    ports:
+      - "8003:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  week4:
+    image: roshbeed/ai-residency-week4-serve:latest
+    volumes:
+      # Week 4's adapter checkpoints are gitignored from the build context, so this
+      # mount is what actually supplies them at run time.
+      - ../ai-residency-week4-multimodal-captioning/checkpoints:/app/checkpoints
+    working_dir: /app
+    ports:
+      - "8004:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  week5:
+    image: roshbeed/ai-residency-week5-serve:latest
+    volumes:
+      - ../ai-residency-week5-audio-fine-tuning/checkpoints:/app/checkpoints
+    ports:
+      - "8005:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+
+  week6:
+    image: roshbeed/ai-residency-week6-serve:latest
+    volumes:
+      - ../ai-residency-week6-rlhf-ppo/checkpoints:/app/checkpoints
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ports:
+      - "8006:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      HF_HOME: /root/.cache/huggingface
+
+  frontend:
+    image: roshbeed/ai-residency-frontend:latest
+    depends_on:
+      - week1-word-embeddings
+      - week1-content-scoring
+      - week2
+      - week3
+      - week4
+      - week5
+      - week6
+    environment:
+      WEEK1_WORD_EMBEDDINGS_API_URL: http://week1-word-embeddings:8000
+      WEEK1_CONTENT_SCORING_API_URL: http://week1-content-scoring:8000
+      WEEK2_API_URL: http://week2:8000
+      WEEK3_API_URL: http://week3:8000
+      WEEK4_API_URL: http://week4:8000
+      WEEK5_API_URL: http://week5:8000
+      WEEK6_API_URL: http://week6:8000
+    ports:
+      - "8500:8501"
+
+  # --- Training, profile-gated so a plain `docker compose up` never starts a run ---
+  #
+  # Each pulls the week repo's Dockerfile.train image (a real, distinct image from
+  # the serving one). AI_RESIDENCY_NUM_EPOCHS (read by every repo's Config, see ai-residency-common's
+  # BaseConfig) keeps these to a smoke run by default; override it for a real one.
+  #
+  #   HF_TOKEN=... docker compose --profile train run --rm train-week3
+  #
+  # Checkpoint mounts are writable here, unlike the read-only serving mounts: this is
+  # the process that writes them.
+
+  train-week1-word-embeddings:
+    profiles: [train]
+    image: roshbeed/ai-residency-week1-train:latest
+    volumes:
+      - ../ai-residency-week1-word-embeddings/checkpoints:/app/checkpoints
+      - ../ai-residency-week1-word-embeddings/data:/app/data
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_CBOW_NUM_EPOCHS: ${AI_RESIDENCY_CBOW_NUM_EPOCHS:-1}
+
+  train-week1-content-scoring:
+    profiles: [train]
+    image: roshbeed/ai-residency-week1-content-scoring-train:latest
+    volumes:
+      - ../ai-residency-week1-content-scoring/checkpoints:/app/checkpoints
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
+  train-week2:
+    profiles: [train]
+    image: roshbeed/ai-residency-week2-train:latest
+    command: ["uv", "run", "python", "-m", "training"]
+    depends_on:
+      - week2-redis
+    volumes:
+      - ../ai-residency-week2-vector-search-retrieval/checkpoints:/app/checkpoints
+      - ../ai-residency-week2-vector-search-retrieval/data:/app/data
+    environment:
+      REDIS_HOST: week2-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
+  train-week3:
+    profiles: [train]
+    image: roshbeed/ai-residency-week3-train:latest
+    # Dockerfile.train's own default is the classifier; pass
+    # `command: ["uv", "run", "python", "-m", "models.seq2seq.trainer"]`
+    # for the seq2seq trainer.
+    volumes:
+      - ../ai-residency-week3-vision-transformers/checkpoints:/app/checkpoints
+      - ../ai-residency-week3-vision-transformers/data:/app/data
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      # This repo trains two models with separate epoch caps, so the classifier's is
+      # classifier_epochs, not num_epochs -- AI_RESIDENCY_NUM_EPOCHS alone would not shorten it.
+      AI_RESIDENCY_CLASSIFIER_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
+  train-week4:
+    profiles: [train]
+    image: roshbeed/ai-residency-week4-train:latest
+    volumes:
+      - ../ai-residency-week4-multimodal-captioning/checkpoints:/app/checkpoints
+    working_dir: /app
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+      # Never overwrite the committed adapter during a smoke run.
+      AI_RESIDENCY_CHECKPOINT_NAME: ${AI_RESIDENCY_CHECKPOINT_NAME:-adapter_smoke.pth}
+
+  train-week5:
+    profiles: [train]
+    image: roshbeed/ai-residency-week5-train:latest
+    volumes:
+      - ../ai-residency-week5-audio-fine-tuning/checkpoints:/app/checkpoints
+      - ../ai-residency-week5-audio-fine-tuning/data:/app/data
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
+
+  train-week6:
+    profiles: [train]
+    image: roshbeed/ai-residency-week6-train:latest
+    # One PPO step -- this repo has no epoch loop, by design.
+    volumes:
+      - ../ai-residency-week6-rlhf-ppo/checkpoints:/app/checkpoints
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}

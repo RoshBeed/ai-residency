@@ -1,0 +1,27 @@
+# AWS Configuration
+aws_region    = "us-east-1"
+instance_type = "g4dn.xlarge" # 1x NVIDIA T4 GPU, 4 vCPUs, 16 GB RAM
+spot_price    = "0.50"        # Maximum $0.50 per hour
+volume_size   = 100
+
+# SSH Configuration
+ssh_key_path = "~/.ssh/id_rsa"
+
+# Credentials -- training pushes its own checkpoint to the Hub and logs to W&B, this
+# module doesn't re-upload anything separately.
+hf_token      = "hf_your_token_here" # https://huggingface.co/settings/tokens
+wandb_api_key = ""                   # optional -- omit and the run just logs offline
+
+# Which week to train. Push it first: `make docker-push-train` in that week's repo.
+train_image   = "roshbeed/ai-residency-week3-train:latest"
+train_command = "" # e.g. "seq2seq" to override Week 3's default classifier stage
+
+# Only needed if train_image is a private Docker Hub repository.
+docker_hub_username = ""
+docker_hub_token    = ""
+
+# Training Configuration
+max_training_time = 24 # Maximum training time in hours before auto-termination
+
+# Environment
+environment = "training"

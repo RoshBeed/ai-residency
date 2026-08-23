@@ -1,0 +1,13 @@
+.venv/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+TODO.md
+
+# Local credentials (HF_TOKEN, WANDB_API_KEY). Never commit these.
+.env
+
+# Local Weights & Biases run directories.
+wandb/
