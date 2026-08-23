@@ -112,6 +112,10 @@ CI is one path-filtered workflow: lint, then per-service mypy and pytest, then a
 behind a `PUBLISH_IMAGES` repository variable. 147 tests.
 
 Open:
+- `services/frontend` has no tests. `app.py` runs its whole page flow at import, so its display
+  helpers cannot be imported without a Streamlit runtime; extracting them into a module is the fix,
+  and worth doing — strict typing already found a real bytes/str bug in there. CI warns rather than
+  failing on a service with no `tests/`.
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503. Its pipeline, trainer
   and API are wired and verified.
 - `rlhf-ppo` has one `xfail`: the PPO ratio can differ for one element because the generator

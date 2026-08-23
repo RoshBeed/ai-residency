@@ -114,9 +114,19 @@ jobs:
         working-directory: services/${{ matrix.service }}
         run: uv run --project . mypy --config-file ../../pyproject.toml .
 
+      # pytest exits 5 on "no tests collected", which is a fact about a service
+      # rather than a failure. The frontend is the one with no suite: app.py runs
+      # its whole page flow at import, so its helpers cannot be imported without a
+      # Streamlit runtime. Extracting them into a module is the fix, and is worth
+      # doing -- a strict type check already found a real bytes/str bug in there.
       - name: Test
         working-directory: services/${{ matrix.service }}
-        run: uv run --project . pytest -q
+        run: |
+          if [ -d tests ]; then
+            uv run --project . pytest -q
+          else
+            echo "::warning::${{ matrix.service }} has no tests/ directory"
+          fi
 
   images:
     name: Publish ${{ matrix.service }}
