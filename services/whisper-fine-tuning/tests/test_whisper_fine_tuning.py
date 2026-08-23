@@ -19,11 +19,12 @@ from whisper_fine_tuning.demo import run_demo
 from whisper_fine_tuning.models import create_tokens, get_tokenizer
 from whisper_fine_tuning.training import shift_for_teacher_forcing, train
 
-# The demo clip is gitignored and openai-whisper shells out to the ffmpeg binary,
-# so these two are skipped rather than failed on a host without either.
+# openai-whisper shells out to the ffmpeg *binary* to decode audio, and the pip
+# package of the same name does not provide it. The clip itself is not checked --
+# it comes from the Hub at run time, like every other artifact.
 needs_audio = pytest.mark.skipif(
-    not Config().audio_path.exists() or shutil.which("ffmpeg") is None,
-    reason="needs the bundled demo clip and a system ffmpeg binary",
+    shutil.which("ffmpeg") is None,
+    reason="needs a system ffmpeg binary",
 )
 
 

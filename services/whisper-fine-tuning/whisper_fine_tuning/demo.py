@@ -9,7 +9,7 @@ This is the same comparison the FastAPI service and the Streamlit UI produce, sh
 the same functions rather than reimplementing them.
 """
 
-from ai_residency_common import get_logger, set_seed
+from ai_residency_common import get_logger, resolve_required, set_seed
 from config import Config
 from whisper_fine_tuning.models import decode_audio, get_tokenizer, load_whisper_model
 from whisper_fine_tuning.training import fine_tune
@@ -30,7 +30,16 @@ def run_demo(config: Config) -> tuple[str, str]:
         The base transcript and the fine-tuned transcript.
     """
     set_seed(config.seed)
-    audio_path = str(config.audio_path)
+    # The clip is not committed: the runtime is ephemeral, so it comes from the
+    # Hub like every other artifact, downloaded into config.audio_path when absent.
+    resolved, source = resolve_required(
+        config.audio_path,
+        config.hf_dataset_repo_id,
+        repo_type="dataset",
+        rebuild_hint="Supply your own clip at data/audio.mp3, or record one.",
+    )
+    logger.info("Demo clip from %s", source)
+    audio_path = str(resolved)
 
     model, device = load_whisper_model(config)
     tokenizer = get_tokenizer()

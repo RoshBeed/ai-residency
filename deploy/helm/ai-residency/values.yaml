@@ -1,14 +1,14 @@
 # Default values for ai-residency.
 #
 # This chart is the Kubernetes analog of this repo's own docker-compose.yml -- see
-# that file's comments for *why* each volume mount exists (trained checkpoints/data
+# that file's comments for *why* each remaining volume mount exists (the Hugging Face
 # are gitignored from the published image, so real artifacts get mounted in at runtime
 # from the sibling ai-residency-weekN-... repo on the host instead). It targets a single-node
 # cluster running on the same host as those sibling repos -- built for and verified
 # against Docker Desktop's built-in Kubernetes.
 
 # Root directory on the *node's host filesystem* under which this repo and its six
-# the repository root. Every service's checkpoints live at services/<name>/checkpoints,
+# the repository root. No checkpoint volumes: the runtime is ephemeral, so services
 # so every hostPath volume below is
 # written as a Go template string and rendered with `tpl` against this value, so
 # moving the whole portfolio to a different path only requires changing this one line.
@@ -163,16 +163,6 @@ backends:
     memoryRequest: 2560Mi
     memoryLimit: 3584Mi
     env: {}
-    volumes:
-      # Gitignored trained artifacts from the sibling repo -- may legitimately be
-      # absent (never trained/downloaded on this host). `DirectoryOrCreate` lets the pod
-      # start anyway with an empty dir instead of hanging in ContainerCreating/FailedMount,
-      # so the service's own try/except around torch.load still gets to run and degrade to
-      # model_loaded=False, same as it does for a genuinely missing file.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/word-embeddings/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
 
   # --- Week 1b: content-scoring — the regression head over those frozen vectors ---
   content-scoring:
@@ -183,11 +173,6 @@ backends:
     memoryRequest: 1536Mi
     memoryLimit: 2048Mi
     env: {}
-    volumes:
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/content-scoring/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
 
   # --- Week 2: needs its own Redis (HNSW retrieval index) ---
   vector-search-retrieval:
@@ -221,18 +206,8 @@ backends:
       REDIS_HOST: "{{ .Values.redis.serviceName }}"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ""
-    volumes:
-      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
-      # The container's own code (image build) has the SSE /query/stream support;
-      # this mounts only the gitignored artifacts, not the whole /app.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/vector-search-retrieval/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
-      - name: data
-        hostPath: "{{ .Values.hostRoot }}/services/vector-search-retrieval/data"
-        mountPath: /app/data
-        type: DirectoryOrCreate
+    # No data volume either: the vocabulary and tokenized triples come from this
+    # service's Hugging Face dataset repo, resolved at run time like the weights.
 
   # --- Single-digit ViT classifier (Dockerfile.serve) ---
   vit-classifier:
@@ -247,12 +222,6 @@ backends:
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
     env: {}
-    volumes:
-      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/vit-classifier/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
 
   # --- Multi-digit encoder-decoder ViT (Dockerfile.serve) ---
   vit-seq2seq:
@@ -263,13 +232,8 @@ backends:
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
     env: {}
-    volumes:
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/vit-seq2seq/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
 
-  # --- Week 4: checkpoints mount only. The serve image already has the code
+  # --- Multimodal captioning ---
   # baked in (including /caption/stream SSE support); mounting all of /app over the
   # image would shadow those changes.
   multimodal-captioning:
@@ -282,21 +246,12 @@ backends:
     env:
       HF_HOME: /root/.cache/huggingface
     volumes:
-      # Week 4's adapter checkpoints are gitignored from the build context but small
-      # enough to exist in the source repo. Mount only this dir, not all of /app --
-      # the container's own code has the SSE changes.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/multimodal-captioning/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
-      # Shared HF model cache so CLIP + Qwen3 are not re-downloaded on cold starts.
       - name: hf-cache
         hostPath: "{{ .Values.hfCachePath }}"
         mountPath: /root/.cache/huggingface
         type: DirectoryOrCreate
 
-  # --- Week 5: the image doesn't carry the (gitignored) fine-tuned checkpoint, so
-  # mount the real one at runtime.
+  # --- Whisper fine-tuning ---
   whisper-fine-tuning:
     image: roshbeed/ai-residency-whisper-fine-tuning-serve
     trainImage: roshbeed/ai-residency-whisper-fine-tuning-train
@@ -305,12 +260,6 @@ backends:
     memoryRequest: 2048Mi
     memoryLimit: 2816Mi
     env: {}
-    volumes:
-      # Gitignored -- may legitimately be absent, see word-embeddings' volumes comment above.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/whisper-fine-tuning/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
 
   # --- Emotion-aware Whisper (Dockerfile.serve) ---
   speech-emotion-recognition:
@@ -322,16 +271,12 @@ backends:
     memoryLimit: 2816Mi
     env: {}
     volumes:
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/speech-emotion-recognition/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate
       - name: hf-cache
         hostPath: "{{ .Values.hfCachePath }}"
         mountPath: /root/.cache/huggingface
         type: DirectoryOrCreate
 
-  # --- Week 6: checkpoints mount so policy/value LoRA adapters persist across restart ---
+  # --- RLHF / PPO ---
   rlhf-ppo:
     image: roshbeed/ai-residency-rlhf-ppo-serve
     trainImage: roshbeed/ai-residency-rlhf-ppo-train
@@ -355,7 +300,3 @@ backends:
         type: DirectoryOrCreate
       # Checkpoints written by PPOTrainer._save_ckpt so repeated calls compound
       # across pod restarts, not just within one lifetime.
-      - name: checkpoints
-        hostPath: "{{ .Values.hostRoot }}/services/rlhf-ppo/checkpoints"
-        mountPath: /app/checkpoints
-        type: DirectoryOrCreate

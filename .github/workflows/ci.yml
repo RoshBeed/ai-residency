@@ -48,15 +48,26 @@ jobs:
 
           # The shared library, the lockfile, the lint config and CI itself all
           # affect every service.
+          #
+          # `if` rather than `grep -q ... && echo`: under `set -e` a failing `&&`
+          # list as the loop's last command makes the whole substitution exit 1,
+          # which killed this step whenever the *last* service was unchanged --
+          # and on any push whose diff is empty.
           if echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
             selected="$all"
           else
             selected=$(for s in $all; do
-              echo "$changed" | grep -q "^services/$s/" && echo "$s"
+              if echo "$changed" | grep -q "^services/$s/"; then echo "$s"; fi
             done)
           fi
 
-          json=$(printf '%s\n' $selected | jq -R . | jq -sc .)
+          # An empty selection has to serialise as [] -- `printf | jq -R` on an
+          # empty string yields [""], a matrix with one nameless service.
+          if [ -z "$selected" ]; then
+            json='[]'
+          else
+            json=$(printf '%s\n' $selected | jq -R . | jq -sc .)
+          fi
           echo "services=$json" >> "$GITHUB_OUTPUT"
           echo "any=$([ -n "$selected" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "Selected: ${selected:-none}"
@@ -105,7 +116,14 @@ jobs:
   images:
     name: Publish ${{ matrix.service }}
     needs: [changes, lint, check]
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.any == 'true'
+    # Nothing is published while the repository is private: Docker Hub's free tier
+    # allows one private repository, so publishing would make the source publicly
+    # pullable ahead of the repo. Set the repository variable PUBLISH_IMAGES to
+    # 'true' (with DOCKERHUB_TOKEN set) to turn this on.
+    if: |
+      github.ref == 'refs/heads/main'
+      && needs.changes.outputs.any == 'true'
+      && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
