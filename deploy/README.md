@@ -35,8 +35,9 @@ make build SERVICE=word-embeddings
 make push  SERVICE=word-embeddings
 ```
 
-**Nothing is published yet**, so `docker compose pull` has nothing to fetch. To run the stack
-before then, build locally — the same names compose and the chart already reference:
+Serving images are published by CI on every push to `main`, so `docker compose pull` fetches them.
+Training images are published on demand by the `Publish training images` workflow. To build locally
+instead — the same names compose and the chart already reference:
 
 ```bash
 cd ..

@@ -55,10 +55,14 @@ Verify wiring, not accuracy; don't propose training runs as the next step.
 actual request, not by inspecting code — a service that builds, starts and passes `/health` can
 still 500 on the first real call. Health checks are not verification.
 
-**Nothing is published to Docker Hub** while the repo is private: the free tier allows one private
-repository, so publishing would make the source publicly pullable ahead of the repo. Build locally
-and use `make -C deploy load-images`. Revisit, along with pinning `deploy/` to a commit SHA
-instead of `:latest`, when the repo goes public.
+**Images are published to Docker Hub publicly** (the free tier allows one private repository, and
+there are twelve images). CI pushes the serving base and the nine `-serve` images on every push to
+`main`, gated behind the `PUBLISH_IMAGES` repository variable and the `DOCKERHUB_TOKEN` secret.
+
+Training images go through the separate `Publish training images` workflow, run on demand: they are
+~9GB each, and the base plus one service does not fit in a runner's default free disk, so that
+workflow clears the preinstalled toolchains and builds one service per job. Runners are x86-64, so
+those builds are native rather than the slow emulation a Mac would do.
 
 ## Environment gotchas that still bite
 

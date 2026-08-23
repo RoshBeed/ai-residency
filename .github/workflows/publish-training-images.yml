@@ -1,0 +1,125 @@
+# Training images, published on demand rather than on every push.
+#
+# They are ~9GB each: the CUDA torch stack is most of that. A GitHub-hosted
+# runner starts with roughly 14GB free, so the base (~9GB) plus one service image
+# (~9GB) does not fit without clearing the preinstalled toolchains first -- hence
+# the free-disk step, and one service per job rather than a loop.
+#
+# On demand is also the honest cadence: these images change only when a training
+# dependency does, and nothing pulls them until someone rents a GPU box.
+
+name: Publish training images
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Comma-separated services, or "all"'
+        required: false
+        default: all
+
+concurrency:
+  group: publish-training-images
+  cancel-in-progress: false
+
+env:
+  REGISTRY: roshbeed
+  CUDA_INDEX: https://download.pytorch.org/whl/cu126
+  CUDA_LOCAL: +cu126
+
+jobs:
+  base:
+    name: Training base
+    runs-on: ubuntu-latest
+    if: vars.PUBLISH_IMAGES == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The runner is x86-64, which is what the GPU instances are, so this is a
+      # native build rather than the slow emulated one a Mac would do.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          push: true
+          build-args: |
+            TORCH_INDEX=${{ env.CUDA_INDEX }}
+            TORCH_LOCAL=${{ env.CUDA_LOCAL }}
+          tags: |
+            ${{ env.REGISTRY }}/ai-residency-base-train:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/ai-residency-base-train:latest
+
+  services:
+    name: ${{ matrix.service }}
+    needs: base
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        service:
+          - word-embeddings
+          - content-scoring
+          - vector-search-retrieval
+          - vit-classifier
+          - vit-seq2seq
+          - multimodal-captioning
+          - whisper-fine-tuning
+          - speech-emotion-recognition
+          - rlhf-ppo
+    steps:
+      - uses: actions/checkout@v5
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+
+      - name: Free disk space
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      - uses: docker/setup-buildx-action@v3
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+      - uses: docker/login-action@v3
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile.train
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/ai-residency-base-train:sha-${{ github.sha }}
+          tags: |
+            ${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-train:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-train:latest

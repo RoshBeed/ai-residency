@@ -139,13 +139,16 @@ jobs:
 
       # Only the serving base: this job publishes -serve images. The training base
       # carries the CUDA torch stack and is built for the GPU host, not here.
-      - name: Build serving base
+      - name: Build and push the serving base
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.base
-          tags: ${{ env.REGISTRY }}/ai-residency-base-serve:latest
+          push: true
           load: true
+          tags: |
+            ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/ai-residency-base-serve:latest
 
       # Both tags come off one commit, which is what makes a deployment
       # reproducible: deploy/ pins the SHA, not a moving `latest`.
