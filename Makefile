@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        build push train serve new-service clean help
+        build push train serve clean help
 
-# Every member of the workspace. Derived, so a new service is picked up the moment
-# `make new-service` creates it -- there is no list to remember to update.
+# Every member of the workspace. Derived from the directory listing, so a new
+# service is picked up the moment its directory exists.
 SERVICES := $(notdir $(patsubst %/,%,$(dir $(wildcard services/*/pyproject.toml))))
 CHECKABLE := $(filter-out frontend,$(SERVICES))
 
@@ -80,14 +80,6 @@ train: ## Train one service: make train SERVICE=word-embeddings
 serve: ## Serve one service locally: make serve SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make serve SERVICE=<name>" && exit 1)
 	$(MAKE) -C services/$(SERVICE) serve
-
-new-service: ## Scaffold a new service from the template: make new-service NAME=my-thing
-	@test -n "$(NAME)" || (echo "Usage: make new-service NAME=<name>" && exit 1)
-	@test ! -d services/$(NAME) || (echo "services/$(NAME) already exists" && exit 1)
-	cp -R services/_template services/$(NAME)
-	@python3 scripts/rename_service.py $(NAME)
-	uv lock
-	@echo "services/$(NAME) is in the workspace, linted, and ready for CI."
 
 clean: ## Remove caches and the workspace venv (never data/ or checkpoints/)
 	rm -rf .venv .mypy_cache .pytest_cache .ruff_cache

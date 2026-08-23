@@ -10,7 +10,7 @@ repo. Private, at `github.com/RoshBeed/ai-residency`.
 libs/common/                 device, logging, checkpoints, config, seeding, Hub, W&B — used by all
 libs/vision-transformer/     attention, encoder, decoder, patch embedding — used by the two ViTs
 services/<name>/             one per system: package, config/, serving/, tests/, Dockerfiles, README
-services/_template/          what `make new-service NAME=x` copies; a working service, not a skeleton
+services/_template/          the shape a new service starts from; a working one, not a skeleton
 services/frontend/           the Streamlit app, one page per system
 deploy/{compose,helm,terraform}/
 notebooks/<service>/         chdir into ../../services/<service> when run
