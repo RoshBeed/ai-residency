@@ -23,7 +23,9 @@ class Config(BaseConfig):
         num_epochs: Fine-tuning steps taken on the single example.
         whisper_model_name: Which `openai-whisper` checkpoint to fine-tune.
         checkpoint_name: File name for the fine-tuned weights, under `checkpoint_dir`.
-        audio_path: The demo clip to fine-tune on.
+        audio_path: Where the demo clip lives locally. It is not committed -- the
+            runtime is ephemeral -- so it is pulled from `hf_dataset_repo_id` when
+            absent, into this path.
         target_text: Ground truth for `audio_path`.
     """
 
@@ -37,4 +39,5 @@ class Config(BaseConfig):
     target_text: str = "My name is Rosh"
 
     hf_repo_id: str | None = "roshbeed/ai-residency-week5-audio-fine-tuning"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-whisper-fine-tuning-data"
     wandb_project: str | None = "ai-residency-whisper-fine-tuning"

@@ -116,7 +116,14 @@ jobs:
   images:
     name: Publish ${{ matrix.service }}
     needs: [changes, lint, check]
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.any == 'true'
+    # Nothing is published while the repository is private: Docker Hub's free tier
+    # allows one private repository, so publishing would make the source publicly
+    # pullable ahead of the repo. Set the repository variable PUBLISH_IMAGES to
+    # 'true' (with DOCKERHUB_TOKEN set) to turn this on.
+    if: |
+      github.ref == 'refs/heads/main'
+      && needs.changes.outputs.any == 'true'
+      && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
