@@ -1,287 +1,94 @@
-# Vision Transformer Multi-Digit Recognition
+# Vision Transformer Digit Recognition
 
-A comprehensive Vision Transformer implementation for multi-digit recognition using PyTorch, featuring both classification and sequence-to-sequence approaches with automatic device detection.
+Container source for Vision Transformer digit recognition: a from-scratch Vision Transformer (patch
+embedding, multi-head attention, encoder and decoder blocks, no `torch.nn.Transformer` shortcuts),
+applied to two related digit-recognition tasks. An encoder-only classifier reads a single MNIST
+digit; an encoder-decoder model reads a composited image of three digits side by side and generates
+the number one token at a time, autoregressively. Both models are served through one FastAPI app
+that loads both checkpoints at startup. The full write-up — architecture diagrams, the attention
+math, and honest experimental results (91.78% classifier test accuracy, 68.00% seq2seq
+exact-sequence accuracy, three real bugs found and fixed along the way) — lives in
+[`ai-residency-frontend/docs/vision-transformer.md`](https://github.com/RoshBeed/ai-residency-frontend/blob/main/docs/vision-transformer.md),
+not here.
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Automatic Device Detection
+- Python >= 3.11, [`uv`](https://docs.astral.sh/uv/)
+- Docker, for the container targets
 
-The system automatically detects and configures the best available device:
-
-- **🍎 Mac (Apple Silicon)**: Uses MPS (Metal Performance Shaders)
-- **🚀 Linux with NVIDIA GPU**: Uses CUDA with GPU acceleration  
-- **💻 Linux without GPU**: Falls back to CPU
-- **🐳 Docker with NVIDIA**: Uses CUDA automatically
-- **🐳 Docker without NVIDIA**: Falls back to CPU
-
-### Using Docker Compose (Recommended for Servers)
-
-1. **Start the services:**
-   ```bash
-   # Start the serving and frontend
-   docker-compose up model-serve streamlit
-   
-   # Or start everything
-   docker-compose up
-   ```
-
-2. **Train models (optional):**
-   ```bash
-   # Train the regular ViT model (uses CUDA if available)
-   docker-compose --profile train up model-train
-   
-   # Train the seq2seq model (uses CUDA if available)
-   docker-compose --profile train up s2s-train
-   
-   # Train both models
-   docker-compose --profile train up
-   ```
-
-3. **Access the application:**
-   - **Streamlit Frontend:** http://localhost:8501
-   - **API Documentation:** http://localhost:8000/docs
-   - **API Health Check:** http://localhost:8000
-
-### Local Development (Recommended for Mac)
-
-Since MPS is not supported in Docker on Mac, run the Python files directly:
-
-1. **Install dependencies:**
-   ```bash
-   # Install PyTorch with MPS support (Mac)
-   pip install torch torchvision torchaudio
-   
-   # Install other dependencies
-   pip install -r transformer/requirements.txt
-   pip install -r streamlit/requirements.txt
-   ```
-
-2. **Test device detection:**
-   ```bash
-   python test_device.py
-   ```
-
-3. **Run services:**
-   ```bash
-   # API server (will use MPS on Mac)
-   python transformer/serve.py
-   
-   # Frontend (in another terminal)
-   streamlit run streamlit/main.py
-   ```
-
-4. **Train models:**
-   ```bash
-   # Train ViT classifier model (uses MPS on Mac)
-   python models/classifier/trainer.py
-   
-   # Train seq2seq model (uses MPS on Mac)
-   python models/seq2seq/multi_digit_trainer.py
-   ```
-
-## 🏗️ Architecture
-
-### Services
-
-- **`model-serve`**: FastAPI server serving both ViT and seq2seq models
-- **`streamlit`**: Interactive web frontend with model selection
-- **`classifier-train`**: Training service for ViT classification model
-- **`seq2seq-train`**: Training service for seq2seq model
-
-### Model Types
-
-1. **Vision Transformer (Classification)**
-   - Direct classification of multi-digit numbers (0-999)
-   - Faster inference
-   - Fixed output size
-
-2. **Seq2Seq Vision Transformer**
-   - Sequence-to-sequence approach
-   - Generates digits one by one
-   - More flexible for variable-length numbers
-
-## 🎯 Features
-
-- **Interactive Drawing Canvas**: Draw digits and see real-time predictions
-- **Model Comparison**: Switch between classification and seq2seq models
-- **Educational Visualizations**: 
-  - Patch division visualization
-  - Attention heatmaps
-  - Model architecture diagrams
-- **Real-time Processing**: See how your input is processed step-by-step
-- **Automatic Device Detection**: Optimizes for your hardware automatically
-
-## 📊 Model Configuration
-
-The models use the following configuration (from `config.py`):
-
-- **Input Size**: 84×84 grayscale images
-- **Patch Size**: 16×16 pixels (25 patches total)
-- **Embedding Dimension**: 256
-- **Encoder Layers**: 6
-- **Attention Heads**: 8
-- **Parameters**: ~2.1M
-
-### Device-Specific Optimizations
-
-| Device | Batch Size | Learning Rate | Mixed Precision | Description |
-|--------|------------|---------------|-----------------|-------------|
-| **CUDA** | 128 | 0.0001 | ✅ | NVIDIA GPU with CUDA |
-| **MPS** | 64 | 0.0001 | ❌ | Apple Silicon GPU |
-| **CPU** | 32 | 0.00005 | ❌ | CPU fallback |
-
-## 🔧 API Endpoints
-
-- `GET /`: Health check
-- `GET /models`: List available models
-- `POST /predict`: General prediction endpoint
-- `POST /predict/vit`: ViT classification endpoint
-- `POST /predict/seq2seq`: Seq2Seq endpoint
-
-## 📁 Project Structure
-
-```
-├── config.py                 # Central configuration with device detection
-├── docker-compose.yml        # Multi-service orchestration with GPU support
-├── test_device.py           # Device detection test script
-├── utils/                   # Utility modules
-│   ├── __init__.py
-│   ├── device_utils.py      # Device detection and configuration
-│   └── huggingface_utils.py # Hugging Face upload utility
-├── transformer/              # Core transformer components
-│   ├── attention.py         # Multi-head attention
-│   ├── encoder.py           # Transformer encoder
-│   ├── decoder.py           # Transformer decoder
-│   ├── patch_embedding.py   # Image patch embedding
-│   ├── positional.py        # Positional encoding
-│   ├── feedforward.py       # Feed-forward networks
-│   └── ...
-├── models/                   # High-level models and training
-│   ├── classifier/          # ViT classification models
-│   │   ├── classifier.py    # Vision Transformer classifier
-│   │   ├── trainer.py       # Training script
-│   │   └── Dockerfile       # Dockerfile for classifier training
-│   └── seq2seq/             # Seq2Seq models
-│       ├── seq2seq.py       # Seq2Seq Vision Transformer
-│       ├── multi_digit_trainer.py # Training script
-│       └── Dockerfile       # Dockerfile for seq2seq training
-├── services/                 # API services
-│   ├── serve.py             # FastAPI server
-│   ├── requirements.txt     # Service dependencies
-│   └── Dockerfile           # Dockerfile for API service
-├── streamlit/                # Web frontend
-│   ├── main.py
-│   └── Dockerfile           # Dockerfile for streamlit
-└── model_data/               # Trained model weights
-```
-
-## 🎨 Usage
-
-1. **Open the Streamlit app** at http://localhost:8501
-2. **Select a model** from the sidebar (ViT or Seq2Seq)
-3. **Draw digits** on the canvas
-4. **View results** in the prediction tab
-5. **Explore visualizations** in the other tabs
-
-## 🛠️ Development
-
-### Testing Device Detection
+## Commands
 
 ```bash
-# Test what device will be used
-python test_device.py
+make install           # uv sync
+
+make train-classifier  # train the single-digit encoder-only classifier
+make train-seq2seq     # train the multi-digit encoder-decoder model
+make train              # alias for train-classifier, the faster of the two
+
+make serve              # FastAPI backend on :8000 (loads both committed/Hub checkpoints)
+
+make test               # pytest
+make check              # lint + strict mypy + tests
 ```
 
-### Local Development
+Checkpoints are gitignored and hosted on the Hugging Face Hub, so `make serve` pulls them rather
+than needing anything trained first. Where a local checkpoint exists (after `make train`),
+`serving/api.py` prefers it.
+
+## Docker
+
+Two single-purpose images, both `FROM roshbeed/ai-residency-base:local` (built by
+`ai-residency-repo-template`'s `Dockerfile.base` — build that once first with `make docker-build-base`
+over there, or pull it once it's published). Neither of these two ever touches git or needs a
+credential: `ai-residency-common` is already installed in the base image by the time their own `uv sync`
+runs.
+
+- **`Dockerfile.serve`** — the FastAPI backend Kubernetes runs, serving both models.
+- **`Dockerfile.train`** — what a RunPod/AWS GPU host pulls and runs. Trains the ViT classifier
+  by default; override `CMD` to train the seq2seq model instead, e.g.
+  `docker compose --profile train run --rm train uv run python -m models.seq2seq.trainer`.
 
 ```bash
-# Install PyTorch
-pip install torch torchvision torchaudio
+make docker-build-train    # docker build -f Dockerfile.train
+make docker-build-serve    # docker build -f Dockerfile.serve
 
-# Install other dependencies
-pip install -r transformer/requirements.txt
-pip install -r streamlit/requirements.txt
+make docker-up              # serve, via docker compose
+make docker-train           # train the ViT classifier in the train container
+make docker-down            # stop and remove all compose services
 
-# Run services individually
-python transformer/serve.py  # API server
-streamlit run streamlit/main.py  # Frontend
+make docker-push-train      # push roshbeed/ai-residency-week3-train (needs `docker login`)
+make docker-push-serve      # push roshbeed/ai-residency-week3-serve
 ```
 
-### Training
+`docker-compose.yml` has two services: `serve` (default) and `train` (profile-gated, so a plain
+`docker compose up` never kicks off a training run).
 
-```bash
-# Train ViT classifier model (uses detected device)
-python models/classifier/trainer.py
+## Environment variables
 
-# Train seq2seq model (uses detected device)
-python models/seq2seq/multi_digit_trainer.py
-```
+Everything degrades rather than failing, so a fresh clone still runs without any of these:
 
-## 🐳 Docker Setup for GPU Servers
+| Variable | Absent |
+|---|---|
+| `HF_TOKEN` | Checkpoints stay local, warning logged; serving falls back to a local checkpoint only |
+| `WANDB_API_KEY` | Run goes offline, sync later with `wandb sync` |
 
-### Prerequisites
+Any field on `Config` (`config/`) can be overridden with an
+`AI_RESIDENCY_<FIELD_NAME>` environment variable — e.g. `AI_RESIDENCY_NUM_EPOCHS=1 make train-classifier` for a fast
+smoke run. The one exception is the classifier's own epoch cap: it's a separate field,
+`classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS` specifically — `AI_RESIDENCY_NUM_EPOCHS` alone
+won't shorten it. A `.env` in this repo or in the parent directory (checked first, nearest wins)
+is loaded automatically; see `.env.example`.
 
-1. **Install NVIDIA Docker runtime:**
-   ```bash
-   # Install nvidia-docker2
-   distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-   curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-   curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-   
-   sudo apt-get update
-   sudo apt-get install -y nvidia-docker2
-   sudo systemctl restart docker
-   ```
+## Standards
 
-2. **Verify GPU access:**
-   ```bash
-   docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
-   ```
+Shared behaviour — device selection, logging, checkpoint format, seeding, Hub upload, W&B
+tracking — comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common), pinned by tag. Ruff
+(format and lint) and mypy run in strict mode with zero suppressions; the `[tool.ruff]`/
+`[tool.mypy]` blocks are copied verbatim from `ai-residency-common` so configuration cannot drift between
+repos in this portfolio.
 
-### Running with GPU
+## Full write-up
 
-```bash
-# Train with GPU support
-docker-compose --profile train up model-train
-
-# Or run everything with GPU
-docker-compose up
-```
-
-## 📦 PyTorch Installation
-
-### Mac (Apple Silicon)
-```bash
-pip install torch torchvision torchaudio
-```
-
-### Linux/Windows (with CUDA)
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-### Linux/Windows (CPU only)
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
-
-## 📈 Performance
-
-- **Inference Time**: ~50ms per prediction
-- **Accuracy**: >95% on test set
-- **Memory Usage**: ~500MB for both models
-- **Training Speed**: 
-  - CUDA: ~2-3x faster than CPU
-  - MPS: ~1.5-2x faster than CPU
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License. 
+Architecture diagrams, the method (patch embedding, multi-head attention, the encoder-decoder
+seq2seq design), and experimental results live in
+[`ai-residency-frontend/docs/vision-transformer.md`](https://github.com/RoshBeed/ai-residency-frontend/blob/main/docs/vision-transformer.md).

@@ -1,16 +1,6 @@
-"""
-High-Level Models Package
+"""The two models built on top of the from-scratch transformer blocks."""
 
-This package contains high-level models that build on top of the transformer components.
-"""
+from models.classifier.classifier import VisionTransformer
+from models.seq2seq.seq2seq import Seq2SeqVisionTransformer
 
-from .classifier import VisionTransformer, Trainer
-from .seq2seq import Seq2SeqVisionTransformer, train_seq2seq_model, evaluate_seq2seq_model
-
-__all__ = [
-    'VisionTransformer',
-    'Seq2SeqVisionTransformer',
-    'Trainer',
-    'train_seq2seq_model',
-    'evaluate_seq2seq_model'
-]
+__all__ = ["Seq2SeqVisionTransformer", "VisionTransformer"]

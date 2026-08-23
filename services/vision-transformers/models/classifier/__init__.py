@@ -1,4 +1,5 @@
-from .classifier import VisionTransformer
-from .trainer import Trainer
+"""Single-digit encoder-only classifier."""
 
-__all__ = ['VisionTransformer', 'Trainer']
+from models.classifier.classifier import VisionTransformer
+
+__all__ = ["VisionTransformer"]

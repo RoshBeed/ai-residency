@@ -1,0 +1,26 @@
+# Keep the build context to what images actually need.
+.venv-run
+.venv
+venv/
+__pycache__/
+*.pyc
+.git/
+.DS_Store
+.ipynb_checkpoints
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Build output — artifacts that are generated, downloaded, or pushed to / pulled from HF
+wandb/
+checkpoints/
+data/
+
+# Documentation and working notes — not needed in any container
+notebooks/
+assets/
+*.ipynb
+TODO.md
+README.md

@@ -1,392 +1,309 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-import json
-import time
-from typing import Dict, List, Tuple, Optional
+"""Training loop for the single-digit classifier.
+
+Follows the portfolio's canonical shape: seed, build loaders, compute a baseline,
+start tracking, then an epoch loop that logs metrics and publishes a checkpoint
+whenever validation improves.
+
+The baseline matters more than it looks. Ten-class MNIST accuracy sounds
+self-evidently good until you notice that always guessing the most common class
+already scores around 11%, so a number only means something next to it.
+"""
+
 import argparse
-from pathlib import Path
-import sys
+import json
+from collections import Counter
+from dataclasses import asdict
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import matplotlib
+import torch
+from ai_residency_common import (
+    finish_tracking,
+    get_device,
+    get_logger,
+    init_tracking,
+    log_metrics,
+    push_checkpoint,
+    save_checkpoint,
+    set_seed,
+)
+from torch import nn, optim
+from torch.utils.data import DataLoader
 
-# Import local modules
+from config import Config
+from datasets.mnist_dataset import Example, MNISTDataset
 from models.classifier.classifier import VisionTransformer
-from datasets.mnist_dataset import MNISTDataset
 
-class Trainer:
-    def __init__(self, config: Dict):
-        """
-        Initialize the trainer for encoder classifier.
-        
-        Args:
-            config: Configuration dictionary containing model and training parameters
-        """
-        self.config = config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {self.device}")
-        
-        # Set random seeds for reproducibility
-        torch.manual_seed(config.get('seed', 42))
-        np.random.seed(config.get('seed', 42))
-        
-        # Create output directory
-        self.output_dir = Path(config.get('output_dir', 'model_outputs'))
-        self.output_dir.mkdir(exist_ok=True)
-        
-        # Initialize model, dataset, and training components
-        self._setup_model()
-        self._setup_dataset()
-        self._setup_training_components()
-        
-        # Training history
-        self.train_losses = []
-        self.val_losses = []
-        self.train_accuracies = []
-        self.val_accuracies = []
-        
-    def _setup_model(self):
-        """Initialize the Vision Transformer model."""
-        print("Initializing Vision Transformer model...")
-        self.model = VisionTransformer(self.config['model_config'])
-        self.model.to(self.device)
-        
-        # Print model summary
-        total_params = sum(p.numel() for p in self.model.parameters())
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f"Total parameters: {total_params:,}")
-        print(f"Trainable parameters: {trainable_params:,}")
-        
-    def _setup_dataset(self):
-        """Initialize the dataset and data loaders."""
-        print("Setting up dataset...")
-        dataset_config = self.config['dataset_config']
-        
-        self.dataset = MNISTDataset(
-            data_dir=dataset_config.get('data_dir', 'data'),
-            image_size=dataset_config.get('image_size', 28),
-            train_split=dataset_config.get('train_split', 0.8),
-            batch_size=dataset_config.get('batch_size', 64),
-            num_workers=dataset_config.get('num_workers', 4),
-            download=dataset_config.get('download', True)
-        )
-        
-        self.train_loader, self.val_loader, self.test_loader = self.dataset.get_data_loaders()
-        self.train_size, self.val_size, self.test_size = self.dataset.get_dataset_sizes()
-        
-        print(f"Dataset sizes - Train: {self.train_size}, Val: {self.val_size}, Test: {self.test_size}")
-        
-    def _setup_training_components(self):
-        """Initialize optimizer, scheduler, and loss function."""
-        training_config = self.config['training_config']
-        
-        # Loss function
-        self.criterion = nn.CrossEntropyLoss()
-        
-        # Optimizer
-        optimizer_name = training_config.get('optimizer', 'adam').lower()
-        if optimizer_name == 'adam':
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=training_config.get('learning_rate', 1e-4),
-                weight_decay=training_config.get('weight_decay', 1e-4)
-            )
-        elif optimizer_name == 'adamw':
-            self.optimizer = optim.AdamW(
-                self.model.parameters(),
-                lr=training_config.get('learning_rate', 1e-4),
-                weight_decay=training_config.get('weight_decay', 1e-4)
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-        
-        # Learning rate scheduler
-        scheduler_name = training_config.get('scheduler', 'cosine').lower()
-        if scheduler_name == 'cosine':
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=training_config.get('epochs', 100)
-            )
-        elif scheduler_name == 'step':
-            self.scheduler = optim.lr_scheduler.StepLR(
-                self.optimizer,
-                step_size=training_config.get('step_size', 30),
-                gamma=training_config.get('gamma', 0.1)
-            )
-        else:
-            self.scheduler = None
-            
-    def train_epoch(self) -> Tuple[float, float]:
-        """Train for one epoch."""
-        self.model.train()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-        
-        for batch_idx, (data, target) in enumerate(self.train_loader):
-            data, target = data.to(self.device), target.to(self.device)
-            
-            self.optimizer.zero_grad()
-            output = self.model(data)
-            loss = self.criterion(output, target)
-            loss.backward()
-            
-            # Gradient clipping
-            if self.config['training_config'].get('gradient_clip', 0) > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config['training_config']['gradient_clip']
-                )
-            
-            self.optimizer.step()
-            
-            total_loss += loss.item()
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total += target.size(0)
-            
-            # Print progress
-            if batch_idx % 100 == 0:
-                print(f'Batch {batch_idx}/{len(self.train_loader)}, '
-                      f'Loss: {loss.item():.4f}, '
-                      f'Accuracy: {100. * correct / total:.2f}%')
-        
-        avg_loss = total_loss / len(self.train_loader)
-        accuracy = 100. * correct / total
-        return avg_loss, accuracy
-    
-    def validate(self, loader) -> Tuple[float, float]:
-        """Validate the model."""
-        self.model.eval()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-        
-        with torch.no_grad():
-            for data, target in loader:
-                data, target = data.to(self.device), target.to(self.device)
-                output = self.model(data)
-                loss = self.criterion(output, target)
-                
-                total_loss += loss.item()
-                pred = output.argmax(dim=1, keepdim=True)
-                correct += pred.eq(target.view_as(pred)).sum().item()
-                total += target.size(0)
-        
-        avg_loss = total_loss / len(loader)
-        accuracy = 100. * correct / total
-        return avg_loss, accuracy
-    
-    def save_checkpoint(self, epoch: int, is_best: bool = False):
-        """Save model checkpoint."""
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
-            'config': self.config,
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies
-        }
-        
-        # Create descriptive filename with model architecture details
-        model_config = self.config['model_config']
-        arch_info = f"vit_cls_{model_config['img_size']}x{model_config['img_size']}_patch{model_config['patch_size']}_d{model_config['d_model']}_layers{model_config['num_encoder_layers']}_heads{model_config['heads']}"
-        
-        # Save regular checkpoint with epoch info
-        checkpoint_path = self.output_dir / f'{arch_info}_epoch_{epoch}.pth'
-        torch.save(checkpoint, checkpoint_path)
-        
-        # Save best model with descriptive name
-        if is_best:
-            best_path = self.output_dir / f'{arch_info}_best.pth'
-            torch.save(checkpoint, best_path)
-            print(f"New best model saved with validation accuracy: {self.val_accuracies[-1]:.2f}%")
-            print(f"Model saved as: {best_path}")
-    
-    def plot_training_history(self):
-        """Plot training history."""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-        
-        # Plot losses
-        ax1.plot(self.train_losses, label='Train Loss')
-        ax1.plot(self.val_losses, label='Validation Loss')
-        ax1.set_title('Training and Validation Loss')
-        ax1.set_xlabel('Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.legend()
-        ax1.grid(True)
-        
-        # Plot accuracies
-        ax2.plot(self.train_accuracies, label='Train Accuracy')
-        ax2.plot(self.val_accuracies, label='Validation Accuracy')
-        ax2.set_title('Training and Validation Accuracy')
-        ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Accuracy (%)')
-        ax2.legend()
-        ax2.grid(True)
-        
-        plt.tight_layout()
-        plt.savefig(self.output_dir / 'training_history.png', dpi=300, bbox_inches='tight')
-        plt.show()
-    
-    def train(self):
-        """Main training loop."""
-        print("Starting training...")
-        epochs = self.config['training_config']['epochs']
-        best_val_accuracy = 0.0
-        patience = self.config['training_config'].get('patience', 10)
-        patience_counter = 0
-        
-        start_time = time.time()
-        
-        for epoch in range(1, epochs + 1):
-            epoch_start_time = time.time()
-            
-            # Training
-            train_loss, train_accuracy = self.train_epoch()
-            
-            # Validation
-            val_loss, val_accuracy = self.validate(self.val_loader)
-            
-            # Update learning rate
-            if self.scheduler:
-                self.scheduler.step()
-            
-            # Record history
-            self.train_losses.append(train_loss)
-            self.val_losses.append(val_loss)
-            self.train_accuracies.append(train_accuracy)
-            self.val_accuracies.append(val_accuracy)
-            
-            # Print epoch summary
-            epoch_time = time.time() - epoch_start_time
-            print(f'\nEpoch {epoch}/{epochs} ({epoch_time:.2f}s):')
-            print(f'  Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
-            print(f'  Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%')
-            print(f'  Learning Rate: {self.optimizer.param_groups[0]["lr"]:.6f}')
-            
-            # Save checkpoint
-            is_best = val_accuracy > best_val_accuracy
-            if is_best:
-                best_val_accuracy = val_accuracy
-                patience_counter = 0
-            else:
-                patience_counter += 1
-            
-            if epoch % 10 == 0 or is_best:
-                self.save_checkpoint(epoch, is_best)
-            
-            # Early stopping
-            if patience_counter >= patience:
-                print(f'\nEarly stopping triggered after {patience} epochs without improvement')
-                break
-        
-        total_time = time.time() - start_time
-        print(f'\nTraining completed in {total_time:.2f} seconds')
-        print(f'Best validation accuracy: {best_val_accuracy:.2f}%')
-        
-        # Final evaluation on test set
-        print("\nEvaluating on test set...")
-        test_loss, test_accuracy = self.validate(self.test_loader)
-        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
-        
-        # Plot training history
-        self.plot_training_history()
-        
-        # Save final model and config
-        self.save_checkpoint(epochs, is_best=True)
-        
-        # Save training config
-        with open(self.output_dir / 'training_config.json', 'w') as f:
-            json.dump(self.config, f, indent=2)
-        
-        return {
-            'best_val_accuracy': best_val_accuracy,
-            'test_accuracy': test_accuracy,
-            'total_training_time': total_time
-        }
+# Select a non-interactive backend before anything imports pyplot. This module runs
+# headlessly (Makefile target, Docker train stage), and the interactive macOS backend
+# blocks forever inside show() waiting for a window nothing will ever close. pyplot is
+# imported inside plot_history rather than here so this call is guaranteed to come
+# first without an out-of-order import.
+matplotlib.use("Agg")
 
-def get_default_config():
-    """Get default configuration for training."""
-    return {
-        'model_config': {
-            'img_size': 28,
-            'patch_size': 4,
-            'in_channels': 1,
-            'num_classes': 10,
-            'd_model': 128,
-            'num_encoder_layers': 6,
-            'heads': 8,
-            'head_dim': 16,
-            'ff_hidden_dim': 512,
-            'dropout': 0.1
-        },
-        'dataset_config': {
-            'data_dir': 'data',
-            'image_size': 28,
-            'train_split': 0.8,
-            'batch_size': 64,
-            'num_workers': 4,
-            'download': True
-        },
-        'training_config': {
-            'epochs': 100,
-            'learning_rate': 1e-4,
-            'weight_decay': 1e-4,
-            'optimizer': 'adamw',
-            'scheduler': 'cosine',
-            'gradient_clip': 1.0,
-            'patience': 15
-        },
-        'output_dir': 'model_outputs',
-        'seed': 42
+__all__ = ["compute_baseline", "evaluate", "main", "plot_history", "train"]
+
+logger = get_logger(__name__)
+
+
+def compute_baseline(train_loader: DataLoader[Example], val_loader: DataLoader[Example]) -> float:
+    """Return the validation accuracy of always predicting the commonest train class.
+
+    Args:
+        train_loader: Split the majority class is taken from.
+        val_loader: Split the baseline is scored on.
+
+    Returns:
+        Accuracy as a percentage.
+    """
+    train_counts: Counter[int] = Counter()
+    for _, targets in train_loader:
+        train_counts.update(int(label) for label in targets.tolist())
+    majority_class = train_counts.most_common(1)[0][0]
+
+    correct = 0
+    total = 0
+    for _, targets in val_loader:
+        correct += int((targets == majority_class).sum().item())
+        total += targets.size(0)
+
+    return 100.0 * correct / total
+
+
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader[Example],
+    device: torch.device,
+) -> tuple[float, float]:
+    """Return mean loss and accuracy over a loader.
+
+    Args:
+        model: Model to evaluate.
+        loader: Data to evaluate on.
+        device: Device to run on.
+
+    Returns:
+        A `(loss, accuracy_percent)` pair.
+    """
+    model.eval()
+    criterion = nn.CrossEntropyLoss()
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for images, targets in loader:
+            images, targets = images.to(device), targets.to(device)
+            logits = model(images)
+            total_loss += criterion(logits, targets).item() * targets.size(0)
+            correct += int((logits.argmax(dim=1) == targets).sum().item())
+            total += targets.size(0)
+
+    return total_loss / total, 100.0 * correct / total
+
+
+def plot_history(history: dict[str, list[float]], path: str) -> None:
+    """Write the loss and accuracy curves to a PNG.
+
+    Args:
+        history: Per-epoch series, keyed by metric name.
+        path: Destination image file.
+    """
+    import matplotlib.pyplot as plt
+
+    figure, (loss_axis, accuracy_axis) = plt.subplots(1, 2, figsize=(15, 5))
+
+    loss_axis.plot(history["train_loss"], label="Train")
+    loss_axis.plot(history["val_loss"], label="Validation")
+    loss_axis.set_title("Loss")
+    loss_axis.set_xlabel("Epoch")
+    loss_axis.legend()
+    loss_axis.grid(visible=True)
+
+    accuracy_axis.plot(history["train_accuracy"], label="Train")
+    accuracy_axis.plot(history["val_accuracy"], label="Validation")
+    accuracy_axis.set_title("Accuracy (%)")
+    accuracy_axis.set_xlabel("Epoch")
+    accuracy_axis.legend()
+    accuracy_axis.grid(visible=True)
+
+    figure.tight_layout()
+    figure.savefig(path, dpi=300, bbox_inches="tight")
+    plt.close(figure)
+
+
+def train(config: Config) -> float:
+    """Train the single-digit classifier and publish the best checkpoint.
+
+    Args:
+        config: Run configuration.
+
+    Returns:
+        The best validation accuracy reached, as a percentage.
+    """
+    set_seed(config.seed)
+    device = get_device()
+    logger.info("Training the single-digit classifier on %s", device)
+
+    dataset = MNISTDataset(
+        data_dir=config.data_dir,
+        image_size=config.classifier_arch.img_size,
+        train_split=config.train_split,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        seed=config.seed,
+    )
+    train_loader, val_loader, test_loader = dataset.get_data_loaders()
+
+    baseline_accuracy = compute_baseline(train_loader, val_loader)
+    logger.info("Baseline (predict commonest class) validation accuracy: %.2f%%", baseline_accuracy)
+
+    model = VisionTransformer(config.classifier_arch).to(device)
+    logger.info("Model has %d parameters", sum(p.numel() for p in model.parameters()))
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.classifier_weight_decay,
+    )
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.classifier_epochs)
+
+    init_tracking(
+        config.wandb_project,
+        config={"baseline_accuracy": baseline_accuracy, **asdict(config)},
+        run_name="classifier",
+    )
+
+    history: dict[str, list[float]] = {
+        "train_loss": [],
+        "val_loss": [],
+        "train_accuracy": [],
+        "val_accuracy": [],
     }
+    best_accuracy = 0.0
+    epochs_without_improvement = 0
 
-def main():
-    """Main function to run training."""
-    parser = argparse.ArgumentParser(description='Train Vision Transformer Encoder Classifier')
-    parser.add_argument('--config', type=str, help='Path to config JSON file')
-    parser.add_argument('--output_dir', type=str, default='model_outputs', help='Output directory')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate')
-    parser.add_argument('--d_model', type=int, default=128, help='Model dimension')
-    parser.add_argument('--num_layers', type=int, default=6, help='Number of encoder layers')
-    
+    for epoch in range(1, config.classifier_epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+        correct = 0
+        seen = 0
+
+        for images, targets in train_loader:
+            images, targets = images.to(device), targets.to(device)
+            optimizer.zero_grad()
+            logits = model(images)
+            loss = criterion(logits, targets)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), config.classifier_gradient_clip)
+            optimizer.step()
+
+            epoch_loss += loss.item() * targets.size(0)
+            correct += int((logits.argmax(dim=1) == targets).sum().item())
+            seen += targets.size(0)
+
+        scheduler.step()
+
+        train_loss = epoch_loss / seen
+        train_accuracy = 100.0 * correct / seen
+        val_loss, val_accuracy = evaluate(model, val_loader, device)
+
+        for name, value in (
+            ("train_loss", train_loss),
+            ("val_loss", val_loss),
+            ("train_accuracy", train_accuracy),
+            ("val_accuracy", val_accuracy),
+        ):
+            history[name].append(value)
+
+        log_metrics(
+            {
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "train_accuracy": train_accuracy,
+                "val_accuracy": val_accuracy,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+            },
+            step=epoch,
+        )
+        logger.info(
+            "Epoch %d/%d  train_loss=%.4f train_acc=%.2f%%  val_loss=%.4f val_acc=%.2f%%",
+            epoch,
+            config.classifier_epochs,
+            train_loss,
+            train_accuracy,
+            val_loss,
+            val_accuracy,
+        )
+
+        if val_accuracy > best_accuracy:
+            best_accuracy = val_accuracy
+            epochs_without_improvement = 0
+            save_checkpoint(
+                config.classifier_checkpoint_path,
+                model,
+                optimizer=optimizer,
+                epoch=epoch,
+                metrics={
+                    "val_accuracy": val_accuracy,
+                    "val_loss": val_loss,
+                    "baseline_accuracy": baseline_accuracy,
+                },
+                extra={"arch": asdict(config.classifier_arch)},
+            )
+            # Only on a new best: these artifacts are large enough that pushing every
+            # improvement would dominate the run.
+            if config.hf_repo_id is not None:
+                push_checkpoint(config.hf_repo_id, config.classifier_checkpoint_path)
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= config.classifier_patience:
+                logger.info(
+                    "Early stopping after %d epochs without improvement",
+                    epochs_without_improvement,
+                )
+                break
+
+    test_loss, test_accuracy = evaluate(model, test_loader, device)
+    log_metrics({"test_loss": test_loss, "test_accuracy": test_accuracy})
+    finish_tracking()
+
+    plot_history(history, str(config.checkpoint_dir / "training_history.png"))
+    (config.checkpoint_dir / "training_config.json").write_text(
+        json.dumps(asdict(config), indent=2, default=str)
+    )
+
+    logger.info(
+        "Best validation accuracy %.2f%% against baseline %.2f%% (%s); test accuracy %.2f%%",
+        best_accuracy,
+        baseline_accuracy,
+        "beats baseline" if best_accuracy > baseline_accuracy else "does NOT beat baseline",
+        test_accuracy,
+    )
+    return best_accuracy
+
+
+def main() -> None:
+    """Entry point for `make train-classifier`."""
+    parser = argparse.ArgumentParser(description="Train the single-digit ViT classifier")
+    parser.add_argument("--epochs", type=int, help="Override the epoch cap")
+    parser.add_argument("--batch-size", type=int, help="Override the batch size")
+    parser.add_argument("--learning-rate", type=float, help="Override the learning rate")
+    parser.add_argument("--seed", type=int, help="Override the random seed")
     args = parser.parse_args()
-    
-    # Load or create config
-    if args.config:
-        with open(args.config, 'r') as f:
-            config = json.load(f)
-    else:
-        config = get_default_config()
-    
-    # Override config with command line arguments
-    config['output_dir'] = args.output_dir
-    config['training_config']['epochs'] = args.epochs
-    config['training_config']['learning_rate'] = args.learning_rate
-    config['dataset_config']['batch_size'] = args.batch_size
-    config['model_config']['d_model'] = args.d_model
-    config['model_config']['num_encoder_layers'] = args.num_layers
-    
-    # Create trainer and start training
-    trainer = Trainer(config)
-    results = trainer.train()
-    
-    print(f"\nTraining Results:")
-    print(f"Best Validation Accuracy: {results['best_val_accuracy']:.2f}%")
-    print(f"Test Accuracy: {results['test_accuracy']:.2f}%")
-    print(f"Total Training Time: {results['total_training_time']:.2f} seconds")
 
-if __name__ == '__main__':
-    main() 
+    config = Config()
+    if args.epochs is not None:
+        config.classifier_epochs = args.epochs
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
+    if args.learning_rate is not None:
+        config.learning_rate = args.learning_rate
+    if args.seed is not None:
+        config.seed = args.seed
+
+    train(config)
+
+
+if __name__ == "__main__":
+    main()

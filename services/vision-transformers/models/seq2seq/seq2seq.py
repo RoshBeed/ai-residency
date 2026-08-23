@@ -1,250 +1,314 @@
+"""Encoder-decoder Vision Transformer that reads a multi-digit image as a sequence."""
+
+from collections.abc import Callable
+
 import torch
-import torch.nn as nn
-from transformer.patch_embedding import PatchEmbedding
-from transformer.positional import PositionalEncoding, LearnablePositionalEncoding
-from transformer.encoder import Encoder
+import torch.nn.functional as F
+from torch import nn
+
+from config import Seq2SeqArch
 from transformer.decoder import Decoder
+from transformer.encoder import Encoder
+from transformer.patch_embedding import PatchEmbedding
+from transformer.positional import (
+    LearnablePositionalEncoding,
+    PositionalEncoding,
+)
+
+__all__ = ["Seq2SeqVisionTransformer"]
+
 
 class Seq2SeqVisionTransformer(nn.Module):
-    def __init__(self, config):
-        super(Seq2SeqVisionTransformer, self).__init__()
-        
-        # Extract parameters from config
-        self.img_size = config["img_size"]
-        self.patch_size = config["patch_size"]
-        self.in_channels = config["in_channels"]
-        self.d_model = config["d_model"]
-        self.num_encoder_layers = config["num_encoder_layers"]
-        self.num_decoder_layers = config["num_decoder_layers"]
-        self.heads = config["heads"]
-        self.head_dim = config["head_dim"]
-        self.ff_hidden_dim = config["ff_hidden_dim"]
-        self.dropout = config["dropout"]
-        self.vocab_size = config["vocab_size"]
-        self.max_seq_length = config["max_seq_length"]
-        
-        # Token configuration
-        self.start_token = config.get("start_token", 10)  # START token
-        self.eos_token = config.get("eos_token", 11)      # EOS token
-        
-        self.n_patches = (self.img_size // self.patch_size) ** 2
-        
-        # Patch embedding for encoder
+    """Encodes an 84x84 three-digit composite and decodes the digits one at a time.
+
+    There is no [CLS] token here, unlike the single-digit classifier: the decoder
+    cross-attends over the whole patch sequence, so there is nothing for a single
+    pooled summary vector to do.
+    """
+
+    def __init__(self, arch: Seq2SeqArch) -> None:
+        """Build the model.
+
+        Args:
+            arch: Architecture the weights are shaped by.
+        """
+        super().__init__()
+        self.arch = arch
+        self.vocab_size = arch.vocab_size
+        self.start_token = arch.start_token
+        self.eos_token = arch.eos_token
+        self.n_patches = (arch.img_size // arch.patch_size) ** 2
+
         self.patch_embedding = PatchEmbedding(
-            img_size=self.img_size,
-            patch_size=self.patch_size,
-            in_channels=self.in_channels,
-            embed_dim=self.d_model
+            img_size=arch.img_size,
+            patch_size=arch.patch_size,
+            in_channels=arch.in_channels,
+            embed_dim=arch.d_model,
         )
-        
-        # Positional Encoding for encoder (patches only)
         self.encoder_pos_encoding = PositionalEncoding(
-            d_model=self.d_model,
-            max_seq_length=self.n_patches
+            d_model=arch.d_model,
+            max_seq_length=self.n_patches,
         )
-        
-        # Encoder Layers
-        self.encoder_layers = nn.ModuleList([
-            Encoder(
-                heads=self.heads,
-                d_model=self.d_model,
-                head_dim=self.head_dim,
-                ff_hidden_dim=self.ff_hidden_dim,
-                dropout=self.dropout
-            )
-            for _ in range(self.num_encoder_layers)
-        ])
-        
-        # Final encoder layer norm
-        self.encoder_norm = nn.LayerNorm(self.d_model)
-        
-        # Token embedding for decoder
-        self.token_embedding = nn.Embedding(self.vocab_size, self.d_model)
-        
-        # Positional Encoding for decoder
+        self.encoder_layers = nn.ModuleList(
+            [
+                Encoder(
+                    heads=arch.heads,
+                    d_model=arch.d_model,
+                    head_dim=arch.head_dim,
+                    ff_hidden_dim=arch.ff_hidden_dim,
+                    dropout=arch.dropout,
+                )
+                for _ in range(arch.num_encoder_layers)
+            ]
+        )
+        self.encoder_norm = nn.LayerNorm(arch.d_model)
+
+        self.token_embedding = nn.Embedding(arch.vocab_size, arch.d_model)
         self.decoder_pos_encoding = LearnablePositionalEncoding(
-            d_model=self.d_model,
-            max_seq_length=self.max_seq_length
+            d_model=arch.d_model,
+            max_seq_length=arch.max_seq_length,
         )
-        
-        # Decoder Layers
-        self.decoder_layers = nn.ModuleList([
-            Decoder(
-                heads=self.heads,
-                d_model=self.d_model,
-                head_dim=self.head_dim,
-                ff_hidden_dim=self.ff_hidden_dim,
-                dropout=self.dropout
-            )
-            for _ in range(self.num_decoder_layers)
-        ])
-        
-        # Final decoder layer norm
-        self.decoder_norm = nn.LayerNorm(self.d_model)
-        
-        # Output projection
-        self.output_projection = nn.Linear(self.d_model, self.vocab_size)
-        
-        # Initialize weights
+        self.decoder_layers = nn.ModuleList(
+            [
+                Decoder(
+                    heads=arch.heads,
+                    d_model=arch.d_model,
+                    head_dim=arch.head_dim,
+                    ff_hidden_dim=arch.ff_hidden_dim,
+                    dropout=arch.dropout,
+                )
+                for _ in range(arch.num_decoder_layers)
+            ]
+        )
+        self.decoder_norm = nn.LayerNorm(arch.d_model)
+        self.output_projection = nn.Linear(arch.d_model, arch.vocab_size)
+
         self._init_weights()
-        
-    def _init_weights(self):
-        """Initialize weights properly to prevent NaN issues"""
-        # Initialize patch embedding
+
+    def _init_weights(self) -> None:
+        """Initialise parameters, and reset every LayerNorm to the identity.
+
+        Small-std initialisation of the projections is what stopped this model
+        producing NaN losses in its first few steps.
+        """
         nn.init.normal_(self.patch_embedding.proj.weight, std=0.02)
-        nn.init.zeros_(self.patch_embedding.proj.bias)
-        
-        # Initialize token embedding
+        # Conv2d's bias is optional by construction, so narrow before touching it.
+        patch_bias = self.patch_embedding.proj.bias
+        if patch_bias is not None:
+            nn.init.zeros_(patch_bias)
         nn.init.normal_(self.token_embedding.weight, std=0.02)
-        
-        # Initialize output projection
         nn.init.normal_(self.output_projection.weight, std=0.02)
         nn.init.zeros_(self.output_projection.bias)
-        
-        # Initialize learnable positional encoding (already done in the class)
-        
-        # Initialize encoder layer norms (only norm1 and norm2)
-        for layer in self.encoder_layers:
-            nn.init.constant_(layer.norm1.weight, 1.0)
-            nn.init.constant_(layer.norm1.bias, 0.0)
-            nn.init.constant_(layer.norm2.weight, 1.0)
-            nn.init.constant_(layer.norm2.bias, 0.0)
-        
-        # Initialize decoder layer norms (only norm1, norm2, and norm3)
-        for layer in self.decoder_layers:
-            nn.init.constant_(layer.norm1.weight, 1.0)
-            nn.init.constant_(layer.norm1.bias, 0.0)
-            nn.init.constant_(layer.norm2.weight, 1.0)
-            nn.init.constant_(layer.norm2.bias, 0.0)
-            nn.init.constant_(layer.norm3.weight, 1.0)
-            nn.init.constant_(layer.norm3.bias, 0.0)
-        
-        # Initialize encoder and decoder norms
-        nn.init.constant_(self.encoder_norm.weight, 1.0)
-        nn.init.constant_(self.encoder_norm.bias, 0.0)
-        nn.init.constant_(self.decoder_norm.weight, 1.0)
-        nn.init.constant_(self.decoder_norm.bias, 0.0)
-        
-    def create_causal_mask(self, seq_length, device):
-        """Create a causal mask for decoder self-attention"""
-        # Create upper triangular mask where 1 means "mask" (don't attend)
-        # This creates a mask where each position can only attend to previous positions
+
+        for module in self.modules():
+            if isinstance(module, nn.LayerNorm):
+                nn.init.constant_(module.weight, 1.0)
+                nn.init.constant_(module.bias, 0.0)
+
+    def create_causal_mask(self, seq_length: int, device: torch.device) -> torch.Tensor:
+        """Build the decoder's causal mask.
+
+        Args:
+            seq_length: Length of the decoder sequence.
+            device: Device to allocate the mask on.
+
+        Returns:
+            Boolean mask of shape `(seq_length, seq_length)` where True means a
+            position must not be attended to.
+        """
         mask = torch.triu(torch.ones(seq_length, seq_length, device=device), diagonal=1)
-        # Convert to boolean mask where True means "mask" (don't attend)
         return mask.bool()
-        
-    def encode(self, x):
-        """Encode the input image"""
-        batch_size = x.size(0)
-        
-        # Patch embedding
-        x = self.patch_embedding(x)
-        
-        # Add positional encoding
+
+    def encode(self, images: torch.Tensor) -> torch.Tensor:
+        """Encode a batch of images into patch memory.
+
+        Args:
+            images: Shape `(batch, in_channels, img_size, img_size)`.
+
+        Returns:
+            Shape `(batch, n_patches, d_model)`.
+        """
+        x = self.patch_embedding(images)
         x = self.encoder_pos_encoding(x)
-        
-        # Pass through encoder layers
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
-        
-        # Final layer norm
-        x = self.encoder_norm(x)
-        
-        return x
-        
-    def decode(self, encoder_output, target_sequence, target_mask=None):
-        """Decode the target sequence"""
-        batch_size, seq_length = target_sequence.size()
-        
-        # Token embedding
+        encoded: torch.Tensor = self.encoder_norm(x)
+        return encoded
+
+    def decode(
+        self,
+        encoder_output: torch.Tensor,
+        target_sequence: torch.Tensor,
+        target_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Decode token logits for a target sequence.
+
+        Args:
+            encoder_output: Encoder memory from `encode`.
+            target_sequence: Token ids of shape `(batch, seq_len)`.
+            target_mask: Optional mask over the encoder positions.
+
+        Returns:
+            Logits of shape `(batch, seq_len, vocab_size)`.
+        """
+        seq_length = target_sequence.size(1)
+
         x = self.token_embedding(target_sequence)
-        
-        # Add positional encoding
         x = self.decoder_pos_encoding(x)
-        
-        # Create causal mask for self-attention
         causal_mask = self.create_causal_mask(seq_length, x.device)
-        
-        # Pass through decoder layers with correct mask
+
         for decoder_layer in self.decoder_layers:
             x = decoder_layer(x, encoder_output, tgt_mask=causal_mask, src_mask=target_mask)
-        
-        # Final layer norm
+
         x = self.decoder_norm(x)
-        
-        # Output projection
-        logits = self.output_projection(x)
-        
+        logits: torch.Tensor = self.output_projection(x)
         return logits
-        
-    def forward(self, images, target_sequences, target_mask=None):
-        """
-        Forward pass for training
-        
+
+    def forward(
+        self,
+        images: torch.Tensor,
+        target_sequences: torch.Tensor,
+        target_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Teacher-forced forward pass used during training.
+
         Args:
-            images: (batch_size, channels, height, width)
-            target_sequences: (batch_size, seq_length)
-            target_mask: Optional mask for target sequences
+            images: Shape `(batch, in_channels, img_size, img_size)`.
+            target_sequences: Token ids of shape `(batch, seq_len)`.
+            target_mask: Optional mask over the encoder positions.
+
+        Returns:
+            Logits of shape `(batch, seq_len, vocab_size)`.
+
+        Raises:
+            ValueError: If the tensor ranks, batch sizes or token ids are invalid.
         """
-        # Input validation
         if images.dim() != 4:
-            raise ValueError(f"Expected 4D input tensor, got {images.dim()}D")
-        
+            raise ValueError(f"Expected 4D image tensor, got {images.dim()}D")
         if target_sequences.dim() != 2:
             raise ValueError(f"Expected 2D target tensor, got {target_sequences.dim()}D")
-        
         if images.size(0) != target_sequences.size(0):
-            raise ValueError(f"Batch size mismatch: images {images.size(0)}, targets {target_sequences.size(0)}")
-        
-        # Check for invalid tokens
-        if target_sequences.max() >= self.vocab_size:
-            raise ValueError(f"Target contains invalid token: {target_sequences.max().item()} >= {self.vocab_size}")
-        
-        # Encode images
-        encoder_output = self.encode(images)
-        
-        # Decode target sequences
-        logits = self.decode(encoder_output, target_sequences, target_mask)
-        
-        return logits
-        
-    def generate(self, images, start_token, max_length, temperature=1.0):
-        """
-        Generate sequence for inference
-        
+            raise ValueError(
+                f"Batch size mismatch: images {images.size(0)}, targets {target_sequences.size(0)}"
+            )
+        if int(target_sequences.max().item()) >= self.vocab_size:
+            raise ValueError(
+                f"Target contains invalid token: "
+                f"{int(target_sequences.max().item())} >= {self.vocab_size}"
+            )
+
+        return self.decode(self.encode(images), target_sequences, target_mask)
+
+    def generate(
+        self,
+        images: torch.Tensor,
+        start_token: int,
+        max_length: int,
+        temperature: float = 1.0,
+    ) -> torch.Tensor:
+        """Autoregressively generate a token sequence per image.
+
         Args:
-            images: (batch_size, channels, height, width)
-            start_token: Token to start generation with
-            max_length: Maximum sequence length to generate
-            temperature: Sampling temperature
+            images: Shape `(batch, in_channels, img_size, img_size)`.
+            start_token: Token the sequence is primed with.
+            max_length: Maximum sequence length including the start token.
+            temperature: Sampling temperature.
+
+        Returns:
+            Token ids of shape `(batch, generated_len)`, where `generated_len` is at
+            most `max_length`.
         """
         batch_size = images.size(0)
         device = images.device
-        
-        # Encode images
+
         encoder_output = self.encode(images)
-        
-        # Initialize sequence with start token
         generated = torch.full((batch_size, 1), start_token, dtype=torch.long, device=device)
-        
+
+        # Completion is tracked per sequence, not per batch. This loop used to break
+        # the instant *any* sequence produced EOS, which truncated every other still
+        # generating sequence in the batch: one fast-finishing row dragged the rest
+        # down with it. That corrupted every batched evaluation while leaving the
+        # single-image API path (batch_size 1, where "any" and "all" agree) correct,
+        # so it hid in plain sight. `tests/test_week3.py` guards the fix.
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
         for _ in range(max_length - 1):
-            # Decode current sequence
             logits = self.decode(encoder_output, generated)
-            
-            # Get next token probabilities
             next_token_logits = logits[:, -1, :] / temperature
-            
-            # Apply softmax with temperature
-            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-            
-            # Sample next token
+            probs = F.softmax(next_token_logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
-            
-            # Append to sequence
+
+            # Finished sequences keep emitting EOS rather than sampling and drifting.
+            next_token = torch.where(
+                finished.unsqueeze(1),
+                torch.full_like(next_token, self.eos_token),
+                next_token,
+            )
+
             generated = torch.cat([generated, next_token], dim=1)
-            
-            # Stop if EOS token is generated
-            if (next_token == self.eos_token).any():
+            finished = finished | (next_token.squeeze(1) == self.eos_token)
+
+            if bool(finished.all()):
                 break
-                
-        return generated 
+
+        return generated
+
+    def generate_with_callback(
+        self,
+        images: torch.Tensor,
+        start_token: int,
+        max_length: int,
+        temperature: float = 1.0,
+        on_digit: Callable[[int, str, float], None] | None = None,
+    ) -> torch.Tensor:
+        """Autoregressively generate, calling `on_digit(step, digit_str, prob)` per token.
+
+        Same semantics as `generate` but fires a callback at each decoded digit so an
+        SSE endpoint can stream the sequence live rather than returning it all at once.
+
+        Args:
+            images: Shape `(batch, in_channels, img_size, img_size)`.
+            start_token: Token the sequence is primed with.
+            max_length: Maximum sequence length including the start token.
+            temperature: Sampling temperature.
+            on_digit: Called per generated token as `on_digit(step, digit_str, prob)`
+                with *step* zero-indexed. May be None.
+
+        Returns:
+            Token ids of shape `(batch, generated_len)`.
+        """
+        batch_size = images.size(0)
+        device = images.device
+
+        encoder_output = self.encode(images)
+        generated = torch.full((batch_size, 1), start_token, dtype=torch.long, device=device)
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+        for step in range(max_length - 1):
+            logits = self.decode(encoder_output, generated)
+            next_token_logits = logits[:, -1, :] / temperature
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+
+            next_token = torch.where(
+                finished.unsqueeze(1),
+                torch.full_like(next_token, self.eos_token),
+                next_token,
+            )
+
+            generated = torch.cat([generated, next_token], dim=1)
+            finished = finished | (next_token.squeeze(1) == self.eos_token)
+
+            if on_digit is not None:
+                for b in range(batch_size):
+                    token_id: int = int(next_token[b].item())
+                    prob: float = float(probs[b, token_id].item())
+                    digit_str: str = (
+                        "" if token_id in (start_token, self.eos_token) else str(token_id)
+                    )
+                    on_digit(step, digit_str, prob)
+
+            if bool(finished.all()):
+                break
+
+        return generated

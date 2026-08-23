@@ -1,7 +1,9 @@
-from .mnist_dataset import MNISTDataset
-from .multi_digit_dataset import MultiDigitMNISTDataset
+"""Dataset wrappers for the two tasks."""
 
-__all__ = [
-    'MNISTDataset',
-    'MultiDigitMNISTDataset'
-] 
+from datasets.mnist_dataset import MNISTDataset
+from datasets.multi_digit_dataset import (
+    MultiDigitDataset,
+    MultiDigitMNISTDataset,
+)
+
+__all__ = ["MNISTDataset", "MultiDigitDataset", "MultiDigitMNISTDataset"]

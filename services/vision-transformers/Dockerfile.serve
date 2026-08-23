@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+#
+# Serving (inference) image — the container Kubernetes runs. FROM roshbeed/ai-residency-base;
+# see Dockerfile.train for why this never needs a git credential either.
+#
+# Loads both committed/Hub checkpoints (classifier + seq2seq) at startup and exposes
+# both models behind one FastAPI app.
+#
+# Build: docker build -f Dockerfile.serve -t ai-residency-week3-serve .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+EXPOSE 8000
+CMD ["uv", "run", "python", "-m", "serving.api"]

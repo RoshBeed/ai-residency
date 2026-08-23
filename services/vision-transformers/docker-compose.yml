@@ -1,59 +1,35 @@
+# serve starts by default; train is profile-gated so a plain `docker compose up` never
+# kicks off a training run. Both build FROM roshbeed/ai-residency-base — build that locally
+# first with `make docker-build-base` in ai-residency-repo-template (or pull it once it's
+# published).
 services:
-  classifier-train:
-    profiles:
-      - train
+  serve:
     build:
       context: .
-      dockerfile: models/classifier/Dockerfile
-    image: mnist-digit-classifier-train:latest
+      dockerfile: Dockerfile.serve
+    ports: ["8000:8000"]
     volumes:
-      - model-data:/app/model_data
+      - ./checkpoints:/app/checkpoints
     environment:
-      - PYTHONPATH=/app
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      # Serving pulls a checkpoint from the Hub when the container has no local
+      # one, so the token belongs here too, not only on train.
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      LOG_LEVEL: INFO
 
-  seq2seq-train:
-    profiles:
-      - train
+  train:
+    profiles: [train]
     build:
       context: .
-      dockerfile: models/seq2seq/Dockerfile
-    image: mnist-digit-seq2seq-train:latest
+      dockerfile: Dockerfile.train
     volumes:
-      - model-data:/app/model_data
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
     environment:
-      - PYTHONPATH=/app
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  model-serve:
-    build:
-      context: .
-      dockerfile: services/Dockerfile
-    image: mnist-digit-transformer-serve:latest
-    restart: always
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./model_data:/app/model_data
-    environment:
-      - PYTHONPATH=/app
-    # Optional GPU support for inference (uncomment if needed)
+      LOG_LEVEL: INFO
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    # Uncomment on a real GPU host.
     # deploy:
     #   resources:
     #     reservations:
@@ -61,21 +37,3 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
-
-  streamlit:
-    build:
-      context: streamlit
-      dockerfile: Dockerfile
-    image: mnist-digit-transformer-streamlit:latest
-    restart: always
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./model_data:/app/model_data
-    environment:
-      MODEL_URL: "http://model-serve:8000/predict"
-      BOTH_MODELS_URL: "http://model-serve:8000/predict/both"
-      MODELS_URL: "http://model-serve:8000/models"
-
-volumes:
-  model-data:
