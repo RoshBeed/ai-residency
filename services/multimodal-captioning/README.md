@@ -1,112 +1,100 @@
-# CLIP Image Classifier
+# Image Captioning (CLIP + Qwen3)
 
-This project uses OpenAI's CLIP model to classify images based on a set of textual prompts.
+Container source for image captioning (CLIP + Qwen3): bridging a frozen CLIP ViT-B/32 vision
+encoder to a frozen Qwen3-0.6B-Base language model. A small trainable adapter (~1.58M parameters)
+projects a CLIP image embedding into Qwen3's embedding space as a single "soft token," concatenated
+with a text prompt before Qwen3 decodes a caption autoregressively — the same shape LLaVA and
+PaLiGemma use. The repo also has a standalone warm-up part (`zero_shot.py`) doing CLIP zero-shot
+classification, no training involved. The full write-up — architecture diagrams, the
+training-signal derivation, and honest experimental results (real captions from all three shipped
+checkpoints, none of them good) — lives in
+[`ai-residency-frontend/docs/image-captioning.md`](https://github.com/RoshBeed/ai-residency-frontend/blob/main/docs/image-captioning.md),
+not here. This repo is container source, not documentation.
 
-## How it works
+## Prerequisites
 
-- For each image in the `images/` folder, the script compares it to a list of classifier texts (e.g., "a photo of a cat", "a photo of a dog", etc.).
-- The script prints the best-matching label for each image, along with a similarity score.
+- Python >= 3.11, [`uv`](https://docs.astral.sh/uv/)
+- Docker, for the container targets
 
-## Architecture Diagram
+## Commands
 
-```mermaid
-graph TD
-    %% Input Data
-    A[Images in images/ folder] --> B[cat.jpg, dog.jpg, horse.jpg, etc.]
-    C[Text Labels] --> D["'a photo of a cat', 'a photo of a dog', etc."]
-    
-    %% CLIP Model Components
-    E[CLIP Model] --> F[Vision Encoder<br/>ViT-Base-Patch32]
-    E --> G[Text Encoder<br/>Transformer]
-    E --> H[Image Processor]
-    E --> I[Text Tokenizer]
-    E --> J[Visual Projection Layer]
-    E --> K[Text Projection Layer]
-    
-    %% Image Processing Pipeline
-    B --> H
-    H --> L[Processed Image Features]
-    L --> F
-    F --> M[Image Embeddings<br/>pooler_output]
-    M --> J
-    J --> N[Projected Image Features<br/>512-dimensional]
-    
-    %% Text Processing Pipeline
-    D --> I
-    I --> O[Tokenized Text]
-    O --> G
-    G --> P[Text Embeddings<br/>pooler_output]
-    P --> K
-    K --> Q[Projected Text Features<br/>512-dimensional]
-    
-    %% Similarity Computation
-    N --> R[Cosine Similarity<br/>Matrix Multiplication]
-    Q --> R
-    R --> S[Similarity Scores]
-    S --> T[Find Best Match<br/>argmax]
-    T --> U[Classification Result]
-    
-    %% Output
-    U --> V[Print Classification Results]
-    
-    %% Styling
-    classDef inputBox fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    classDef modelBox fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
-    classDef processBox fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
-    classDef outputBox fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    
-    class A,C inputBox
-    class E,F,G,H,I,J,K modelBox
-    class B,D,L,M,N,O,P,Q,R,S,T processBox
-    class U,V outputBox
+```bash
+make install       # uv sync
+make zero-shot      # Part 1 — CLIP zero-shot classification over data/images/, ~10s, no GPU needed
+make train           # Part 2 — fit the adapter on Flickr30k
+make serve            # FastAPI backend on :8000 (POST /caption, GET /health)
+
+make test           # pytest
+make check           # lint + strict mypy + tests
 ```
 
-## Sample Images
+`make train` writes to `checkpoints/adapter_flickr_batched.pth`, the checkpoint `serve` loads by
+default. Running it overwrites that file — point `checkpoint_dir` or `checkpoint_name` elsewhere
+first if you want to keep the current one.
 
-The classifier works with various types of images. Here are some examples from the dataset:
+## Docker
 
-- cat: best match is 'a photo of a cat' (score: 30.380)
-- dog: best match is 'a photo of a dog' (score: 35.998)
-- horse: best match is 'a photo of a horse' (score: 36.964)
-- bird: best match is 'a photo of a bird' (score: 30.397)
-- car: best match is 'a photo of a car' (score: 23.982)
-- person: best match is 'a photo of a person' (score: 27.901)
-- tree: best match is 'a photo of a tree' (score: 30.656)
-- house: best match is 'a photo of a house' (score: 29.412)
-- book: best match is 'a photo of a book' (score: 40.067)
-- phone: best match is 'a photo of a phone' (score: 32.127)
+Two single-purpose images, both `FROM roshbeed/ai-residency-base:local` (built by
+`ai-residency-repo-template`'s `Dockerfile.base` — build that once first with `make docker-build-base` over
+there, or pull it once it's published). Neither ever touches git or needs a credential:
+`ai-residency-common` is already installed in the base image by the time their own `uv sync` runs. Both add
+`build-essential`/`libjpeg-dev`/`zlib1g-dev` on top of the shared base — this repo's own
+requirement, for Pillow and torch native extensions.
 
-<div align="center">
+- **`Dockerfile.serve`** — the FastAPI captioning service Kubernetes runs.
+- **`Dockerfile.train`** — fits the adapter on Flickr30k; what a RunPod/AWS GPU host pulls and
+  runs.
 
-![Cat](images/cat.jpg) ![Dog](images/dog.jpg) ![Horse](images/horse.jpg) ![Bird](images/bird.jpg)
+```bash
+make docker-build-train    # docker build -f Dockerfile.train
+make docker-build-serve    # docker build -f Dockerfile.serve
 
-![Car](images/car.jpg) ![Person](images/person.jpg) ![Tree](images/tree.jpg) ![House](images/house.jpg)
+make docker-up             # serve, via docker compose
+make docker-train           # train, in a container (profile-gated)
+make docker-down            # stop and remove all compose services
 
-![Book](images/book.jpg) ![Phone](images/phone.jpg)
+make docker-push-train      # push roshbeed/ai-residency-week4-train (needs `docker login`)
+make docker-push-serve      # push roshbeed/ai-residency-week4-serve
+```
 
-</div>
+`docker-compose.yml` has two services: `serve` (default) and `train` (profile-gated, so a plain
+`docker compose up` never kicks off a training run). `checkpoints/` and `data/` are bind-mounted at
+run time rather than baked into either image.
 
-## Setup
+## Environment variables
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+Everything degrades rather than failing, so a fresh clone still runs without any of these:
 
-2. **Prepare your images:**
-   - Place your images in the `images/` folder.
+| Variable | Absent |
+|---|---|
+| `HF_TOKEN` | Checkpoints stay local, warning logged; serving falls back to a local checkpoint only |
+| `WANDB_API_KEY` | Run goes offline, sync later with `wandb sync` |
 
-3. **Run the script:**
-   ```bash
-   python clip.py
-   ```
+Any field on `Config` (`config/`) can be
+overridden with an `AI_RESIDENCY_<FIELD_NAME>` environment variable — e.g. `AI_RESIDENCY_NUM_EPOCHS=1 make train` for
+a fast smoke run, or `AI_RESIDENCY_NUM_SAMPLES=500` for a bigger one. A `.env` in this repo or in the parent
+directory (checked first, nearest wins) is loaded automatically; see `.env.example`.
 
-## Files
+## Known limitation
 
-- `clip.py` — Main script for running the classifier.
-- `requirements.txt` — Python dependencies.
-- `images/` — Folder containing your images.
+One of the three checkpoints (`adapter_flickr_batched.pth`) was trained with a trailing
+`LayerNorm` layer that isn't present for the other two. Checkpoints now record which architecture
+produced them (`Config.CHECKPOINTS`, a `final_layer_norm` flag on each entry), so the loader reads
+the shape off the artifact instead of guessing — but the underlying captions are still poor across
+all three checkpoints, mostly because none of them trained on enough data (10-100 pairs) to move a
+596M-parameter frozen decoder's priors. See the full write-up linked above for the actual numbers
+and the honest failure analysis.
 
----
+## Standards
 
-*Feel free to modify or extend this project!*
+Shared behaviour — device selection, logging, checkpoint format, seeding, Hub upload, W&B
+tracking — comes from [`ai-residency-common`](https://github.com/RoshBeed/ai-residency-common), pinned by tag. Ruff
+(format and lint) and mypy run in strict mode with zero suppressions; the `[tool.ruff]`/
+`[tool.mypy]` blocks are copied verbatim from `ai-residency-common` so configuration cannot drift between
+repos in this portfolio.
+
+## Full write-up
+
+Architecture diagrams, the method (the CLIP/Qwen3 bridge, the adapter design, the training signal),
+and experimental results live in
+[`ai-residency-frontend/docs/image-captioning.md`](https://github.com/RoshBeed/ai-residency-frontend/blob/main/docs/image-captioning.md).

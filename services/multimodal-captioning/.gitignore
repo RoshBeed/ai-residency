@@ -1,12 +1,18 @@
 # Ignore Jupyter notebooks
 #*.ipynb
 
-# Ignore Python cache and virtual environment
+# Ignore Python cache, build artifacts and virtual environments
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 env/
 venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Ignore macOS system files
 .DS_Store
@@ -29,3 +35,26 @@ Flickr_8k.testImages.txt
 Flickr_8k.trainImages.txt
 __MACOSX/
 readme.txt
+
+# Course slides and team presentation (kept locally for reference, not committed)
+slides/
+*.pptx
+
+# Local working notes — code-hygiene findings for a later pass, not committed
+TODO.md
+
+# Local credentials (HF_TOKEN, WANDB_API_KEY). Never commit these.
+.env
+
+# Local Weights & Biases run directories.
+wandb/
+
+# Sample images live in the roshbeed/ai-residency-week4-sample-images dataset repo and are
+# fetched on first use. A repo is for code.
+data/
+
+# Model checkpoints — pushed to / pulled from HuggingFace instead of committed
+checkpoints/
+*.pt
+*.pth
+*.ckpt
