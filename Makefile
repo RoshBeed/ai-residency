@@ -54,12 +54,18 @@ check: lint typecheck test ## Everything CI runs
 ## needs the root pyproject.toml, the shared uv.lock and libs/common, none of
 ## which sit inside a service. Both Dockerfiles are still per service.
 
+# Training images target the GPU host's architecture, not this machine's. Built
+# on an Apple Silicon Mac without this they come out linux/arm64 and will not run
+# on an x86-64 GPU instance -- and an emulated amd64 build of a ~10GB CUDA image
+# is slow enough that CI or the GPU box itself is the right place for it.
+TRAIN_PLATFORM ?= linux/amd64
+
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)
 	docker build -f services/$(SERVICE)/Dockerfile.serve \
 		-t $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG) .
 	@test -f services/$(SERVICE)/Dockerfile.train && \
-		docker build -f services/$(SERVICE)/Dockerfile.train \
+		docker build --platform $(TRAIN_PLATFORM) -f services/$(SERVICE)/Dockerfile.train \
 			-t $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG) . || true
 
 push: ## Push a service's images: make push SERVICE=word-embeddings

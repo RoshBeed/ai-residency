@@ -69,8 +69,17 @@ instead of `:latest`, when the repo goes public.
 - **`datasets/` means two different things.** Raw corpora in the audio services, a Python package
   in the vision ones. Both `.gitignore` and `.dockerignore` exclude only the audio ones; a blanket
   rule silently drops source and produces an image that builds fine and fails at import.
-- **Check the lock for CUDA after any `uv lock`**: `grep -c 'name = "nvidia-' uv.lock` must be 0.
-  A newer torch re-resolves the CUDA build and bloats every image several-fold.
+- **Serving images are CPU-only, training images are CUDA.** `Dockerfile.base` installs the CPU
+  torch wheel — right for the serving containers and a laptop, and `grep -c 'name = "nvidia-'
+  uv.lock` must stay 0 so it does not leak there. Each `Dockerfile.train` then installs
+  `torch==<locked version>+cu126` over it. The `+cu126` local identifier is load bearing: without
+  it pip treats the requirement as satisfied by the `+cpu` wheel and does nothing, which is how the
+  training images spent a while unable to see a GPU at all. This cannot live in `uv.lock` — every
+  member is a virtual project (`package = false`), which uv's conflicting-extras mechanism does not
+  cover.
+- **Training images must target the GPU host's architecture.** `make build` passes
+  `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
+  linux/arm64 and will not run on an x86-64 instance.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **`AI_RESIDENCY_<FIELD>` overrides any `Config` field** — `AI_RESIDENCY_NUM_EPOCHS=1` for a smoke
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.

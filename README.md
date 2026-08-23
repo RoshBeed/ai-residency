@@ -88,6 +88,11 @@ docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
 for s in $(ls services | grep -vE '^(_template)$'); do make build SERVICE=$s; done
 ```
 
+Serving images carry the CPU build of torch — ~1.6GB, and the right thing for a Kubernetes node.
+Training images add the CUDA build on top and target `linux/amd64`, since they run on a rented
+NVIDIA box; they are ~10GB and slow to build under emulation, so CI or the GPU host itself is the
+better place for them.
+
 ```bash
 cd deploy
 make up                                   # docker-compose; frontend on :8500

@@ -37,6 +37,21 @@ RUN uv sync --frozen --no-install-project --package ai-residency-whisper-fine-tu
 COPY services/whisper-fine-tuning services/whisper-fine-tuning
 RUN uv sync --frozen --package ai-residency-whisper-fine-tuning
 
+# The base image carries the CPU build of torch, which is what the serving
+# containers and a laptop want. This is the training image: it runs on a rented
+# NVIDIA box, so it needs the CUDA build, or `docker run --gpus all` hands the
+# container a GPU that torch cannot see and training silently falls back to CPU.
+#
+# Versions match uv.lock exactly, and the `+cu126` local identifier is load
+# bearing -- without it pip considers the requirement already satisfied by the
+# `+cpu` wheel the base image installed, and does nothing. It cannot live in
+# uv.lock itself: every member here is a virtual project (`package = false`),
+# which uv's conflicting-extras mechanism does not cover.
+RUN uv pip install --python /app/.venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cu126 \
+        torch==2.13.0+cu126 \
+        torchaudio==2.11.0+cu126
+
 WORKDIR /app/services/whisper-fine-tuning
 
 CMD ["python", "-m", "whisper_fine_tuning.training"]

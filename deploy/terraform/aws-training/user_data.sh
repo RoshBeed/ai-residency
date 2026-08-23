@@ -97,14 +97,12 @@ log "Running training container..."
 if [ -n "$TRAIN_COMMAND" ]; then
     run_with_timeout "$MAX_TRAINING_TIME" \
         docker run --rm --gpus all \
-            -v /opt/ai-residency-training/checkpoints:/app/checkpoints \
             -e HF_TOKEN="$HF_TOKEN" \
             -e WANDB_API_KEY="$WANDB_API_KEY" \
             "$TRAIN_IMAGE" $TRAIN_COMMAND
 else
     run_with_timeout "$MAX_TRAINING_TIME" \
         docker run --rm --gpus all \
-            -v /opt/ai-residency-training/checkpoints:/app/checkpoints \
             -e HF_TOKEN="$HF_TOKEN" \
             -e WANDB_API_KEY="$WANDB_API_KEY" \
             "$TRAIN_IMAGE"
