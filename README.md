@@ -84,7 +84,8 @@ The whole stack. Images are not published yet, so build them locally first — t
 `roshbeed/…:latest` names compose and the Helm chart already reference:
 
 ```bash
-docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+make base        # roshbeed/ai-residency-base-serve (CPU)
+make base-train  # roshbeed/ai-residency-base-train (CUDA)
 for s in $(ls services | grep -vE '^(_template)$'); do make build SERVICE=$s; done
 ```
 

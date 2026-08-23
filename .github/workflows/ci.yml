@@ -137,14 +137,14 @@ jobs:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # The base image carries python, uv and the CPU torch wheel. It needs no
-      # credential of its own any more -- there is no private dependency in it.
-      - name: Build base
+      # Only the serving base: this job publishes -serve images. The training base
+      # carries the CUDA torch stack and is built for the GPU host, not here.
+      - name: Build serving base
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.base
-          tags: ${{ env.REGISTRY }}/ai-residency-base:latest
+          tags: ${{ env.REGISTRY }}/ai-residency-base-serve:latest
           load: true
 
       # Both tags come off one commit, which is what makes a deployment

@@ -40,7 +40,8 @@ before then, build locally — the same names compose and the chart already refe
 
 ```bash
 cd ..
-docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+make base        # roshbeed/ai-residency-base-serve (CPU)
+make base-train  # roshbeed/ai-residency-base-train (CUDA)
 for s in $(ls -d services/*/ | xargs -n1 basename | grep -v _template | grep -v frontend); do
   make build SERVICE=$s
 done

@@ -96,7 +96,7 @@ docker build -f services/frontend/Dockerfile.serve -t roshbeed/ai-residency-fron
 docker push roshbeed/ai-residency-frontend:latest
 ```
 
-It does not build `FROM ai-residency-base`, deliberately — that image carries a torch install this
+It does not build `FROM ai-residency-base-serve`, deliberately — that image carries a torch install this
 one has no use for.
 
 The image is deliberately lightweight — `streamlit` + `requests` + `pillow` only. Every model runs in

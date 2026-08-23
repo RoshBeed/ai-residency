@@ -69,14 +69,14 @@ instead of `:latest`, when the repo goes public.
 - **`datasets/` means two different things.** Raw corpora in the audio services, a Python package
   in the vision ones. Both `.gitignore` and `.dockerignore` exclude only the audio ones; a blanket
   rule silently drops source and produces an image that builds fine and fails at import.
-- **Serving images are CPU-only, training images are CUDA.** `Dockerfile.base` installs the CPU
-  torch wheel — right for the serving containers and a laptop, and `grep -c 'name = "nvidia-'
-  uv.lock` must stay 0 so it does not leak there. Each `Dockerfile.train` then installs
-  `torch==<locked version>+cu126` over it. The `+cu126` local identifier is load bearing: without
-  it pip treats the requirement as satisfied by the `+cpu` wheel and does nothing, which is how the
-  training images spent a while unable to see a GPU at all. This cannot live in `uv.lock` — every
-  member is a virtual project (`package = false`), which uv's conflicting-extras mechanism does not
-  cover.
+- **Two base images, one Dockerfile.** `make base` builds `ai-residency-base-serve` (CPU torch);
+  `make base-train` builds `ai-residency-base-train` (CUDA, `linux/amd64`). Same `Dockerfile.base`,
+  different build args. Serving images build `FROM` the first, training images `FROM` the second.
+- **Downstream images sync with the torch stack excluded**:
+  `uv sync --frozen --no-install-package torch --no-install-package torchvision
+  --no-install-package torchaudio --inexact`. Without that, uv reinstalls the lock's CPU wheels over
+  a CUDA base; `--inexact` stops it removing them as extraneous. `grep -c 'name = "nvidia-' uv.lock`
+  must stay 0 — the lock is CPU-only by design, and CUDA comes from the base, not from uv.
 - **Training images must target the GPU host's architecture.** `make build` passes
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.

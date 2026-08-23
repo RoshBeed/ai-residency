@@ -9,7 +9,7 @@
 #   docker build -f services/content-scoring/Dockerfile.train -t roshbeed/ai-residency-content-scoring-train:latest .
 #   (or: make build SERVICE=content-scoring)
 
-ARG BASE_IMAGE=roshbeed/ai-residency-base:latest
+ARG BASE_IMAGE=roshbeed/ai-residency-base-train:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
@@ -26,24 +26,15 @@ COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
 # libs/common is a real installable package, so it has to be present before the
 # dependency sync can build it -- a manifest alone is not enough.
 COPY libs/common libs/common
-RUN uv sync --frozen --no-install-project --package ai-residency-content-scoring
+# The base already carries the torch build this runtime wants, pinned to the same
+# versions as uv.lock. Excluding those three from the sync is what stops uv
+# reinstalling the lock's CPU wheels over a CUDA base -- and `--inexact` stops it
+# removing them as extraneous.
+RUN uv sync --frozen --no-install-project --no-install-package torch --no-install-package torchvision --no-install-package torchaudio --inexact --package ai-residency-content-scoring
 
 COPY services/content-scoring services/content-scoring
-RUN uv sync --frozen --package ai-residency-content-scoring
+RUN uv sync --frozen --no-install-package torch --no-install-package torchvision --no-install-package torchaudio --inexact --package ai-residency-content-scoring
 
-# The base image carries the CPU build of torch, which is what the serving
-# containers and a laptop want. This is the training image: it runs on a rented
-# NVIDIA box, so it needs the CUDA build, or `docker run --gpus all` hands the
-# container a GPU that torch cannot see and training silently falls back to CPU.
-#
-# Versions match uv.lock exactly, and the `+cu126` local identifier is load
-# bearing -- without it pip considers the requirement already satisfied by the
-# `+cpu` wheel the base image installed, and does nothing. It cannot live in
-# uv.lock itself: every member here is a virtual project (`package = false`),
-# which uv's conflicting-extras mechanism does not cover.
-RUN uv pip install --python /app/.venv/bin/python \
-        --index-url https://download.pytorch.org/whl/cu126 \
-        torch==2.13.0+cu126
 
 WORKDIR /app/services/content-scoring
 

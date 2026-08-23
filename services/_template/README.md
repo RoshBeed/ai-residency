@@ -5,7 +5,7 @@ portfolio conforms to. It is a working repo, not a sketch: `make train` trains a
 synthetic data, `make serve` answers requests, and `make check` passes. That matters, because a
 template nobody has run is a template that doesn't work.
 
-This repo is also the **source of `roshbeed/ai-residency-base`**, the Docker image every week's own
+This repo is also the **source of `roshbeed/ai-residency-base-serve`**, the Docker image every week's own
 `Dockerfile.train`/`Dockerfile.serve` builds `FROM`. Explanatory write-ups, diagrams and the UI all
 live in [`services/frontend`](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend) now, not
 here — this repo (and every week repo shaped like it) is container source, not documentation.
@@ -34,7 +34,7 @@ tests/
 
 The modules live in the `template/` package (one package per repo, named after the topic), run as
 `python -m template.training`, with `config/` and `serving/` at the root. Root also holds
-`Dockerfile.base` (builds `roshbeed/ai-residency-base`), `Dockerfile.train`, `Dockerfile.serve`,
+`Dockerfile.base` (builds `roshbeed/ai-residency-base-serve`), `Dockerfile.train`, `Dockerfile.serve`,
 `docker-compose.yml`, `Makefile`, `pyproject.toml`, `uv.lock` and this README. Trained artifacts go
 to `checkpoints/` locally and to the Hugging Face Hub; neither `checkpoints/` nor `data/` is tracked
 in git.
@@ -87,7 +87,8 @@ make help                          # this service's own pipeline stages
 The base image every service builds `FROM`:
 
 ```bash
-docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .
+make base        # roshbeed/ai-residency-base-serve (CPU)
+make base-train  # roshbeed/ai-residency-base-train (CUDA)
 ```
 
 ## Standards
@@ -106,8 +107,8 @@ portfolio.
 ## Docker: one base image, two purposes
 
 `Dockerfile.base` installs `libs/common` — the one private git dependency every repo shares — into
-`roshbeed/ai-residency-base`. That's the only Dockerfile in the whole portfolio that ever needs a GitHub
-credential. `Dockerfile.train` and `Dockerfile.serve` both build `FROM roshbeed/ai-residency-base` and never
+`roshbeed/ai-residency-base-serve`. That's the only Dockerfile in the whole portfolio that ever needs a GitHub
+credential. `Dockerfile.train` and `Dockerfile.serve` both build `FROM roshbeed/ai-residency-base-serve` and never
 touch git at all: `libs/common` is already installed by the time their own `uv sync` runs, and `uv`
 recognizes it as already-satisfied against the lock file rather than re-fetching it.
 
@@ -115,7 +116,8 @@ recognizes it as already-satisfied against the lock file rather than re-fetching
 - **`Dockerfile.train`** is what a RunPod or AWS spot-GPU host pulls and runs for training.
 
 Build the base image once locally before building either of the other two:
-`docker build -f Dockerfile.base -t roshbeed/ai-residency-base:latest .` at the repository root.
+`make base        # roshbeed/ai-residency-base-serve (CPU)
+make base-train  # roshbeed/ai-residency-base-train (CUDA)` at the repository root.
 It carries python, uv and the CPU torch wheel, and needs no credential of its own.
 
 ## Credentials
