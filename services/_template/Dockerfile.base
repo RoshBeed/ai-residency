@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+#
+# Shared base image for every repo in the AI Residency portfolio: python + uv + the
+# private ai-residency-common package pre-installed into /app/.venv. Published as
+# roshbeed/ai-residency-base. Every week's Dockerfile.train/Dockerfile.serve builds FROM
+# this image, so the BuildKit-secret dance needed to fetch a private git
+# dependency only has to happen here, once, instead of being repeated six times.
+#
+# Build: docker build -f Dockerfile.base --secret id=gh_token,env=GITHUB_TOKEN \
+#          -t roshbeed/ai-residency-base:local .
+
+FROM python:3.11-slim AS base
+
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
+
+WORKDIR /app
+
+RUN uv venv .venv
+
+# Install the CPU-only torch wheel first so ai-residency-common's own `torch>=2.0`
+# requirement resolves as already-satisfied instead of pulling the default CUDA
+# build, which drags in ~10 nvidia-*/cuda-* packages and bloats the image 5-10x
+# (the same bug documented across this portfolio's Docker/uv passes).
+RUN uv pip install --python .venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cpu torch
+
+# ai-residency-common is a private repo, so the container cannot inherit host git
+# credentials. The token is mounted for this layer only and never written into
+# the image: the credential file is removed and the helper unset in the same RUN.
+RUN --mount=type=secret,id=gh_token \
+    git config --global credential.helper 'store --file=/tmp/gc' && \
+    printf 'https://x-access-token:%s@github.com\n' "$(cat /run/secrets/gh_token)" > /tmp/gc && \
+    uv pip install --python .venv/bin/python \
+        "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3" && \
+    rm -f /tmp/gc && git config --global --unset credential.helper
+
+ENV PATH="/app/.venv/bin:$PATH"

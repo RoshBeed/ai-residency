@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1
+#
+# Training image — what a RunPod/AWS GPU host pulls and runs. FROM roshbeed/ai-residency-base
+# (built by Dockerfile.base in this same repo, the one shared base every repo in the
+# portfolio builds on). ai-residency-common is already installed there, so this file never
+# touches git or needs a credential of any kind.
+#
+# Build: docker build -f Dockerfile.train -t ai-residency-template-train .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+CMD ["uv", "run", "python", "-m", "template.training"]

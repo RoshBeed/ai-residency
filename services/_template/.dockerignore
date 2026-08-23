@@ -1,0 +1,16 @@
+.venv
+.venv*
+.git
+.github
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+checkpoints/
+data/
+notebooks/
+assets/
+*.ipynb
+TODO.md
+.DS_Store

@@ -1,0 +1,73 @@
+[project]
+# Rename to ai-residency-week<N>-<slug> when this template is instantiated.
+name = "ai-residency-template"
+version = "0.1.0"
+description = "Template for the AI Residency portfolio repos"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "fastapi>=0.110",
+    "ai-residency-common @ git+https://github.com/RoshBeed/ai-residency-common.git@v0.7.3",
+    "torch>=2.0",
+    "uvicorn>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+package = false
+
+# Put the repo root on sys.path so `tests/` can import the top-level modules without
+# an editable install — these repos are applications, not libraries.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+# torch resolves to the CUDA build on linux/arm64 otherwise, which bloats images
+# roughly 5-10x. This portfolio runs CPU-only in containers.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# ---------------------------------------------------------------------------
+# Canonical lint/type config, identical in ai-residency-common and all six week repos.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import sorting (replaces isort)
+    "N",   # pep8-naming — enforces the naming spec
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
+# it in every repo, so it is waived once here rather than per file.
+ignore = ["N812"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+show_error_codes = true
