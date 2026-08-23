@@ -9,6 +9,12 @@
 [tool.uv.workspace]
 members = ["libs/*", "services/*"]
 
+# The interpreter is pinned in `.python-version` at the repository root. Without
+# it, uv picks whatever the host offers: 3.11 locally, 3.12 on a CI runner, while
+# the images pin python:3.11-slim and mypy is told to assume 3.11. That mismatch
+# is not theoretical -- it made CI reject numpy's own stubs, which use syntax
+# that only exists in 3.12, under a 3.11 assumption.
+
 [dependency-groups]
 dev = [
     "mypy>=1.11",
