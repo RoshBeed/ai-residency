@@ -37,187 +37,68 @@ differently. Sections 3.1–3.3 below describe what that library implements.
 
 ## 1. Introduction
 
-The [dual-encoder retrieval project](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval)
-used self-attention over text. This project asks the same question the original ViT paper asked:
-does the same architecture work over *images*, if you just find the right way to turn pixels into
-tokens?
+Classifying one digit needs a single label, and the [classifier](../vit-classifier) does that with
+an encoder and a pooled `[CLS]` token. Reading a *number* is a different problem: the answer is an
+ordered sequence whose length the model decides, so it has to know when it has finished.
 
-The paper's answer is to cut the image into fixed-size patches, flatten and linearly project each
-one, and feed the resulting sequence into an unmodified transformer encoder, treating patches just
-like word tokens. No convolutions anywhere.
+That is what a decoder adds. It is seeded with a start token, masked so each position sees only
+what came before it, cross-attends onto the encoded image at every step, and emits an EOS token
+when the number is done. The encoder underneath is the same one the classifier uses — the
+difference between the two services is entirely in what reads its output.
 
-**Figure 1.** The two tasks this repo solves: recognizing one digit versus recognizing several.
+**Figure 1.** Recognizing several digits — the task this service solves, on the right.
 ![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder mapping a 3-digit image through a decoder seeded with <start> to the token sequence 0 2 3 1](assets/task_overview.png)
-
-This repo implements that same split. `vit_classifier/` is the left half: one encoder, one
-label out. `vit_seq2seq/` is the right half: an encoder feeding a decoder that's seeded
-with a learned `START` token and generates one digit at a time, the same `<start>` → `0 2 3 1`
-loop the figure draws.
-
-Task 1 only needs an encoder — one image in, one label out, the classification setup from the
-original ViT paper [2]. Task 2 needs something closer to the original Transformer [1]: machine
-translation restated as "translate an image into a sequence of digit tokens," which is why it
-gets a decoder, cross-attention, and autoregressive generation. This same encoder-decoder pattern
-reappears in [the image captioning project](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning),
-where the target sequence is a natural-language caption instead of three digits.
 
 ## 2. System Architecture
 
-Before the method: here's how the shared `transformer/` building blocks, the two models, and
-the serving layer fit together.
+The encoder is the same stack the classifier uses, from the shared library. What this service adds
+is the decoder half: a causal mask, cross-attention onto the encoded image, and a generation loop
+that terminates per sequence.
 
-**Figure 2.** How the shared building blocks, the two models, and the serving layer fit together.
+**Figure 2.** From an image of three digits to the number, and where each piece lives.
 ```mermaid
 flowchart TD
-    subgraph Shared["transformer/ — shared building blocks"]
-        patchmod["PatchEmbedding"]
-        posmod["PositionalEncoding"]
-        encmod["Encoder"]
-        decmod["Decoder"]
+    subgraph lib["libs/vision-transformer (shared with vit-classifier)"]
+        patch["PatchEmbedding"]
+        pos["PositionalEncoding"]
+        enc["Encoder"]
+        dec["Decoder"]
     end
 
-    subgraph Classifier["vit_classifier/"]
-        clsmodel["VisionTransformer<br/>(encoder-only, 10-class)"]
-        clstrain["trainer.py"]
+    subgraph svc["services/vit-seq2seq"]
+        model["Seq2SeqVisionTransformer<br/>encoder-decoder, vocab 12"]
+        trainer["vit_seq2seq/trainer.py"]
+        data["datasets/multi_digit_dataset.py<br/>three digits composited per sample"]
+        api["serving/api.py<br/>POST /predict, /predict/stream"]
     end
 
-    subgraph Seq2Seq["vit_seq2seq/"]
-        s2smodel["Seq2SeqVisionTransformer<br/>(encoder-decoder, vocab=12)"]
-        s2strain["seq2seq/trainer.py"]
-    end
-
-    patchmod --> clsmodel
-    posmod --> clsmodel
-    encmod --> clsmodel
-    patchmod --> s2smodel
-    posmod --> s2smodel
-    encmod --> s2smodel
-    decmod --> s2smodel
-
-    clstrain --> clsmodel
-    s2strain --> s2smodel
-
-    clsckpt[("checkpoints/<br/>vit_cls_*_best.pth")]
-    s2sckpt[("checkpoints/<br/>vit_seq2seq_*_best.pth")]
-    clstrain --> clsckpt
-    s2strain --> s2sckpt
-
-    clsckpt --> api["FastAPI<br/>serving/api.py"]
-    s2sckpt --> api
-    api --> ui["Streamlit frontend<br/>(services/frontend)"]
-
-    style Shared fill:#e1f5fe,stroke:#01579b
-    style Classifier fill:#e8f5e8,stroke:#1b5e20
-    style Seq2Seq fill:#f3e5f5,stroke:#4a148c
+    patch --> model
+    pos --> model
+    enc --> model
+    dec --> model
+    data --> trainer --> model
+    trainer -->|"on new best"| hub[("Hugging Face Hub")]
+    hub -->|"at startup"| api
+    model --> api
+    api --> ui["Streamlit frontend"]
 ```
 
-The two models never share weights, only code (`transformer/`). `serving/api.py` loads
-both checkpoints at startup and exposes both models behind one API, so a single drawn image can be
-sent to either model or both at once for comparison.
-
-**Figure 3.** The end-to-end flow: train both models, start the API, start the UI, predict.
-```mermaid
-sequenceDiagram
-    actor Dev as Developer
-    participant CT as trainer.py
-    participant ST as seq2seq/trainer.py
-    participant API as FastAPI (serve.py)
-    participant UI as Streamlit (main.py)
-
-    Dev->>+CT: python -m vit_classifier.trainer
-    CT-->>-Dev: checkpoints/vit_cls_..._best.pth
-
-    Dev->>+ST: python -m vit_seq2seq.trainer
-    ST-->>-Dev: checkpoints/vit_seq2seq_..._best.pth
-
-    Dev->>+API: python -m serving.api
-    API->>API: load_models()
-    API-->>-Dev: Uvicorn running on :8000
-
-    Dev->>+UI: frontend (services/frontend)
-    UI-->>-Dev: UI on :8501
-
-    Dev->>UI: draw digit(s) on canvas
-    UI->>+API: POST /predict/both, image_data
-    API->>API: preprocess_image
-    API->>API: run classifier and seq2seq generate
-    API-->>-UI: vit_prediction, seq2seq_prediction
-    UI-->>Dev: render both predictions
-```
+`/predict/stream` relays each digit as a Server-Sent Event the moment the decoder emits it, so the
+frontend shows the number being read one token at a time rather than appearing at once.
 
 ## 3. Method
 
-### 3.1 Patches as Tokens
+### 3.1 The transformer blocks
 
-An image doesn't come as a sequence, so the first job is to make it look like one. I cut a 28×28
-grayscale MNIST digit into a grid of 4×4 patches (49 of them) and linearly project each flattened
-patch to a 128-dimensional vector (`transformer/patch_embedding.py`).
+Patch embedding, multi-head self-attention and the encoder block are shared with the sibling
+service and live in [`libs/vision-transformer`](../../libs/vision-transformer), which is also
+where they are explained: how an image becomes a sequence of patch tokens, how attention is
+computed, and why the block is post-norm like the original Transformer paper rather than
+pre-norm like ViT.
 
-I implemented that projection as a single strided `Conv2d(kernel=4, stride=4)` rather than a
-literal flatten-then-matmul. The two are mathematically identical; the convolution kernel does the
-sliding-window bookkeeping for free. A learnable `[CLS]` token gets prepended, sinusoidal
-positional encodings are added, and the resulting 50×128 sequence goes through six transformer
-encoder layers, the same setup as the original ViT [2]:
+What follows is what this service adds on top of them.
 
-**Figure 4.** The original Vision Transformer architecture. Figure 1 from Dosovitskiy et al., *An
-Image is Worth 16x16 Words: Transformers for Image Recognition at Scale* [2] (arXiv:2010.11929) —
-the paper this repo's classifier is built from.
-![ViT architecture: an image is split into patches, linearly projected with a prepended learnable class embedding and position embeddings, fed through a Transformer Encoder, and read out through an MLP head into a class prediction; inset shows the Transformer Encoder's internal norm, multi-head attention, and MLP blocks with residual connections](assets/vit_architecture.png)
-
-My classifier follows this diagram directly, at MNIST scale: a 28×28×1 digit is cut into 4×4
-patches (`transformer/patch_embedding.py`, the strided `Conv2d(kernel=4, stride=4)` standing
-in for "Linear Projection of Flattened Patches"), a learnable `[CLS]` token is prepended as shown,
-sinusoidal position embeddings are added, and the result goes through 6 encoder layers
-(`transformer/encoder.py`, matching the "Transformer Encoder" inset on the right: Norm →
-Multi-Head Attention → residual → Norm → MLP → residual). I simplified only the paper's `MLP
-Head`: this repo classifies from a single `Linear(128, 10)` rather than a multi-layer MLP, since
-10 MNIST digit classes need far less capacity than ImageNet's class vocabulary.
-
-### 3.2 Multi-Head Self-Attention
-
-Every encoder and decoder layer is built around the same scaled dot-product attention [1]:
-
-$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
-
-split across 8 heads (16-dim each for the classifier, 32-dim each for the seq2seq model; always
-`heads × head_dim == d_model`). The actual implementation (`transformer/attention.py`):
-
-```python
-Q = self.W_q(query).view(batch_size, q_len, self.heads, self.head_dim).transpose(1, 2)
-K = self.W_k(key).view(batch_size, k_len, self.heads, self.head_dim).transpose(1, 2)
-V = self.W_v(value).view(batch_size, k_len, self.heads, self.head_dim).transpose(1, 2)
-
-attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
-attn_scores = torch.clamp(attn_scores, min=-100, max=100)  # numerical stability
-attn_probs = torch.softmax(attn_scores, dim=-1)
-out = torch.matmul(attn_probs, V)
-```
-
-The same `MultiHeadAttention` module is reused for three different jobs depending on what's passed
-as `query`/`key`/`value`: encoder self-attention (all three are the same input), decoder masked
-self-attention (all three are the decoder's own sequence, plus a causal mask), and decoder
-cross-attention (query from the decoder, key/value from the encoder output).
-
-### 3.3 Transformer Encoder Block
-
-I built each encoder layer post-norm, matching the original Transformer [1] rather than the
-pre-norm variant common in newer models: attention (or feed-forward) output is added to the
-residual stream *before* `LayerNorm` is applied, not after.
-
-**Figure 5.** The encoder stack, cropped from the left half of Figure 1 in Vaswani et al.,
-*Attention Is All You Need* [1] (arXiv:1706.03762) — the original Transformer paper this repo's
-post-norm design follows, as opposed to ViT's own pre-norm variant shown inset in Figure 4 above.
-![Encoder stack from the original Transformer paper: Input Embedding, plus sinusoidal Positional Encoding, feeds a stack of N encoder blocks, each a Multi-Head Attention sub-layer followed by Add & Norm, then a Feed Forward sub-layer followed by Add & Norm](assets/transformer_encoder_block.png)
-
-`transformer/encoder.py` implements one of the `N×` blocks shown here: `Multi-Head Attention`
-→ residual `Add` → `LayerNorm` → `Feed-Forward (Linear → ReLU → Linear)` → residual `Add` →
-`LayerNorm`. The six stacked instances (`N=6`, matching the paper's own default) are the "encoder
-layers" referenced throughout Section 3.1 above. This is deliberately the *post-norm* arrangement
-the diagram shows (`LayerNorm` after each residual add, not before), which is why Figure 5 is
-cropped from the original Transformer paper [1] rather than reused from ViT's own architecture
-inset in Figure 4, which uses pre-norm instead.
-
-### 3.4 Sequence Decoding: Encoder–Decoder ViT
+### 3.2 Sequence Decoding: Encoder–Decoder ViT
 
 The multi-digit task can't use a fixed-size classification head, because the output is a variable
 number of digits (0 up to 999). Instead, `vit_seq2seq/seq2seq.py` pairs the same
