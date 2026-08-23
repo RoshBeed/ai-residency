@@ -1,0 +1,35 @@
+# Hyperparameter sweep for the CBOW stage.
+#
+# This replaces a hand-rolled cartesian product that lived inside the trainer: it read
+# list-valued keys out of a YAML file, expanded them itself, and ran all twelve
+# combinations back to back in one process, sequentially, with no way to stop, resume
+# or parallelise. W&B already does this properly.
+#
+#   wandb sweep sweep.yaml          # prints a sweep id
+#   make sweep SWEEP=<id>           # runs an agent against it
+#
+# `bayes` rather than `grid`: the old expansion was an exhaustive twelve runs over a
+# ~100M-token corpus, which is hours of compute to learn what a handful of informed
+# runs would. Set `--count` on the agent to bound it.
+program: python
+command:
+  - ${env}
+  - ${program}
+  - -m
+  - word_embeddings.train
+method: bayes
+metric:
+  name: epoch_loss
+  goal: minimize
+parameters:
+  # These names are the Config field names, uppercased and prefixed, because that is
+  # exactly what BaseConfig reads from the environment. The agent exports them, so no
+  # sweep-specific plumbing is needed in the trainer at all.
+  AI_RESIDENCY_CBOW_LEARNING_RATE:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  AI_RESIDENCY_CBOW_EMBED_SIZE:
+    values: [128, 256]
+  AI_RESIDENCY_CBOW_WINDOW_SIZE:
+    values: [4, 8]
