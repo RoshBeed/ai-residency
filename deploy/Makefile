@@ -1,0 +1,98 @@
+.PHONY: pull up down logs status index-week2 load-images \
+        helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
+        helm-index-week2 help
+.DEFAULT_GOAL := help
+
+# Runtime credentials for the backends and training Jobs. Read from the portfolio's
+# own .env, which sits one level up beside the repos, so nothing here or in
+# values.yaml ever holds a token. Missing is fine: the stack still runs, it just
+# cannot reach the Hub or log to W&B.
+ENV_FILE ?= ../.env
+HF_TOKEN ?= $(shell [ -f $(ENV_FILE) ] && grep -E '^HF_TOKEN=' $(ENV_FILE) | cut -d= -f2-)
+WANDB_API_KEY ?= $(shell [ -f $(ENV_FILE) ] && grep -E '^WANDB_API_KEY=' $(ENV_FILE) | cut -d= -f2-)
+export HF_TOKEN
+export WANDB_API_KEY
+
+HELM_RELEASE := ai-residency-hub
+HELM_NAMESPACE := ai-residency
+HELM_CHART := ./helm/ai-residency-hub
+HELM_SECRETS := --set-string secrets.hfToken=$(HF_TOKEN) \
+                --set-string secrets.wandbApiKey=$(WANDB_API_KEY)
+# Suffixes each training Job's name. A Job's pod template is immutable, so a second
+# run needs a new name; the epoch second is the cheapest thing that is always unique.
+TRAIN_RUN ?= $(shell date +%s)
+
+# Every image is pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), published
+# by each week repo's own `make docker-push-serve` / `docker-push-train`. The frontend
+# image is published by ai-residency-frontend. This repo only deploys them.
+
+pull: ## Pull every backend + frontend image from Docker Hub
+	docker compose pull
+
+up: ## Start every backend + the frontend
+	docker compose up -d
+	@echo "Frontend: http://localhost:8500"
+	@echo "Backends: week1-word-embeddings:8001 week1-content-scoring:8007 week2:8002 week3:8003 week4:8004 week5:8005 week6:8006"
+
+index-week2: ## One-time: populate this hub's own (independent, starts-empty) week2 redis index
+	docker compose exec week2 uv run python -m retrieval.save_doc_embeddings_to_redis
+
+helm-index-week2: ## One-time: populate the k8s cluster's own (independent, starts-empty) week2 redis index
+	kubectl exec -n $(HELM_NAMESPACE) deploy/week2 -- uv run python -m retrieval.save_doc_embeddings_to_redis
+
+down: ## Stop and remove all containers
+	docker compose down
+
+logs: ## Tail logs from every service
+	docker compose logs -f
+
+status: ## Show which backends are currently reachable (via /health)
+	@for w in 8001 8007 8002 8003 8004 8005 8006; do \
+		curl -s -o /dev/null -w "port $$w: %{http_code}\n" http://localhost:$$w/health || echo "port $$w: unreachable"; \
+	done
+
+# Docker Desktop runs its Kubernetes node as a kind container with its own containerd
+# image store. A `docker build` on the host reaches dockerd and stops there, so the
+# cluster never sees it -- and because pullPolicy is IfNotPresent, it silently keeps
+# running whatever image the node already had. No error, no event, nothing in
+# `kubectl describe` to suggest the image is months old. Run this after every rebuild.
+K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+IMAGE_TAG ?= latest
+IMAGES := $(shell grep -oE 'roshbeed/[a-z0-9.-]+' docker-compose.yml | sort -u)
+
+load-images: ## Import locally-built images into the cluster node's own image store
+	@for img in $(IMAGES); do \
+		docker image inspect $$img:$(IMAGE_TAG) >/dev/null 2>&1 || { echo "skip  $$img:$(IMAGE_TAG) (not built locally)"; continue; }; \
+		printf 'load  %s:%s\n' "$$img" "$(IMAGE_TAG)"; \
+		docker save $$img:$(IMAGE_TAG) | docker exec -i $(K8S_NODE) ctr -n k8s.io images import - >/dev/null; \
+	done
+	@echo "Roll the pods to pick them up: kubectl rollout restart deployment -n $(HELM_NAMESPACE)"
+
+helm-install: ## Install the Helm chart onto the local Kubernetes cluster
+	helm install $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) --create-namespace $(HELM_SECRETS)
+
+helm-upgrade: ## Re-apply the Helm chart after repulling images, then roll pods to pick them up
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) $(HELM_SECRETS)
+	kubectl rollout restart deployment -n $(HELM_NAMESPACE)
+
+helm-uninstall: ## Remove the Helm release (namespace itself is left in place, not deleted)
+	helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)
+
+helm-status: ## Show pod/service status for the Helm release
+	kubectl get pods,svc -n $(HELM_NAMESPACE)
+
+helm-train: ## Run a training Job on the cluster: make helm-train WEEK=week3 [EPOCHS=1]
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) $(HELM_SECRETS) \
+		--set train.enabled=true \
+		--set train.runName=$(TRAIN_RUN) \
+		--set train.only=$(WEEK) \
+		--set train.env.AI_RESIDENCY_NUM_EPOCHS=$(or $(EPOCHS),1)
+	@echo "Jobs launched. Follow with: make helm-train-logs"
+
+helm-train-logs: ## Tail whichever training Jobs are currently running
+	kubectl get jobs -n $(HELM_NAMESPACE)
+	kubectl logs -n $(HELM_NAMESPACE) -l app.kubernetes.io/name --tail=40 --prefix \
+		--selector='app.kubernetes.io/name in (week1-word-embeddings-train,week1-content-scoring-train,week2-train,week3-train,week4-train,week5-train,week6-train)'
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
