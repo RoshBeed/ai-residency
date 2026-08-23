@@ -231,18 +231,6 @@ def trainer() -> Iterator[PPOTrainer]:
 class TestTrainedPipeline:
     """Tests that need the full four-model trainer."""
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "The recorded and recomputed log-probabilities can disagree for one "
-            "element in a batch. SequenceGenerator records `state_text`, a decoded "
-            "string, and PolicyRatio re-tokenizes it -- but detokenize/retokenize is "
-            "not always a round-trip, so the 'same' state is occasionally a different "
-            "token sequence and the ratio is not 1. Carrying the state's token ids "
-            "through instead of its text is the fix; it is a change to the PPO "
-            "internals, not to plumbing, so it waits for that work."
-        ),
-    )
     def test_trainer_wires_up_every_stage(self, trainer: PPOTrainer) -> None:
         assert trainer.generator is not None
         assert trainer.reward_computer is not None
@@ -283,6 +271,18 @@ class TestTrainedPipeline:
             assert math.isfinite(pair["logprob"]), pair
             assert math.isfinite(pair["ref_logprob"]), pair
 
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "The recorded and recomputed log-probabilities can disagree for one "
+            "element in a batch. SequenceGenerator records `state_text`, a decoded "
+            "string, and PolicyRatio re-tokenizes it -- but detokenize/retokenize is "
+            "not always a round-trip, so the 'same' state is occasionally a different "
+            "token sequence and the ratio is not 1. Carrying the state's token ids "
+            "through instead of its text is the fix; it is a change to the PPO "
+            "internals, not to plumbing, so it waits for that work."
+        ),
+    )
     def test_ppo_ratio_is_one_before_any_update(self, trainer: PPOTrainer) -> None:
         """Regression test for the missing attention mask during generation.
 
