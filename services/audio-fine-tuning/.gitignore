@@ -3,7 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-/datasets/
+# Third-party corpora. EmoDB arrives as a ~40MB zip from EMODB_URL via
+# `make download-data`, annotation files and all, so committing 1,572 of them only
+# made every clone carry a copy of something one command fetches.
+datasets/
 
 # C extensions
 *.so
@@ -50,6 +53,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Ruff cache
+.ruff_cache/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -74,6 +80,7 @@ coverage.xml
 *.wav
 *.flac
 *.ogg
+*.aiff
 
 # Environment variables
 .env
@@ -97,7 +104,6 @@ env/
 
 # Model directories
 whisper_emotion_model/
-whisper_tokenizer_emotion/
 models/
 checkpoints/
 
@@ -112,6 +118,7 @@ logs/
 *.jpeg
 *.gif
 *.svg
+!assets/*.png
 
 # Data files
 *.csv
@@ -120,8 +127,21 @@ logs/
 *.hdf5
 *.h5
 
-# Dataset directories
-datasets/
+# Generated / downloaded data — regenerated or fetched, not source
+data/
 
 # Other
-*.log 
+
+# Course slides and team presentation (kept locally for reference, not committed)
+slides/
+*.pptx
+
+# Local working notes — code-hygiene findings for a later pass, not committed
+TODO.md
+ 
+# ...but the template for it is meant to be committed.
+!.env.example
+
+# Local Weights & Biases run directories — build output, not source. This repo was
+# the only one missing the rule, so 13 run files were committed by accident.
+wandb/

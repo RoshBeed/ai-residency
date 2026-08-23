@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+#
+# Serving (inference) image — the container Kubernetes runs. FROM roshbeed/ai-residency-base;
+# see Dockerfile.train for why this never needs a git credential either.
+#
+# ffmpeg is the real system binary openai-whisper shells out to for audio decoding —
+# the pip package of the same name is unrelated and does not provide it. ai-residency-base
+# does not install it (it's Week 5-specific), so it's added here.
+#
+# Build: docker build -f Dockerfile.serve -t ai-residency-week5-serve .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+EXPOSE 8000
+CMD ["uv", "run", "python", "-m", "serving.api"]
