@@ -1,0 +1,85 @@
+[project]
+name = "ai-residency-common"
+version = "0.7.3"
+description = "Shared helpers for the AI Residency portfolio: device, logging, checkpoints, config, Hub, tracking"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "fastapi>=0.100",
+    "huggingface-hub>=0.24",
+    # numpy is not imported directly here, but torch warns loudly on every import
+    # without it, which would show up in all six consuming repos' logs.
+    "numpy>=1.26",
+    # `decode_image` decodes base64 payloads into PIL images for the serving APIs.
+    "pillow>=9.0",
+    # Credentials reach training through a .env file rather than a shell profile.
+    "python-dotenv>=1.0",
+    "torch>=2.0",
+    "wandb>=0.17",
+]
+
+[project.urls]
+Homepage = "https://github.com/RoshBeed/ai-residency-common"
+Repository = "https://github.com/RoshBeed/ai-residency-common.git"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ai_residency_common*"]
+
+[tool.setuptools.package-data]
+ai_residency_common = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# Canonical lint/type config for the whole portfolio.
+# This block is copied verbatim into all six week repos (only `target-version`
+# and `python_version` track the repo's own floor, which is the same 3.11).
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import sorting (replaces isort)
+    "N",   # pep8-naming — enforces the naming spec
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+# `import torch.nn.functional as F` is the universal PyTorch idiom; N812 objects to
+# it in every repo, so it is waived once here rather than per file.
+ignore = ["N812"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+
+# uvicorn is imported lazily inside `run_app` and ships no stubs.
+[[tool.mypy.overrides]]
+module = ["uvicorn.*"]
+ignore_missing_imports = true
