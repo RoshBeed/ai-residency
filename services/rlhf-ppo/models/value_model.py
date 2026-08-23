@@ -1,25 +1,52 @@
-import torch.nn as nn
-from .base_model import BaseModel
+"""The value model: predicts the return from a state."""
+
+import torch
+from torch import nn
+
+from base_setup import BaseModelSetup
+from models.base_model import BaseModel
+
+__all__ = ["ValueModel"]
+
 
 class ValueModel(BaseModel):
-    """Value Model - Predicts value estimates for states"""
-    
-    def __init__(self, base_model_setup):
+    """Estimates V(s), the expected return from a partially generated sequence.
+
+    A scalar head on top of the last real token's hidden state. Its predictions are
+    what the TD errors and therefore the advantages are computed against, so it is
+    trained on reward-to-go targets in the same PPO step that uses it.
+    """
+
+    def __init__(self, base_model_setup: BaseModelSetup) -> None:
+        """Build the wrapped model and its scalar head.
+
+        Args:
+            base_model_setup: The shared factory to build the base model from.
+        """
         super().__init__(base_model_setup)
-        hidden_size = self.model.config.hidden_size
-        self.value_head = nn.Linear(hidden_size, 1)
-    
-    def forward(self, input_ids, attention_mask):
+        self.value_head = nn.Linear(self.model.config.hidden_size, 1)
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        """Return one value estimate per sequence in the batch.
+
+        Args:
+            input_ids: Token ids, left-padded.
+            attention_mask: Mask marking real tokens against padding.
+
+        Returns:
+            A value estimate per sequence, shaped (batch,).
+        """
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
-            return_dict=True
+            return_dict=True,
         )
         last_hidden = outputs.hidden_states[-1]
-        # Get the last token's hidden state
-        last_token_idx = attention_mask.sum(dim=1) - 1
-        last_token_idx = last_token_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, last_hidden.size(-1))
-        last_hidden_state = last_hidden.gather(1, last_token_idx).squeeze(1)
-        value = self.value_head(last_hidden_state).squeeze(-1)
-        return value 
+        # Read the hidden state of the last *real* token, which is not the last
+        # position once anything in the batch is padded.
+        last_index = attention_mask.sum(dim=1) - 1
+        gather_index = last_index.unsqueeze(1).unsqueeze(2).expand(-1, 1, last_hidden.size(-1))
+        last_token_hidden = last_hidden.gather(1, gather_index).squeeze(1)
+        value: torch.Tensor = self.value_head(last_token_hidden).squeeze(-1)
+        return value

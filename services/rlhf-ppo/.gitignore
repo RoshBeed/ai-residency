@@ -38,6 +38,9 @@ venv.bak/
 # Pytest
 .cache
 
+# Ruff cache
+.ruff_cache/
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -64,7 +67,6 @@ venv.bak/
 # Lock files
 poetry.lock
 Pipfile.lock
-uv.lock
 
 # Ignore data files
 *.csv
@@ -85,5 +87,21 @@ uv.lock
 *.ckpt
 *.onnx
 
+# Model artifacts — pushed to / pulled from HuggingFace instead
+checkpoints/
+
 # Ignore large datasets
-/data/ 
+/data/
+
+# Course slides and team presentation (kept locally for reference, not committed)
+slides/
+*.pptx
+
+# Local working notes — code-hygiene findings for a later pass, not committed
+TODO.md
+ 
+# Weights & Biases offline run directory
+wandb/
+
+# ...but the template for it is meant to be committed.
+!.env.example

@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+#
+# Serving (inference) image — the real FastAPI generation service, what the
+# portfolio hub talks to. This repo has no trained PPO checkpoint (see the
+# Experimental Results section of the write-up), so this loads a freshly
+# LoRA-initialized PolicyModel — an honest generation-only demo, not a fabricated
+# "serve" step. FROM roshbeed/ai-residency-base; see Dockerfile.train for why this never
+# needs a git credential either.
+#
+# Build: docker build -f Dockerfile.serve -t ai-residency-week6-serve .
+
+ARG BASE_IMAGE=roshbeed/ai-residency-base:local
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY . .
+RUN uv sync --frozen
+
+EXPOSE 8000
+CMD ["uv", "run", "python", "-m", "serving.api"]

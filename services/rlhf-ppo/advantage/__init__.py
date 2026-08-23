@@ -1,5 +1,7 @@
-from .td_error import TDError
-from .gae_advantage import GAEAdvantage
-from .return_calculator import ReturnCalculator
- 
-__all__ = ['TDError', 'GAEAdvantage', 'ReturnCalculator'] 
+"""Advantage estimation: TD errors, GAE and reward-to-go."""
+
+from advantage.gae_advantage import GAEAdvantage
+from advantage.return_calculator import ReturnCalculator
+from advantage.td_error import TDError
+
+__all__ = ["GAEAdvantage", "ReturnCalculator", "TDError"]
