@@ -6,10 +6,6 @@ __pycache__/
 # C extensions
 *.so
 
-
-
-text8
-
 # Distribution / packaging
 .Python
 env/
@@ -71,6 +67,12 @@ coverage.xml
 # Pyre type checker
 .pyre/
 
+# Ruff cache
+.ruff_cache/
+
+# Model checkpoints — pushed to / pulled from HuggingFace instead of committed
+checkpoints/
+
 # Data, models, and large files
 *.pkl
 *.json
@@ -111,6 +113,7 @@ coverage.xml
 *.bmp
 *.tiff
 *.svg
+!assets/*.png
 
 # Ignore wandb logs
 wandb/
@@ -123,4 +126,7 @@ wandb/
 
 # Other
 *.swp
-*~ 
+*~
+
+# Local working notes — code-hygiene findings for a later pass, not committed
+TODO.md 

@@ -1,0 +1,20 @@
+# W&B sweep over the tower hyperparameters. Every key here is a field on
+# `Config` in config.py, so a sweep
+# and a plain `make train` configure the same object.
+#
+# `num_triples` used to be listed here and in the trainer's default config. Nothing
+# ever read it — the loop always used every triple — so it is gone rather than left
+# looking like a knob that does something.
+method: random
+metric:
+  name: trained_val_pairwise_accuracy
+  goal: maximize
+parameters:
+  learning_rate:
+    values: [0.001, 0.0005, 0.0001, 0.00005]
+  margin:
+    values: [0.1, 0.15, 0.2, 0.25, 0.3]
+  num_epochs:
+    value: 10
+  hidden_size:
+    values: [64, 128, 256]

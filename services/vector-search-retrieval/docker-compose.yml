@@ -1,0 +1,61 @@
+# redis and serve start by default; train is run on demand and profile-gated so a plain
+# `docker compose up` never kicks off a training run. Both serve and train build FROM
+# roshbeed/ai-residency-base — build that locally first with `make docker-build-base` in
+# ai-residency-repo-template (or pull it once it's published).
+#
+# Only checkpoints/ and data/ are bind-mounted, not the whole repo. Both are gitignored
+# and hold artifacts the images cannot rebuild, while everything else the containers need
+# is already baked in by `COPY . .`.
+#
+# The interactive query CLI (`query_redis_ann.py`) isn't a Compose service — it needs an
+# attached tty and is a local-only `make query` target instead.
+services:
+  redis:
+    image: redis/redis-stack-server:latest
+    command: ["redis-stack-server", "--save", "", "--appendonly", "no"]
+    ports: ["6390:6379"]
+
+  serve:
+    build:
+      context: .
+      dockerfile: Dockerfile.serve
+    depends_on: [redis]
+    ports: ["8000:8000"]
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
+    environment:
+      # Serving pulls a checkpoint from the Hub when the container has no local
+      # one, so the token belongs here too, not only on train.
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      LOG_LEVEL: INFO
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+
+  train:
+    profiles: [train]
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    depends_on: [redis]
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
+    environment:
+      LOG_LEVEL: INFO
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      HF_TOKEN: ${HF_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    # No GPU reservation: the towers train one triple at a time and are CPU-only here.
+    # Uncomment on a real GPU host.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
