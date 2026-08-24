@@ -61,17 +61,17 @@ without editing every service that mounts the cache. Anything else is taken lite
 {{- $ctx := .ctx -}}
 {{- $vol := .vol -}}
 {{- if eq ($vol.kind | default "") "hfCache" -}}
-{{- if eq $ctx.Values.hfCache.mode "pvc" }}
+{{- if eq $ctx.Values.hfCache.mode "pvc" -}}
 persistentVolumeClaim:
   claimName: {{ required "hfCache.claimName is required when hfCache.mode is pvc" $ctx.Values.hfCache.claimName }}
-{{- else if eq $ctx.Values.hfCache.mode "hostPath" }}
+{{- else if eq $ctx.Values.hfCache.mode "hostPath" -}}
 hostPath:
-  path: {{ tpl $ctx.Values.hfCache.hostPath $ctx }}
+  path: {{ required "hfCache.hostPath is required when hfCache.mode is hostPath" (tpl $ctx.Values.hfCache.hostPath $ctx) }}
   type: DirectoryOrCreate
-{{- else }}
+{{- else -}}
 emptyDir: {}
 {{- end }}
-{{- else }}
+{{- else -}}
 hostPath:
   path: {{ tpl $vol.hostPath $ctx }}
   type: {{ $vol.type }}

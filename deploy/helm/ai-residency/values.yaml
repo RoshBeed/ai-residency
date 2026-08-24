@@ -9,19 +9,30 @@
 # from the Hugging Face Hub at startup. The model and dataset repos are public, so a
 # release installed with no credentials at all still comes up and serves.
 
-# The Hugging Face model cache on the *node's* filesystem, mounted by the three services
-# whose backbones are large enough that re-downloading them on every pod restart hurts.
-# It is a convenience, not a dependency -- an empty cache just means a slower cold start.
+# Where the three services with large backbones keep the Hugging Face cache. It is a
+# convenience, not a dependency: an empty cache means a slower cold start, nothing more.
 #
-# This is a hostPath, which ties those three to a single-node cluster (it is verified
-# against Docker Desktop's built-in Kubernetes, whose node filesystem is the Mac's).
-# On a real multi-node cluster, point them at a PersistentVolumeClaim instead:
+# The default is an emptyDir -- per pod, discarded on restart. That is the only mode
+# that is correct everywhere, and it matches what the rest of this portfolio already
+# assumes: the runtime is ephemeral and every artifact is resolved from the Hub at
+# startup.
+#
+# hostPath is faster on a single-node cluster but comes with a real constraint, found
+# by deploying: the pods run as UID 1000, fsGroup does not apply ownership to hostPath
+# volumes, and a cache directory owned by root is then readable but not writable. That
+# fails only when the cache misses -- so it appears to work on a machine whose cache is
+# already warm and breaks on a fresh one. Use it only with a directory the pod's UID
+# owns:
+#
+#   mkdir -p /srv/hf-cache && sudo chown -R 1000:1000 /srv/hf-cache
+#   helm upgrade ... --set hfCache.mode=hostPath --set hfCache.hostPath=/srv/hf-cache
+#
+# On a real cluster use a PersistentVolumeClaim, which does honour fsGroup:
 #   --set hfCache.mode=pvc --set hfCache.claimName=<your-claim>
 hfCache:
-  # "hostPath" (single-node, the default) or "pvc" (any cluster), or "none" to run with
-  # no cache at all and let every pod download its own copy.
-  mode: hostPath
-  hostPath: /Users/rosh/.cache/huggingface
+  # "none" (an emptyDir per pod, the default), "hostPath", or "pvc".
+  mode: none
+  hostPath: ""
   claimName: ""
 
 image:
@@ -38,7 +49,7 @@ image:
   pullPolicy: IfNotPresent
   # Pinned to a commit rather than `latest`: one tag names the exact set built
   # and verified together. `--set image.tag=latest` tracks the tip instead.
-  tag: sha-322314c548a6efe819cc4f9c18c4601edd48b5a1
+  tag: sha-8e0e1c1c09db44cede681e639d673c9a1719c74e
 
 # Credentials, mounted into every backend and every training Job as environment.
 # Deliberately empty here: `make helm-install` / `helm-upgrade` fill them with

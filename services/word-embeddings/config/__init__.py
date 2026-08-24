@@ -56,7 +56,7 @@ class Config(BaseConfig):
     # corpus stage cannot simply fetch or regenerate — which used to make committing
     # it the only option.
     hf_dataset_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-data"
-    wandb_project: str | None = "ai-residency-week1-word-embeddings"
+    wandb_project: str | None = "ai-residency-word-embeddings"
 
     @property
     def cbow_checkpoint_dir(self) -> Path:

@@ -1,5 +1,5 @@
 [project]
-# Rename to ai-residency-week<N>-<slug> when this template is instantiated.
+# Rename to ai-residency-<service-name> when this template is instantiated.
 name = "ai-residency-template"
 version = "0.1.0"
 description = "Template for the AI Residency portfolio repos"

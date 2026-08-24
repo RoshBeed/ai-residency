@@ -145,7 +145,7 @@ class Config(BaseConfig):
     # are fixtures rather than a dataset, but they are still data, and data does not
     # belong in git.
     hf_dataset_repo_id: str | None = "roshbeed/ai-residency-multimodal-captioning-data"
-    wandb_project: str | None = "ai-residency-week4-multimodal-captioning"
+    wandb_project: str | None = "ai-residency-multimodal-captioning"
 
     checkpoint_dir: Path = field(default_factory=lambda: Path("checkpoints"))
     data_dir: Path = field(default_factory=lambda: Path("data"))

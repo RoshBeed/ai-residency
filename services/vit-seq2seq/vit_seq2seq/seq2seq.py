@@ -229,7 +229,7 @@ class Seq2SeqVisionTransformer(nn.Module):
         # generating sequence in the batch: one fast-finishing row dragged the rest
         # down with it. That corrupted every batched evaluation while leaving the
         # single-image API path (batch_size 1, where "any" and "all" agree) correct,
-        # so it hid in plain sight. `tests/test_week3.py` guards the fix.
+        # so it hid in plain sight. `tests/test_vit_seq2seq.py` guards the fix.
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
         for _ in range(max_length - 1):

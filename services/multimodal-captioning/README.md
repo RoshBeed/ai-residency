@@ -229,7 +229,7 @@ checkpoints/
 ├── adapter_trained.pth            10 local images / 20 epochs, one- and two-word captions
 └── adapter_flickr_batched.pth     100 Flickr30k pairs / 3 epochs, batch size 8 — best of the three
 data/images/             10 sample photos (cat, dog, horse, bird, car, person, tree, house, book, phone)
-tests/test_week4.py      Tests for the adapter, data pipeline, and serving path
+tests/test_multimodal_captioning.py   Tests for the adapter, data pipeline, and serving path
 pyproject.toml / uv.lock Dependencies, lint/type config, and a CPU-only torch index
 ```
 

@@ -1,6 +1,6 @@
 """Load the frozen CBOW embeddings this repo's scoring head consumes.
 
-The word vectors are trained in the sibling `ai-residency-week1-word-embeddings`
+The word vectors are trained in the sibling `word-embeddings` service
 repo and published to the Hugging Face Hub; this repo pulls them back down and reads
 the vocabulary out of the checkpoint alongside the weights. The vocabulary travels
 inside the checkpoint so the mapping cannot drift from the matrix it indexes.

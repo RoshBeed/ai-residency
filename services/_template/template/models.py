@@ -1,6 +1,6 @@
 """Model definitions.
 
-One model class per file section, named for what it is rather than for the week it
+One model class per file section, named for what it is rather than for the exercise it
 came from. A real repo replaces this with its own architecture.
 """
 

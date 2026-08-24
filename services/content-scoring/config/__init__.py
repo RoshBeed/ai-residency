@@ -1,7 +1,7 @@
 """Run configuration.
 
 The scoring stage depends on word embeddings trained in the sibling
-`ai-residency-week1-word-embeddings` repo: the frozen CBOW vectors (and the
+`word-embeddings` service: the frozen CBOW vectors (and the
 vocabulary that indexes them) are pulled from that repo's Hugging Face repo rather
 than reproduced here. Only the regression head's own hyperparameters live in this
 repo.
@@ -50,7 +50,7 @@ class Config(BaseConfig):
     # Postgres mirror that is not reachable from every network, so they are the one
     # input this repo cannot simply fetch or regenerate.
     hf_dataset_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-data"
-    wandb_project: str | None = "ai-residency-week1-content-scoring"
+    wandb_project: str | None = "ai-residency-content-scoring"
 
     @property
     def info_path(self) -> Path:

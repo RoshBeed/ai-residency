@@ -781,7 +781,9 @@ class WikiPipeline(BasePipeline):
     def __init__(self, output_dir: str = "data") -> None:
         super().__init__(output_dir)
         self.text_processor = TextProcessor()
-        self.text8_url = "https://huggingface.co/datasets/roshbeed/ai-residency-text8/resolve/main/text8"
+        self.text8_url = (
+            "https://huggingface.co/datasets/roshbeed/ai-residency-text8/resolve/main/text8"
+        )
         self.text8_path = os.path.join(output_dir, "text8")
 
     def get_data(self) -> str:

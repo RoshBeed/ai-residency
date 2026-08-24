@@ -64,13 +64,36 @@ correctly end to end. Untrained or weakly-trained checkpoints are expected, not 
 service that starts, reports `checkpoint_loaded: false` and answers 503 honestly is *passing*.
 Verify wiring, not accuracy; don't propose training runs as the next step.
 
+**`/health` and `/ready` are different endpoints, and must stay different.** `/health` is
+liveness — always 200, so a slow or missing checkpoint never restarts a pod. `/ready` is
+readiness — 503 until the service can actually serve, so an unusable pod is kept out of its
+Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.serving`; never
+hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
+probe that cannot fail, which is the same as having none.
+
+**Containers run as UID 1000, not root.** `Dockerfile.base` creates the `app` user; every service
+Dockerfile chowns its own directory and ends with `USER app`. The chart's
+`securityContext.runAsUser` is the same 1000, and it has to be — Kubernetes overrides the image's
+USER, so a mismatch produces a container that starts and then cannot write.
+
 **Verify by running, not reading.** Nearly every real bug in this repo was found by making an
 actual request, not by inspecting code — a service that builds, starts and passes `/health` can
 still 500 on the first real call. Health checks are not verification.
 
+**CI runs every image before it publishes it.** The publish job builds native amd64 into the
+runner's docker with `load: true`, smoke-tests it, and only then does the multi-arch push. The
+smoke test asserts the container is non-root, that `/health` *and* `/ready` are both registered,
+and that the working directory is writable by that user. Those are the three ways a change here
+builds green and fails at runtime: a `USER` whose file ownership is wrong, and a dropped route
+that turns every readiness probe into a permanent 404. It deliberately does not start the server
+— several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
+imports the app and reads its route table instead.
+
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
-there are twelve images). CI pushes the serving base and the nine `-serve` images on every push to
+there are twelve images). CI pushes the serving base and *all ten* service images on every push to
 `main`, gated behind the `PUBLISH_IMAGES` repository variable and the `DOCKERHUB_TOKEN` secret.
+Publishing deliberately ignores the path filter that narrows the checks: one `sha-<commit>` tag has
+to name a complete set, or pinning it in `deploy/` describes something the registry cannot serve.
 
 Training images go through the separate `Publish training images` workflow, run on demand: they are
 ~9GB each, and the base plus one service does not fit in a runner's default free disk, so that
@@ -101,6 +124,10 @@ those builds are native rather than the slow emulation a Mac would do.
   its objects deleted by the tail of the previous release — a reinstall once came up with all
   eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
+- **buildx resolves a base-image tag against the registry, not the local store.** `make base`
+  followed by `make build SERVICE=x` silently built against the *published* base until the Makefile
+  started passing `--build-arg BASE_IMAGE=` explicitly. Same class of trap as the kind node's
+  separate image store, one layer up.
 - **`AI_RESIDENCY_<FIELD>` overrides any `Config` field** — `AI_RESIDENCY_NUM_EPOCHS=1` for a smoke
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.
 - **Docker Desktop's VM goes read-only when the host disk fills**, and stays read-only until the VM
@@ -124,16 +151,21 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 
 ## State
 
-CI is one path-filtered workflow: lint, then per-service mypy and pytest, then a publish job gated
-behind a `PUBLISH_IMAGES` repository variable. 147 tests.
+CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
+publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
+then a Trivy scan of the published base whose results go to the Security tab. 182 tests.
+
+Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
+`make build` exist so a change to a Dockerfile can be exercised before it is pushed.
+
+`services/frontend` is now four modules plus the page flow: `projects.py` (metadata), `theme.py`
+(logo and CSS), `components.py` (pure display helpers) and `client.py` (one `call()` returning
+ok / not_ready / failed). None of the four imports Streamlit, which is what makes them testable —
+`app.py` still runs its page flow at import.
 
 Open:
-- `services/frontend` has no tests. `app.py` runs its whole page flow at import, so its display
-  helpers cannot be imported without a Streamlit runtime; extracting them into a module is the fix,
-  and worth doing — strict typing already found a real bytes/str bug in there. CI warns rather than
-  failing on a service with no `tests/`.
-- `speech-emotion-recognition` has no trained checkpoint, so it answers 503. Its pipeline, trainer
-  and API are wired and verified.
+- `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
+  pipeline, trainer and API are wired and verified.
 - `rlhf-ppo` has one `xfail`: the PPO ratio can differ for one element because the generator
   records the state as decoded text and the ratio re-tokenizes it, and detokenize/retokenize is not
   always a round-trip. Carrying token ids through is the fix — PPO internals, so it waits.
