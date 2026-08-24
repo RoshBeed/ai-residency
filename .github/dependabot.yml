@@ -1,0 +1,21 @@
+# Dependency updates, weekly.
+#
+# `uv` is not a Dependabot-supported ecosystem, so the Python dependencies in uv.lock
+# are not covered here -- they are pinned deliberately and bumped with `uv lock`. What
+# Dependabot does cover is the part that otherwise silently rots: the GitHub Actions
+# pinned by tag in the workflows, and the Docker base images pinned by digest.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /services/frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
