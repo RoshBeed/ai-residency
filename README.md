@@ -74,9 +74,14 @@ ai-residency/
 └── Makefile              install / check / build / push, dispatching on SERVICE=
 ```
 
-Every service is independently deployable — its own image, its own Deployment, its own memory
-limits. What it is *not* is independently versioned: one commit tags every image, and
-`deploy/` pins that tag, so the whole system is reproducible from a single identifier.
+Every service is independently deployable — its own image, its own Deployment, its own resource
+limits. What it is *not* is independently versioned: every push to `main` publishes **all ten**
+images under one `sha-<commit>` tag, and `deploy/` pins that tag, so the whole system is
+reproducible from a single identifier. CI narrows *checks* to what changed; it deliberately does
+not narrow publishing, because a tag that names only some of the images is not a deployable set.
+
+Containers run as an unprivileged user (UID 1000), and the chart sets a matching
+`securityContext` — `runAsNonRoot`, no privilege escalation, all capabilities dropped.
 
 ## Running it
 
@@ -86,14 +91,29 @@ make check                                # ruff, strict mypy, pytest, every ser
 make serve SERVICE=vit-classifier         # one backend on :8000
 ```
 
-The whole stack. Images are not published yet, so build them locally first — the same
-`roshb/…:latest` names compose and the Helm chart already reference:
+Every backend exposes two endpoints that a deployment cares about, from one shared helper in
+`libs/common`:
+
+| | meaning | answers |
+|---|---|---|
+| `/health` | the process is up | always 200 — a missing checkpoint must not restart a pod |
+| `/ready` | this instance can serve | **503** until weights are loaded, so an unusable pod stays out of the load balancer |
+
+The chart points `livenessProbe` at the first and `readinessProbe` at the second. Pointing both
+at `/health` gives a readiness probe that cannot fail, which is the same as having none.
+
+The whole stack. CI builds, smoke-tests and publishes every image, so `make up` below pulls what
+it needs and nothing has to be built first. The targets below are for exercising a Dockerfile
+change locally before pushing it:
 
 ```bash
 make base        # roshb/ai-residency-base-serve (CPU)
 make base-train  # roshb/ai-residency-base-train (CUDA)
 for s in $(ls services | grep -vE '^(_template)$'); do make build SERVICE=$s; done
 ```
+
+`make build` passes the base it just built as `--build-arg BASE_IMAGE=`, because buildx otherwise
+resolves that tag against the registry and silently builds against the published base instead.
 
 Serving images carry the CPU build of torch — ~1.6GB, and the right thing for a Kubernetes node.
 Training images add the CUDA build on top and target `linux/amd64`, since they run on a rented
@@ -123,7 +143,8 @@ Copy `services/_template/` to `services/<name>/`, rename its package directory a
 passes its own checks — so the copy runs before you have changed anything.
 
 Everything else picks it up on its own: `SERVICES` in the Makefile is derived from the directory
-listing, CI's matrix from the same, and the Dockerfiles copy manifests by glob.
+listing, CI's matrix from the same, the Dockerfiles copy manifests by glob, and ruff's `src` roots
+are globs rather than an enumerated list.
 
 ---
 
