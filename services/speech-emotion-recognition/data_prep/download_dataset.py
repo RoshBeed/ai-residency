@@ -1,6 +1,6 @@
 """Fetch the raw speech-emotion corpora.
 
-The three corpora this week names are not equally obtainable, and that asymmetry is
+The three corpora named here are not equally obtainable, and that asymmetry is
 the reason this stage exists as its own step:
 
 - **EmoDB** downloads directly as a ~40MB zip with no authentication. It is the only

@@ -29,6 +29,24 @@ wandb/
 services/whisper-fine-tuning/datasets/
 services/speech-emotion-recognition/datasets/
 
+# Model and audio artifacts, wherever they land. Previously each service carried its
+# own ~120-line copy of a gitignore for this, nine near-identical files in a repo whose
+# root pyproject.toml opens by explaining why copy-pasted config was consolidated. Two
+# of those copies were also wrong at that level: a blanket `*.json` would eventually
+# eat a config file, and `.python-version` was ignored while the root deliberately
+# pins it.
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npy
+*.npz
+*.pkl
+*.wav
+*.mp3
+*.flac
+*.m4a
+
 .DS_Store
 
 # setuptools build metadata
