@@ -11,9 +11,9 @@ variable "instance_type" {
 }
 
 variable "spot_price" {
-  description = "Maximum spot price to pay for the instance (in USD per hour)"
+  description = "Maximum hourly USD to bid for the spot instance. Empty (the default) bids the on-demand price, which is what AWS recommends: you still pay the current spot price, but the request is not silently unfulfillable when the market sits above a hardcoded cap."
   type        = string
-  default     = "0.50" # $0.50 per hour max
+  default     = ""
 }
 
 variable "volume_size" {
@@ -22,11 +22,34 @@ variable "volume_size" {
   default     = 100
 }
 
+variable "allowed_ssh_cidr" {
+  description = "CIDR allowed to reach port 22. Defaults to nothing: SSH is opt-in, and opening it to 0.0.0.0/0 exposes the box to the internet's background scanning within minutes. Pass your own address as a /32, e.g. \"203.0.113.7/32\" (`curl -s ifconfig.me`). Leave empty and reach the instance with SSM Session Manager instead, which needs no inbound rule at all."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.allowed_ssh_cidr != "0.0.0.0/0"
+    error_message = "Refusing to open SSH to the whole internet. Pass your own address as a /32, or leave this empty and use SSM Session Manager."
+  }
+}
+
+variable "ssh_key_name" {
+  description = "Name of an existing EC2 key pair to attach, for SSH access. Empty (the default) attaches none, which is correct when reaching the instance through SSM Session Manager."
+  type        = string
+  default     = ""
+}
+
 variable "ssh_key_path" {
   description = "Path to the SSH private key file for accessing the instance"
   type        = string
   default     = "~/.ssh/id_rsa"
 }
+
+# The three secrets below are written to SSM Parameter Store as SecureString, and the
+# instance reads them at boot through its IAM role. They are deliberately NOT passed
+# through user_data: user_data is readable by any process on the box via the instance
+# metadata service, and by anyone holding ec2:DescribeInstanceAttribute, so a secret
+# placed there is a secret handed to everything running on that host.
 
 variable "hf_token" {
   description = "Hugging Face API token. Training pushes its checkpoint here itself (see ai-residency-common's push_checkpoint) -- this module does not re-upload it separately."
@@ -47,7 +70,7 @@ variable "train_image" {
 }
 
 variable "train_command" {
-  description = "Overrides the image's own default training entrypoint, e.g. \"seq2seq\" for Week 3's second trainer, or a full module path for a week whose default stage isn't the one you want. Empty string (the default) runs the image's own default CMD."
+  description = "Overrides the image's own default training entrypoint, e.g. a full module path for a service whose default stage isn't the one you want. Empty string (the default) runs the image's own default CMD."
   type        = string
   default     = ""
 }
@@ -75,4 +98,16 @@ variable "environment" {
   description = "Environment name for tagging"
   type        = string
   default     = "training"
+}
+
+variable "parameter_prefix" {
+  description = "SSM Parameter Store path the three training secrets are written to and read back from, without leading or trailing slashes."
+  type        = string
+  default     = "ai-residency/training"
+}
+
+variable "ubuntu_ami_name" {
+  description = "AMI name filter, pinned to one published build rather than tracking the newest. Bump deliberately; `aws ec2 describe-images --owners 099720109477 --filters 'Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-22.04-amd64-server-*' --query 'sort_by(Images,&CreationDate)[-1].Name'` prints the current tip."
+  type        = string
+  default     = "ubuntu/images/hvm-ssd/ubuntu-22.04-amd64-server-20240927"
 }

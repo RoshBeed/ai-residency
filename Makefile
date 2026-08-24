@@ -5,7 +5,9 @@
 # Every member of the workspace. Derived from the directory listing, so a new
 # service is picked up the moment its directory exists.
 SERVICES := $(notdir $(patsubst %/,%,$(dir $(wildcard services/*/pyproject.toml))))
-CHECKABLE := $(filter-out frontend,$(SERVICES))
+# Every service has a test suite, the frontend included -- it used to be excluded here
+# because it had none, which is what let it drift furthest from the rest of the repo.
+CHECKABLE := $(SERVICES)
 
 # Narrow any target to one member: `make test SERVICE=word-embeddings`.
 # Unset means all of them.
@@ -60,22 +62,58 @@ check: lint typecheck test ## Everything CI runs
 # is slow enough that CI or the GPU box itself is the right place for it.
 TRAIN_PLATFORM ?= linux/amd64
 
+# Each base is tagged twice: once under the registry name (what gets pushed) and once
+# under `local/` (what the service builds actually consume). The second tag is not
+# cosmetic. buildx resolves any registry-qualified `FROM` against the registry, so a
+# freshly built roshb/ai-residency-base-serve:latest is ignored in favour of the
+# published one -- silently, since the published image is perfectly valid. `local/...`
+# exists nowhere upstream, so there is nothing to resolve to but the image on this
+# machine. Same trap as the kind node's separate image store, one layer up.
+LOCAL_BASE       := local/ai-residency-base-serve:$(IMAGE_TAG)
+LOCAL_BASE_TRAIN := local/ai-residency-base-train:$(IMAGE_TAG)
+
 base: ## Build the CPU base image every serving image builds FROM
-	docker build -f Dockerfile.base -t $(REGISTRY)/ai-residency-base-serve:$(IMAGE_TAG) .
+	docker build -f Dockerfile.base \
+		-t $(REGISTRY)/ai-residency-base-serve:$(IMAGE_TAG) -t $(LOCAL_BASE) .
 
 base-train: ## Build the CUDA base image every training image builds FROM
 	docker build --platform $(TRAIN_PLATFORM) -f Dockerfile.base \
 		--build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu126 \
 		--build-arg TORCH_LOCAL=+cu126 \
-		-t $(REGISTRY)/ai-residency-base-train:$(IMAGE_TAG) .
+		-t $(REGISTRY)/ai-residency-base-train:$(IMAGE_TAG) -t $(LOCAL_BASE_TRAIN) .
+
+# Default to the local-only tags, so `make base && make build SERVICE=x` builds against
+# the base you just built rather than the published one. CI overrides both with the
+# registry name at that commit's sha- tag, which is what makes a published image
+# reproducible from a single identifier.
+#
+#   make build SERVICE=x BASE_IMAGE=roshb/ai-residency-base-serve:sha-abc123
+BASE_IMAGE ?= $(LOCAL_BASE)
+BASE_TRAIN_IMAGE ?= $(LOCAL_BASE_TRAIN)
 
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)
 	docker build -f services/$(SERVICE)/Dockerfile.serve \
+		$(if $(filter frontend,$(SERVICE)),,--build-arg BASE_IMAGE=$(BASE_IMAGE)) \
 		-t $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG) .
-	@test -f services/$(SERVICE)/Dockerfile.train && \
+	@# `if`, not `test -f ... && docker build ... || true`. Shell precedence applies
+	@# that trailing `|| true` to the whole && list, so a training image that failed
+	@# to build exited 0 and this target reported success -- which is exactly how a
+	@# broken build went unnoticed until someone tried to run the image.
+	@#
+	@# A *missing* CUDA base is skipped rather than failed, though: it is a ~10GB
+	@# emulated build that a laptop rarely wants, and CI and the GPU host are where
+	@# training images are actually built. A base that IS present and a build that
+	@# then breaks still fails, which is the case worth catching.
+	@if [ ! -f services/$(SERVICE)/Dockerfile.train ]; then \
+		echo "services/$(SERVICE) has no Dockerfile.train; skipping the training image"; \
+	elif ! docker image inspect $(BASE_TRAIN_IMAGE) >/dev/null 2>&1; then \
+		echo "$(BASE_TRAIN_IMAGE) is not built; skipping the training image (run 'make base-train' first)"; \
+	else \
 		docker build --platform $(TRAIN_PLATFORM) -f services/$(SERVICE)/Dockerfile.train \
-			-t $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG) . || true
+			--build-arg BASE_IMAGE=$(BASE_TRAIN_IMAGE) \
+			-t $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG) . ; \
+	fi
 
 push: ## Push a service's images: make push SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make push SERVICE=<name>" && exit 1)

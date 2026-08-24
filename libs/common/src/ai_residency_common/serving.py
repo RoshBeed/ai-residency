@@ -10,15 +10,26 @@ Three things the six repos used to each write themselves:
 
 Plus the base64 binary-input decoding every backend that takes an image or
 audio clip repeats: decode, wrap the failure as an HTTP error.
+
+And ``add_health_routes``, which owns the liveness/readiness contract for every
+backend. Splitting those two is not cosmetic. Every service used to expose one
+``/health`` that answered 200 unconditionally and reported the checkpoint state
+in the body, which meant a Kubernetes ``readinessProbe`` pointed at it could
+never fail: a pod with no weights was marked Ready, joined the Service
+endpoints, and 503'd every request it was sent -- the exact failure the probe
+exists to prevent. A liveness probe on the same endpoint had the mirror problem,
+since a wedged model still answered 200 and so could never be restarted.
 """
 
 import base64
 import io
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import torch
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from PIL import Image
 from torch import nn
 
@@ -26,13 +37,82 @@ from ai_residency_common.checkpoints import load_checkpoint
 from ai_residency_common.hub import RepoType, resolve_checkpoint
 from ai_residency_common.logging import get_logger
 
-__all__ = ["decode_audio", "decode_image", "load_model", "resolve_required", "run_app"]
+__all__ = [
+    "add_health_routes",
+    "decode_audio",
+    "decode_image",
+    "load_model",
+    "resolve_required",
+    "run_app",
+]
 
 logger = get_logger(__name__)
 
 
+def add_health_routes(
+    app: FastAPI,
+    *,
+    ready: Callable[[], bool],
+    detail: Callable[[], dict[str, Any]] | None = None,
+    include_root: bool = True,
+) -> None:
+    """Register this portfolio's `/health` and `/ready` contract on `app`.
+
+    `/health` is liveness: the process is up and serving HTTP. It answers 200
+    unconditionally, so a slow or absent checkpoint never gets a pod restarted.
+
+    `/ready` is readiness: this instance can answer a real request. It answers
+    200 when `ready()` is true and **503 when it is not**, which is what lets a
+    Service take an unusable pod out of its endpoints instead of routing to it.
+
+    Point `livenessProbe` and `startupProbe` at `/health`, and `readinessProbe`
+    at `/ready`. Both bodies carry `detail()`, so whatever a service wants to
+    disclose -- device, checkpoint source, loaded adapters -- shows up in both.
+
+    Args:
+        app: The FastAPI application to register the routes on.
+        ready: Returns whether this instance can serve a real request now.
+            Called on every probe, so it must be cheap: read cached state, do
+            not touch the network or the disk.
+        detail: Extra fields to merge into both bodies. Also called per probe,
+            so the same constraint applies.
+        include_root: Also serve the liveness body at `/`. On by default because
+            `make status` curls `/`, and a backend that 404s there was reported
+            as down while it was serving perfectly well.
+    """
+
+    def _body() -> dict[str, Any]:
+        return dict(detail()) if detail is not None else {}
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        """Liveness: the process is up. Always 200."""
+        return {"status": "ok", **_body()}
+
+    if include_root:
+        app.get("/")(health)
+
+    @app.get("/ready")
+    def readiness() -> JSONResponse:
+        """Readiness: this instance can answer a real request. 503 when it cannot."""
+        is_ready = ready()
+        return JSONResponse(
+            status_code=200 if is_ready else 503,
+            content={
+                "status": "ready" if is_ready else "not_ready",
+                "ready": is_ready,
+                **_body(),
+            },
+        )
+
+
 def decode_image(image_data: str) -> Image.Image:
     """Decode a base64-encoded image into a PIL image, raising 422 on failure.
+
+    `Image.open` is lazy: it reads the header and returns, so a truncated or
+    corrupt payload used to pass this guard cleanly and then blow up deep inside
+    the model call, turning a client error into a 500. `load()` forces the pixel
+    data to be read here, where the failure can still be reported as a 422.
 
     Args:
         image_data: Base64-encoded image bytes.
@@ -44,13 +124,20 @@ def decode_image(image_data: str) -> Image.Image:
         HTTPException: 422 if the payload is not a decodable image.
     """
     try:
-        return Image.open(io.BytesIO(base64.b64decode(image_data)))
+        image = Image.open(io.BytesIO(base64.b64decode(image_data)))
+        image.load()
     except Exception as error:
         raise HTTPException(422, f"Could not decode image_data as an image: {error}") from error
+    return image
 
 
 def decode_audio(audio_data: str) -> bytes:
-    """Decode base64-encoded audio into raw bytes, raising 400 on failure.
+    """Decode base64-encoded audio into raw bytes, raising 422 on failure.
+
+    422 rather than 400, matching `decode_image`: the request is well-formed
+    JSON, it is the *content* of a field that cannot be processed, which is what
+    422 means. The two used to disagree, so the same class of failure produced a
+    different status depending on which backend the caller reached.
 
     Args:
         audio_data: Base64-encoded audio bytes.
@@ -59,12 +146,12 @@ def decode_audio(audio_data: str) -> bytes:
         The decoded bytes.
 
     Raises:
-        HTTPException: 400 if the payload is not valid base64.
+        HTTPException: 422 if the payload is not valid base64.
     """
     try:
         return base64.b64decode(audio_data, validate=True)
     except ValueError as error:
-        raise HTTPException(400, f"Invalid base64 audio_data: {error}") from error
+        raise HTTPException(422, f"Invalid base64 audio_data: {error}") from error
 
 
 def resolve_required(

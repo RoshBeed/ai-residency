@@ -111,55 +111,73 @@ estimate_cost() {
     fi
 }
 
-# Function to check if SSH is available
-check_ssh_availability() {
-    local public_ip=$1
-    local ssh_key_path=$(terraform output -raw ssh_key_path 2>/dev/null || echo "~/.ssh/id_rsa")
-    
-    if [ -n "$public_ip" ]; then
-        timeout 5 ssh -i "$ssh_key_path" -o ConnectTimeout=5 -o StrictHostKeyChecking=no ubuntu@"$public_ip" "echo 'SSH OK'" 2>/dev/null && echo "available" || echo "unavailable"
-    else
-        echo "unavailable"
+# Run a command on the instance through SSM, not SSH.
+#
+# The instance has no inbound rules by default -- allowed_ssh_cidr is empty -- so there
+# is no port to connect to. SSM reaches it the other way round: the agent on the box
+# polls AWS, and the instance role carries AmazonSSMManagedInstanceCore for exactly
+# this. send-command is used rather than start-session because it is non-interactive
+# and returns the output as data.
+remote_exec() {
+    local instance_id=$1
+    local script=$2
+
+    if [ -z "$instance_id" ]; then
+        echo "No instance available"
+        return
     fi
+
+    local command_id
+    command_id=$(aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunShellScript" \
+        --parameters "commands=[\"$script\"]" \
+        --query 'Command.CommandId' --output text 2>/dev/null || echo "")
+
+    if [ -z "$command_id" ]; then
+        echo "Unable to reach the instance over SSM (is the agent registered yet?)"
+        return
+    fi
+
+    aws ssm wait command-executed --command-id "$command_id" --instance-id "$instance_id" 2>/dev/null || true
+    aws ssm get-command-invocation \
+        --command-id "$command_id" --instance-id "$instance_id" \
+        --query 'StandardOutputContent' --output text 2>/dev/null || echo "Unable to fetch output"
+}
+
+# Function to check whether the instance is reachable at all
+check_agent_availability() {
+    local instance_id=$1
+
+    if [ -z "$instance_id" ]; then
+        echo "unavailable"
+        return
+    fi
+
+    local ping_status
+    ping_status=$(aws ssm describe-instance-information \
+        --filters "Key=InstanceIds,Values=$instance_id" \
+        --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo "")
+
+    if [ "$ping_status" = "Online" ]; then echo "available"; else echo "unavailable"; fi
 }
 
 # Function to get training logs
 get_training_logs() {
-    local public_ip=$1
-    local ssh_key_path=$(terraform output -raw ssh_key_path 2>/dev/null || echo "~/.ssh/id_rsa")
-    
-    if [ -n "$public_ip" ]; then
-        # No separate log file: cloud-init captures user_data.sh's own output (setup,
-        # docker pull, the run_with_timeout wrapper's log lines) here; the training
-        # container's own stdout is in `docker logs` once it's running.
-        ssh -i "$ssh_key_path" -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@"$public_ip" "tail -n 50 /var/log/cloud-init-output.log 2>/dev/null || echo 'No setup logs found'; echo '---'; docker logs --tail 50 \$(docker ps -lq) 2>/dev/null || echo 'No training container logs found'" 2>/dev/null || echo "Unable to fetch logs"
-    else
-        echo "No instance IP available"
-    fi
+    # No separate log file: cloud-init captures user_data.sh's own output (setup,
+    # docker pull, the run_with_timeout wrapper's log lines) here; the training
+    # container's own stdout is in `docker logs` once it is running.
+    remote_exec "$1" "tail -n 50 /var/log/cloud-init-output.log 2>/dev/null || echo 'No setup logs found'; echo '---'; docker logs --tail 50 \$(docker ps -lq) 2>/dev/null || echo 'No training container logs found'"
 }
 
 # Function to check GPU status
 get_gpu_status() {
-    local public_ip=$1
-    local ssh_key_path=$(terraform output -raw ssh_key_path 2>/dev/null || echo "~/.ssh/id_rsa")
-    
-    if [ -n "$public_ip" ]; then
-        ssh -i "$ssh_key_path" -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@"$public_ip" "nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'GPU not available'" 2>/dev/null || echo "Unable to fetch GPU status"
-    else
-        echo "No instance IP available"
-    fi
+    remote_exec "$1" "nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'GPU not available'"
 }
 
 # Function to check system resources
 get_system_resources() {
-    local public_ip=$1
-    local ssh_key_path=$(terraform output -raw ssh_key_path 2>/dev/null || echo "~/.ssh/id_rsa")
-    
-    if [ -n "$public_ip" ]; then
-        ssh -i "$ssh_key_path" -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@"$public_ip" "free -h | grep '^Mem:' | awk '{print \"Memory: \" \$3 \"/\" \$2}' && df -h / | tail -1 | awk '{print \"Disk: \" \$3 \"/\" \$2}'" 2>/dev/null || echo "Unable to fetch system resources"
-    else
-        echo "No instance IP available"
-    fi
+    remote_exec "$1" "free -h | grep '^Mem:' | awk '{print \"Memory: \" \$3 \"/\" \$2}'; df -h / | tail -1 | awk '{print \"Disk: \" \$3 \"/\" \$2}'"
 }
 
 # Main monitoring function
@@ -184,7 +202,7 @@ main() {
     local launch_time=$(get_launch_time "$instance_id")
     local uptime=$(calculate_uptime "$launch_time")
     local cost=$(estimate_cost "$uptime" "$spot_price")
-    local ssh_status=$(check_ssh_availability "$public_ip")
+    local agent_status=$(check_agent_availability "$instance_id")
     
     # Display instance information
     echo "Instance ID:     $instance_id"
@@ -195,40 +213,40 @@ main() {
     echo "Launch Time:     $launch_time"
     echo "Uptime:          $uptime"
     echo "Estimated Cost:  \$$cost"
-    echo "SSH Access:      $ssh_status"
+    echo "SSH Access:      $agent_status"
     echo ""
     
     # Show detailed information if instance is running
     if [ "$status" = "running" ]; then
         print_header "System Resources"
         echo "=================="
-        get_system_resources "$public_ip"
+        get_system_resources "$instance_id"
         echo ""
         
         print_header "GPU Status"
         echo "==========="
-        get_gpu_status "$public_ip"
+        get_gpu_status "$instance_id"
         echo ""
         
         print_header "Recent Training Logs"
         echo "======================"
-        get_training_logs "$public_ip"
+        get_training_logs "$instance_id"
         echo ""
         
         # Show useful commands
         print_header "Useful Commands"
         echo "================"
-        echo "SSH into instance:"
-        echo "  ssh -i $(terraform output -raw ssh_key_path) ubuntu@$public_ip"
+        echo "Shell on the instance (no open port needed):"
+        echo "  aws ssm start-session --target $instance_id"
         echo ""
         echo "View live training logs:"
-        echo "  ssh -i $(terraform output -raw ssh_key_path) ubuntu@$public_ip 'tail -f /var/log/cloud-init-output.log'"
+        echo "  aws ssm start-session --target $instance_id \\"
+        echo "    --document-name AWS-StartInteractiveCommand \\"
+        echo "    --parameters command='tail -f /var/log/cloud-init-output.log'"
         echo ""
         echo "Check GPU usage:"
-        echo "  ssh -i $(terraform output -raw ssh_key_path) ubuntu@$public_ip 'nvidia-smi'"
-        echo ""
-        echo "Monitor system resources:"
-        echo "  ssh -i $(terraform output -raw ssh_key_path) ubuntu@$public_ip 'htop'"
+        echo "  aws ssm start-session --target $instance_id \\"
+        echo "    --document-name AWS-StartInteractiveCommand --parameters command='nvidia-smi'"
         echo ""
     fi
     
@@ -271,7 +289,7 @@ case "${1:-}" in
         public_ip=$(echo "$details" | cut -d'|' -f2)
         print_header "Training Logs"
         echo "=============="
-        get_training_logs "$public_ip"
+        get_training_logs "$instance_id"
         exit 0
         ;;
     --gpu)
@@ -279,7 +297,7 @@ case "${1:-}" in
         public_ip=$(echo "$details" | cut -d'|' -f2)
         print_header "GPU Status"
         echo "==========="
-        get_gpu_status "$public_ip"
+        get_gpu_status "$instance_id"
         exit 0
         ;;
     --resources)
@@ -287,7 +305,7 @@ case "${1:-}" in
         public_ip=$(echo "$details" | cut -d'|' -f2)
         print_header "System Resources"
         echo "=================="
-        get_system_resources "$public_ip"
+        get_system_resources "$instance_id"
         exit 0
         ;;
     "")

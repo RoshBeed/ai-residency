@@ -139,32 +139,6 @@ validate_train_image() {
     [[ "$image" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(:[a-zA-Z0-9_.-]+)?$ ]]
 }
 
-# Function to create SSH key if needed
-setup_ssh_key() {
-    print_header "SSH Key Setup"
-    echo "=============="
-    
-    local ssh_key_path="$1"
-    
-    if [ -f "$ssh_key_path" ]; then
-        print_status "SSH key already exists: $ssh_key_path"
-        return 0
-    fi
-    
-    print_warning "SSH key not found: $ssh_key_path"
-    read -p "Create new SSH key? (y/N): " -n 1 -r
-    echo
-    
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_status "Creating SSH key..."
-        ssh-keygen -t rsa -b 4096 -f "$ssh_key_path" -N ""
-        print_status "SSH key created: $ssh_key_path"
-        print_warning "Make sure to add the public key to your AWS account if needed."
-    else
-        print_error "SSH key is required. Please create one manually or provide an existing key path."
-        exit 1
-    fi
-}
 
 # Function to get Hugging Face token
 get_hf_token() {
@@ -197,13 +171,15 @@ create_tfvars() {
     # Get user inputs
     local region=$(get_user_input "AWS region" "us-east-1" validate_region)
     local instance_type=$(get_user_input "Instance type" "g4dn.xlarge" validate_instance_type)
-    local spot_price=$(get_user_input "Maximum spot price per hour" "0.50" validate_spot_price)
+    local spot_price=$(get_user_input "Maximum spot price per hour (blank bids the on-demand price)" "")
     local volume_size=$(get_user_input "Volume size (GB)" "100")
-    local ssh_key_path=$(get_user_input "SSH key path" "~/.ssh/id_rsa")
+    # Blank is the right default: the instance is reached with SSM Session Manager, which
+    # needs no inbound rule. Anything entered here opens port 22 to that CIDR only.
+    local allowed_ssh_cidr=$(get_user_input "CIDR allowed to SSH (blank = no inbound rule at all, use SSM instead)" "")
     local hf_token=$(get_hf_token)
     local wandb_api_key=$(get_user_input "W&B API key (optional -- blank runs offline)" "")
     local train_image=$(get_user_input "Training image (e.g. roshb/ai-residency-vit-classifier-train:latest -- push it first with: make push SERVICE=<name>)" "" validate_train_image)
-    local train_command=$(get_user_input "Override the image's default training command (optional, e.g. 'seq2seq')" "")
+    local train_command=$(get_user_input "Override the image's default training command (optional, a full module path)" "")
     local max_training_time=$(get_user_input "Maximum training time (hours)" "24")
 
     # Create terraform.tfvars
@@ -214,14 +190,16 @@ instance_type = "$instance_type"
 spot_price = "$spot_price"
 volume_size = $volume_size
 
-# SSH Configuration
-ssh_key_path = "$ssh_key_path"
+# Access. Blank means no inbound rule exists at all; reach the instance with
+#   aws ssm start-session --target \$(terraform output -raw instance_id)
+allowed_ssh_cidr = "$allowed_ssh_cidr"
 
-# Credentials -- training pushes its own checkpoint and logs, nothing here re-uploads it
+# Credentials. Written to SSM Parameter Store as SecureString, not to user_data --
+# training pushes its own checkpoint and logs, nothing here re-uploads it.
 hf_token = "$hf_token"
 wandb_api_key = "$wandb_api_key"
 
-# Which week to train
+# Which service to train
 train_image = "$train_image"
 train_command = "$train_command"
 
@@ -286,9 +264,6 @@ main() {
     
     # Check prerequisites
     check_prerequisites
-    
-    # Setup SSH key
-    setup_ssh_key "~/.ssh/id_rsa"
     
     # Create configuration
     create_tfvars

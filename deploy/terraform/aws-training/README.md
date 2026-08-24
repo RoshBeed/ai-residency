@@ -1,15 +1,15 @@
 # AWS spot GPU training — an alternative to RunPod
 
-Terraform that provisions a single AWS spot GPU instance, pulls a pushed `roshbeed/ai-residency-weekN-train`
+Terraform that provisions a single AWS spot GPU instance, pulls a pushed `roshb/ai-residency-<service>-train`
 image, runs it, and terminates the instance itself when training finishes (or times out). This is
-the same training container every week repo's own `Dockerfile.train` already builds and
+the same training container every service's own `Dockerfile.train` already builds and
 `make push SERVICE=<name>` already pushes — this module doesn't reimplement training, it's just
 another place to run the same image, on a rented GPU instead of RunPod.
 
 Generalized from a module that only ever ran the vision-transformers project,
 by cloning its git repo and building a Python environment by hand on the instance. That approach
 predates this portfolio's move to Docker images with a shared base — now the instance just needs
-Docker and the NVIDIA Container Toolkit, and `train_image` picks which week's already-built image to
+Docker and the NVIDIA Container Toolkit, and `train_image` picks which service's already-built image to
 pull and run.
 
 **Found and fixed while moving it, not new bugs introduced by the move:** the original
@@ -24,7 +24,7 @@ own comments for what changed).
 ## Prerequisites
 
 - Terraform >= 1.0, AWS CLI configured (`aws configure`), an SSH key pair
-- A pushed training image: `cd ai-residency-weekN-.../ && make push SERVICE=<name>` (needs `docker login`
+- A pushed training image: `make push SERVICE=<name>` from the repository root (needs `docker login`
   first if the image is private — see `docker_hub_username`/`docker_hub_token` below)
 - A Hugging Face token with write access — training pushes its own checkpoint as it runs
 

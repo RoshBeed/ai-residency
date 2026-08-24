@@ -1,7 +1,7 @@
 """FastAPI service for this repo's generation demo.
 
 The HTTP equivalent of `ui/app.py`, built for the portfolio hub that runs all six
-weeks as backend containers behind one frontend. It reuses the same model-loading and
+services as backend containers behind one frontend. It reuses the same model-loading and
 generation path the UI uses rather than reimplementing it.
 
 Every response carries a `note` field saying plainly that this is not a PPO-tuned
@@ -19,7 +19,8 @@ is why this service's pod needs far more memory than `/generate` alone would.
 
 import queue
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import AsyncIterator, Callable, Generator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -29,7 +30,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ai_residency_common import format_sse, get_device, get_logger, run_app
+from ai_residency_common import (
+    add_health_routes,
+    format_sse,
+    get_device,
+    get_logger,
+    run_app,
+)
 from base_setup import BaseModelSetup
 from config import PPOConfig
 from models import PolicyModel
@@ -56,27 +63,42 @@ PPO_NOTE = (
     "real PPO run would."
 )
 
-app = FastAPI(
-    title="AI Residency Week 6 -- RLHF/PPO Generation Service",
-    description=(
-        "Generation endpoint backed by this repo's PolicyModel (LoRA-wrapped "
-        "SmolLM2-135M-Instruct). See /generate's response 'note' field for the honest "
-        "no-trained-checkpoint disclosure."
-    ),
-)
+_models_ready = False
+"""Whether the startup preload finished. Reported by `/ready`."""
 
 
-@app.on_event("startup")
-def _preload_models() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Load the PPOTrainer at boot so the first request is warm.
 
     Three SmolLM2-135M copies + the OpenAssistant DeBERTa reward model are built
     once and cached for the pod's lifetime. The checkpoint directory is also
     created here so the first save does not race with the volume mount.
+
+    A failure here leaves the app running and `/ready` answering 503, rather than
+    killing the process: the pod stays inspectable, and the Service simply does not
+    route to it.
     """
-    PPOConfig().checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Pre-loading PPOTrainer at startup (models will be ready on first call)")
-    _load_ppo_trainer()
+    global _models_ready
+    try:
+        PPOConfig().checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Pre-loading PPOTrainer at startup")
+        _load_ppo_trainer()
+        _models_ready = True
+    except Exception as error:
+        logger.error("Could not pre-load the PPO models, /ready will report 503: %s", error)
+    yield
+
+
+app = FastAPI(
+    title="RLHF / PPO Generation Service",
+    description=(
+        "Generation endpoint backed by this repo's PolicyModel (LoRA-wrapped "
+        "SmolLM2-135M-Instruct). See /generate's response 'note' field for the honest "
+        "no-trained-checkpoint disclosure."
+    ),
+    lifespan=lifespan,
+)
 
 
 class GenerateRequest(BaseModel):
@@ -274,11 +296,19 @@ def _generate(
     )
 
 
-@app.get("/health")
-@app.get("/")
-def health_check() -> dict[str, str]:
-    """Liveness check used by compose and the Helm chart."""
-    return {"status": "ok", "device": str(get_device())}
+# There is no PPO-tuned checkpoint to load -- the policy starts from LoRA-initialized
+# SmolLM2 and improves within the pod's lifetime -- so `checkpoint_loaded` reports
+# whether the models this service actually needs are resident, which is the thing that
+# determines whether it can answer.
+add_health_routes(
+    app,
+    ready=lambda: _models_ready,
+    detail=lambda: {
+        "device": str(get_device()),
+        "models_loaded": _models_ready,
+        "checkpoint_loaded": _models_ready,
+    },
+)
 
 
 @app.post("/generate", response_model=GenerateResponse)

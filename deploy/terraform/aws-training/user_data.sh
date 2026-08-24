@@ -8,20 +8,24 @@ log() {
 }
 
 # Variables from Terraform (templatefile() in main.tf) -- every brace-style variable
-# reference below must be one of these seven, passed explicitly in that call, or
-# terraform apply fails immediately at plan time. That was a real, pre-existing bug in
-# the original version of this script: it referenced three brace-style bash variables
-# that were never passed to templatefile() (one of them was even a local variable
-# inside a bash function, which templatefile() cannot see at all) -- this module could
-# never have actually been applied. Fixed here by keeping every non-Terraform bash
-# variable reference brace-free ($VAR, no braces) throughout the rest of this file.
-HF_TOKEN="${hf_token}"
-WANDB_API_KEY="${wandb_api_key}"
+# reference below must be one of these, passed explicitly in that call, or terraform
+# apply fails immediately at plan time. That was a real, pre-existing bug in the
+# original version of this script: it referenced three brace-style bash variables that
+# were never passed to templatefile() (one of them was even a local variable inside a
+# bash function, which templatefile() cannot see at all) -- this module could never have
+# actually been applied. Fixed here by keeping every non-Terraform bash variable
+# reference brace-free ($VAR, no braces) throughout the rest of this file.
+#
+# None of these is a secret. The three tokens are read from SSM Parameter Store below,
+# because anything interpolated here ends up in user_data -- which every process on this
+# instance can read from the metadata service, and which is stored unencrypted in the
+# Terraform state.
+AWS_REGION="${aws_region}"
+PARAMETER_PREFIX="${parameter_prefix}"
 TRAIN_IMAGE="${train_image}"
 TRAIN_COMMAND="${train_command}"
 MAX_TRAINING_TIME="${max_training_time}"
 DOCKER_HUB_USERNAME="${docker_hub_username}"
-DOCKER_HUB_TOKEN="${docker_hub_token}"
 
 log "Starting AI Residency portfolio training setup..."
 
@@ -30,7 +34,10 @@ apt-get update -y
 apt-get upgrade -y
 
 log "Installing base packages..."
-apt-get install -y curl wget htop nvtop nvidia-driver-535 ca-certificates gnupg
+# awscli and unzip are here for the SSM parameter reads below -- Ubuntu 22.04 ships
+# neither, and `aws ssm get-parameter` failing silently would look like an empty token
+# rather than a missing binary.
+apt-get install -y curl wget htop nvtop nvidia-driver-535 ca-certificates gnupg unzip awscli
 
 log "Installing Docker..."
 curl -fsSL https://get.docker.com -o get-docker.sh
@@ -52,6 +59,28 @@ systemctl restart docker
 log "Verifying GPU access..."
 nvidia-smi
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+
+# Secrets, read at boot through the instance role rather than baked into user_data.
+# `unset` is the placeholder Terraform writes for an optional secret that was not
+# supplied, so it is normalised back to an empty string here.
+log "Reading training secrets from SSM Parameter Store..."
+read_secret() {
+    value=$(aws ssm get-parameter --region "$AWS_REGION" --with-decryption \
+        --name "/$PARAMETER_PREFIX/$1" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+    if [ "$value" = "unset" ]; then
+        echo ""
+    else
+        echo "$value"
+    fi
+}
+
+HF_TOKEN=$(read_secret hf_token)
+WANDB_API_KEY=$(read_secret wandb_api_key)
+DOCKER_HUB_TOKEN=$(read_secret docker_hub_token)
+
+if [ -z "$HF_TOKEN" ]; then
+    log "WARNING: no Hugging Face token; training will run but cannot push its checkpoint"
+fi
 
 if [ -n "$DOCKER_HUB_TOKEN" ]; then
     log "Logging in to Docker Hub ($TRAIN_IMAGE is private)..."

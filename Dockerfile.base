@@ -18,7 +18,11 @@
 # lock pins and leaves whichever torch build this image supplied alone. That is
 # what keeps the CUDA image from carrying a redundant CPU copy of torch.
 
-FROM python:3.11-slim
+# Pinned by digest, not just by tag: `python:3.11-slim` is a moving target that is
+# rebuilt on every base-OS patch, so two builds of the same commit could otherwise
+# produce images with different contents. Refresh it deliberately (and note the bump
+# in the commit) rather than drifting into it.
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 ARG TORCH_LOCAL=
@@ -35,3 +39,26 @@ RUN uv pip install --python .venv/bin/python --index-url ${TORCH_INDEX} \
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+
+# The unprivileged user every image built on this one runs as. Nothing in this
+# portfolio needs root: each container runs a Python process that reads its own code
+# and writes a model cache. Running as root anyway is the default only because it is
+# the default, and it is the first thing a cluster with Pod Security Standards enforced
+# will refuse to schedule.
+#
+# UID 1000 matches `securityContext.runAsUser` in the Helm chart. They have to agree:
+# Kubernetes overrides the image's USER, so a chart running as 1000 against an image
+# whose files are owned by root gets a container that starts and then cannot write.
+#
+# Builds still run as root -- installing dependencies as an unprivileged user fights
+# uv for no benefit. Each service Dockerfile switches to this user on its last layer,
+# after everything is installed.
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/app app \
+    && mkdir -p /home/app/.cache/huggingface \
+    && chown -R app:app /home/app
+
+# Where huggingface_hub caches resolved weights. Set here rather than per service so
+# the path the chart mounts a volume at, and the path the library actually writes to,
+# cannot drift apart.
+ENV HF_HOME=/home/app/.cache/huggingface

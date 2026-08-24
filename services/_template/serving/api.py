@@ -5,24 +5,29 @@ Canonical location for the HTTP backend in every repo: `serving/api.py`, exposin
 request and response models explicit.
 
 Binary inputs (images, audio) go base64-encoded in a pydantic field rather than as
-multipart uploads, matching the convention the existing week repos already use.
+multipart uploads, matching the convention every other service here uses.
 """
 
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
+from ai_residency_common import (
+    add_health_routes,
+    get_device,
+    get_logger,
+    load_checkpoint,
+    resolve_checkpoint,
+)
 from config import Config
 from template.models import Predictor
 
 __all__ = ["app"]
 
 logger = get_logger(__name__)
-
-app = FastAPI(title="AI Residency template service")
 
 _config = Config()
 _device = get_device()
@@ -59,20 +64,38 @@ def _get_model() -> Predictor:
     return _model
 
 
-@app.get("/health")
-def health() -> dict[str, Any]:
-    """Liveness check used by compose and the Helm chart.
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Resolve the checkpoint once at startup rather than on the first request.
 
-    Reports where the weights came from, so a service that quietly fell back to an
-    untrained model is visible rather than answering with plausible nonsense.
+    In a lifespan, not at module scope: importing this module must not touch the
+    network, or the service cannot be imported by a test, a smoke check, or anything
+    else that only wants to inspect the app. A failure here is logged and left for
+    `/ready` to report as 503, rather than killing the process.
     """
-    _get_model()
-    return {
-        "status": "ok",
+    try:
+        _get_model()
+    except Exception as error:
+        logger.error("Could not load the model, /ready will report 503: %s", error)
+    yield
+
+
+app = FastAPI(title="AI Residency template service", lifespan=lifespan)
+
+
+# The two-endpoint contract every backend here exposes. `/health` is liveness and
+# always answers 200; `/ready` answers 503 while there are no usable weights, which is
+# what keeps a Kubernetes Service from routing to a pod that would only 503 anyway.
+# Copy this shape into a new service rather than writing a bespoke health endpoint.
+add_health_routes(
+    app,
+    ready=lambda: _checkpoint_source != "none",
+    detail=lambda: {
         "device": str(_device),
         "checkpoint_loaded": _checkpoint_source != "none",
         "checkpoint_source": _checkpoint_source,
-    }
+    },
+)
 
 
 @app.post("/predict", response_model=PredictResponse)

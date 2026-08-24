@@ -38,4 +38,12 @@ RUN uv sync --frozen --no-install-package torch --no-install-package torchvision
 
 WORKDIR /app/services/vector-search-retrieval
 
+# Drop to the unprivileged user the base image created. Everything above this line
+# installs; nothing below it needs root. The service directory is chowned because a
+# few services write into it at run time (temp files, a checkpoint directory), and a
+# root-owned working directory would make those fail on the first request instead of
+# at build time. UID 1000 matches securityContext.runAsUser in the Helm chart.
+RUN chown -R app:app /app/services/vector-search-retrieval
+USER app
+
 CMD ["python", "-m", "models.training"]
