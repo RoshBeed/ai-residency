@@ -7,9 +7,15 @@
 # are the ones that publish images.
 #
 # Isolation comes from path filters rather than from separate repositories: a
-# commit touching one service checks and builds that service. A commit touching
+# commit touching one service type-checks and tests that service. A commit touching
 # libs/common checks everything, which is correct -- it is the one thing they
 # genuinely share.
+#
+# Publishing deliberately does NOT follow the filter. Every push to main publishes all
+# ten images under one `sha-<commit>` tag, so that tag names a complete set that
+# deploy/ can pin. When only the changed service was published, most SHAs existed for
+# some images and not others, and the "reproducible from a single identifier" claim in
+# the README was not something the registry could actually honour.
 
 name: CI
 
@@ -34,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.detect.outputs.services }}
+      all: ${{ steps.detect.outputs.all }}
       any: ${{ steps.detect.outputs.any }}
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +82,16 @@ jobs:
           fi
           echo "services=$json" >> "$GITHUB_OUTPUT"
           echo "any=$([ -n "$selected" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "Selected: ${selected:-none}"
+
+          # Checks are narrowed by the path filter; publishing is not. Every push to
+          # main publishes all ten images under one sha- tag, so that tag names a
+          # complete, deployable set. Publishing only what changed meant most SHAs
+          # existed for some images and not others, and `deploy/` pinning one tag was
+          # a claim the registry could not honour. The layer cache makes the images
+          # whose inputs did not change nearly free to republish.
+          echo "all=$(printf '%s\n' $all | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "Selected for checks: ${selected:-none}"
+          echo "Published on main:   $all"
 
   lint:
     name: Lint (whole workspace)
@@ -115,10 +131,9 @@ jobs:
         run: uv run --project . mypy --config-file ../../pyproject.toml .
 
       # pytest exits 5 on "no tests collected", which is a fact about a service
-      # rather than a failure. The frontend is the one with no suite: app.py runs
-      # its whole page flow at import, so its helpers cannot be imported without a
-      # Streamlit runtime. Extracting them into a module is the fix, and is worth
-      # doing -- a strict type check already found a real bytes/str bug in there.
+      # rather than a failure. Every service has a suite now, including the frontend
+      # -- its display helpers, project metadata and HTTP client live in Streamlit-free
+      # modules precisely so they can be imported and asserted against here.
       - name: Test
         working-directory: services/${{ matrix.service }}
         run: |
@@ -140,9 +155,17 @@ jobs:
     # accident. Training images are not built here: they carry the CUDA stack,
     # they are ~9GB, and amd64 is the only architecture a GPU box is. They have
     # their own on-demand workflow.
+    #
+    # `always()` with explicit result checks, not a bare `needs:`. A commit that
+    # touches no service skips the `check` matrix entirely, and a skipped dependency
+    # skips everything downstream by default -- so a docs-only commit to main would
+    # publish nothing and leave a sha- tag that names no images. Publish whenever
+    # nothing actually failed.
     if: |
-      github.ref == 'refs/heads/main'
-      && needs.changes.outputs.any == 'true'
+      always()
+      && needs.lint.result == 'success'
+      && (needs.check.result == 'success' || needs.check.result == 'skipped')
+      && github.ref == 'refs/heads/main'
       && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -169,15 +192,14 @@ jobs:
   images:
     name: Publish ${{ matrix.service }}
     needs: [changes, images-base]
-    if: |
-      github.ref == 'refs/heads/main'
-      && needs.changes.outputs.any == 'true'
-      && vars.PUBLISH_IMAGES == 'true'
+    if: needs.images-base.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: ${{ fromJSON(needs.changes.outputs.services) }}
+        # `all`, not `services`: see the note in the detect step. One sha- tag has to
+        # name every image, or pinning it in deploy/ does not describe a real set.
+        service: ${{ fromJSON(needs.changes.outputs.all) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -201,6 +223,83 @@ jobs:
       # Both tags come off one commit, which is what makes a deployment
       # reproducible: deploy/ pins the SHA, not a moving `latest`. BASE_IMAGE is
       # pinned to this commit's base for the same reason.
+      # Built into the runner's own docker first, native amd64 only, so the next step
+      # has something to actually run. The multi-arch push happens after it passes --
+      # a `push: true` build produces no local image to test, which is how this
+      # pipeline came to publish images nothing had ever executed.
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile.serve
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            ${{ matrix.service != 'frontend'
+                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                || '' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          tags: smoke:${{ matrix.service }}
+
+      # The check that would have caught the two most expensive mistakes available here.
+      #
+      # A `USER app` whose filesystem ownership is wrong builds perfectly and then fails
+      # on the first write. A service that stops registering /ready builds perfectly and
+      # then silently takes its whole fleet out of readiness, because a missing route
+      # answers 404 and a 404 fails a readiness probe forever. Neither shows up in a
+      # build log, a unit test, or a vulnerability scan.
+      #
+      # Deliberately does not start the server: several of these load multi-GB backbones
+      # in their lifespan, which does not fit a runner. Importing the app and reading its
+      # route table proves the contract is wired without paying for the weights.
+      - name: Smoke-test the image
+        if: matrix.service != 'frontend'
+        run: |
+          set -euo pipefail
+          image=smoke:${{ matrix.service }}
+
+          echo "::group::runs as a non-root user"
+          uid=$(docker run --rm --entrypoint id "$image" -u)
+          echo "uid=$uid"
+          if [ "$uid" = "0" ]; then
+            echo "::error::${{ matrix.service }} runs as root"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::the app exposes /health and /ready"
+          docker run --rm --entrypoint python "$image" -c '
+          from serving.api import app
+          paths = {route.path for route in app.routes}
+          missing = {"/health", "/ready"} - paths
+          assert not missing, f"missing {missing}; has {sorted(paths)}"
+          print("routes ok:", sorted(p for p in paths if p in {"/health", "/ready"}))
+          '
+          echo "::endgroup::"
+
+          echo "::group::the working directory is writable by that user"
+          docker run --rm --entrypoint sh "$image" -c 'touch ./.probe && rm ./.probe'
+          echo "::endgroup::"
+
+      # The frontend is a Streamlit app, not a FastAPI backend, so it gets the checks
+      # that do apply to it: non-root, and a page flow that imports.
+      - name: Smoke-test the frontend image
+        if: matrix.service == 'frontend'
+        run: |
+          set -euo pipefail
+          image=smoke:frontend
+          uid=$(docker run --rm --entrypoint id "$image" -u)
+          if [ "$uid" = "0" ]; then
+            echo "::error::frontend runs as root"
+            exit 1
+          fi
+          docker run --rm --entrypoint python "$image" -c '
+          import client, components, projects, theme
+          assert projects.API_URLS and projects.PROJECTS
+          print("frontend modules import; backends wired:", len(projects.API_URLS))
+          '
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -219,3 +318,38 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
             ${{ steps.image.outputs.name }}:latest
+
+  # A published image is the artifact people actually run, so it is the thing worth
+  # scanning -- a lockfile audit misses everything the base OS contributes.
+  #
+  # Scans the serving base rather than all ten images: they share every layer below
+  # their own source, so ten scans would report the same CVEs ten times. Reports rather
+  # than blocks (`exit-code: 0`): a base-image CVE with no fix available should not
+  # stop a portfolio deploy, but it should be visible. Results land in the repository's
+  # Security tab.
+  scan:
+    name: Scan the published base image
+    needs: images-base
+    if: needs.images-base.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-base-serve
