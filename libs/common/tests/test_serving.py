@@ -28,7 +28,11 @@ class TinyModel(nn.Module):
         self.linear = nn.Linear(2, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear(x)  # type: ignore[no-any-return]
+        # Bound to a typed local rather than returned straight out: nn.Linear.__call__
+        # is Any to mypy, and returning that from a Tensor-annotated function is what
+        # the one `type: ignore` in this repo used to suppress.
+        out: torch.Tensor = self.linear(x)
+        return out
 
 
 def test_resolve_required_returns_a_local_file(tmp_path: Path) -> None:
