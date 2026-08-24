@@ -33,8 +33,14 @@ flowchart LR
     end
 ```
 
-A GPU box trains and pushes weights to the Hub; a cheap CPU box pulls them and serves. Neither
-needs anything but the image and a token.
+A GPU box trains and pushes weights to the Hub; a cheap CPU box pulls them and serves. The weights
+and datasets are public, so serving needs nothing but the image — no credentials:
+
+```bash
+docker run -p 8000:8000 roshb/ai-residency-word-embeddings-serve
+```
+
+That container starts with an empty disk, pulls its own checkpoint, and answers.
 
 ## The systems
 

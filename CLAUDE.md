@@ -45,8 +45,16 @@ Face account that does not exist.
 
 ## Standing rules
 
+**Nothing depends on someone else's account.** Weights, datasets and the text8 corpus are all
+under `roshbeed/` on the Hub. text8 used to be fetched from a teammate's personal repo, which is
+a single point of failure outside this project's control — it is mirrored at
+`roshbeed/ai-residency-text8`, verified byte-identical to the canonical source at
+mattmahoney.net. Re-hosting a *standard public corpus* is right; the earlier "don't re-host
+third-party data" note was about not copying someone's proprietary dataset, and it got misapplied.
+
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
-Hub, serving pulls from it. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
+Hub, serving pulls from it. **The model and dataset repos are public**, so serving needs no
+credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
 `resolve_required` / `load_model`, never a bare `Path.exists()`. Do not add checkpoint mounts to
 compose or `hostPath` volumes to the chart. Uploads need a stable, guessable filename — a
 run-timestamped name is unfetchable by anything downstream.
@@ -89,6 +97,9 @@ those builds are native rather than the slow emulation a Mac would do.
 - **Training images must target the GPU host's architecture.** `make build` passes
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.
+- **`helm uninstall` returns before deletion finishes.** An install started right after can have
+  its objects deleted by the tail of the previous release — a reinstall once came up with all
+  eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **`AI_RESIDENCY_<FIELD>` overrides any `Config` field** — `AI_RESIDENCY_NUM_EPOCHS=1` for a smoke
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.

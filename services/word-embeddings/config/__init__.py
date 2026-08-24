@@ -50,12 +50,12 @@ class Config(BaseConfig):
     vocab_file: Path = field(default_factory=lambda: Path("data/combined_word_to_lemma_index.json"))
     posts_file: Path = field(default_factory=lambda: Path("data/hn_data_cleaned.json"))
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week1-word-embeddings"
+    hf_repo_id: str | None = "roshbeed/ai-residency-word-embeddings"
     # The Hacker News extract lives here rather than in git. It came from a Postgres
     # mirror that is not reachable from every network, so it is the one input the
     # corpus stage cannot simply fetch or regenerate — which used to make committing
     # it the only option.
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-week1-hn-posts"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-data"
     wandb_project: str | None = "ai-residency-week1-word-embeddings"
 
     @property

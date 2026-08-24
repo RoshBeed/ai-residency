@@ -117,7 +117,7 @@ class BaseConfig:
         checkpoint_dir: Where trained artifacts are written locally.
         data_dir: Where datasets and generated corpora live.
         hf_repo_id: Model repo to push best checkpoints to, e.g.
-            `"roshbeed/ai-residency-week1-word-embeddings"`. None keeps checkpoints local.
+            `"roshbeed/ai-residency-word-embeddings"`. None keeps checkpoints local.
         hf_dataset_repo_id: Dataset repo holding training inputs that cannot simply
             be downloaded again — our own extracts and derived corpora, not
             third-party datasets, which have their own homes and licences.

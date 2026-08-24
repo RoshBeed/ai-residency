@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images \
+.PHONY: pull up down logs status index-retrieval load-images pin-images \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -62,6 +62,12 @@ K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 IMAGE_TAG ?= latest
 IMAGES := $(shell grep -oE 'roshb/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
 
+pin-images: ## Repoint compose and the chart at a published tag: make pin-images TAG=sha-abc123
+	@test -n "$(TAG)" || (echo "Usage: make pin-images TAG=sha-<commit>   (CI prints it, or check Docker Hub)" && exit 1)
+	@sed -i '' -E 's|(image: roshb/ai-residency-[a-z0-9-]+):\$$\{IMAGE_TAG:-[^}]*\}|\1:$$\{IMAGE_TAG:-$(TAG)\}|' compose/docker-compose.yml
+	@sed -i '' -E 's|^  tag: .*|  tag: $(TAG)|' helm/ai-residency/values.yaml
+	@echo "Pinned compose and the chart to $(TAG)"
+
 load-images: ## Import locally-built images into the cluster node's own image store
 	@for img in $(IMAGES); do \
 		docker image inspect $$img:$(IMAGE_TAG) >/dev/null 2>&1 || { echo "skip  $$img:$(IMAGE_TAG) (not built locally)"; continue; }; \
@@ -79,6 +85,13 @@ helm-upgrade: ## Re-apply the Helm chart after repulling images, then roll pods 
 
 helm-uninstall: ## Remove the Helm release (namespace itself is left in place, not deleted)
 	helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)
+	# Wait for the resources to actually go. `helm uninstall` returns before the
+	# API server has finished deleting them, so an install started immediately
+	# after can have its own objects deleted by the tail of the previous release
+	# -- which is how a reinstall once came up with every pod running and the
+	# frontend Service simply absent.
+	@kubectl wait --for=delete pod --all -n $(HELM_NAMESPACE) --timeout=120s 2>/dev/null || true
+	@kubectl wait --for=delete svc --all -n $(HELM_NAMESPACE) --timeout=60s 2>/dev/null || true
 
 helm-status: ## Show pod/service status for the Helm release
 	kubectl get pods,svc -n $(HELM_NAMESPACE)

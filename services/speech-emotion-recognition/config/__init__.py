@@ -142,7 +142,7 @@ class Config(BaseConfig):
     samples_per_emotion: int = 5
 
     hf_repo_id: str | None = "roshbeed/ai-residency-speech-emotion-recognition"
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-speech-emotion-manifests"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-speech-emotion-recognition-data"
     wandb_project: str | None = "ai-residency-speech-emotion-recognition"
 
     @property

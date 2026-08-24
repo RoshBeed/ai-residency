@@ -81,7 +81,7 @@ def push_checkpoint(
     improvement during a sweep would dominate training time.
 
     Args:
-        repo_id: Target model repo, e.g. `"roshbeed/ai-residency-week1-word-embeddings"`.
+        repo_id: Target model repo, e.g. `"roshbeed/ai-residency-word-embeddings"`.
         path: Local checkpoint file to upload.
         path_in_repo: Name to store it under. Defaults to the local file name.
         private: Whether to create the repo private if it does not yet exist.

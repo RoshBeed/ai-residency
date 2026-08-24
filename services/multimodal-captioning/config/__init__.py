@@ -140,11 +140,11 @@ class Config(BaseConfig):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week4-multimodal-captioning"
+    hf_repo_id: str | None = "roshbeed/ai-residency-multimodal-captioning"
     # The ten demo images the zero-shot script and the UI's sample picker use. They
     # are fixtures rather than a dataset, but they are still data, and data does not
     # belong in git.
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-week4-sample-images"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-multimodal-captioning-data"
     wandb_project: str | None = "ai-residency-week4-multimodal-captioning"
 
     checkpoint_dir: Path = field(default_factory=lambda: Path("checkpoints"))

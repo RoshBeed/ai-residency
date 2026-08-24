@@ -211,7 +211,7 @@ checkpoints/
 predictor_info.json
 
 # The labelled posts are the one input that cannot be regenerated locally — they
-# live in the roshbeed/ai-residency-week1-hn-posts dataset repo on the Hub instead,
+# live in the roshbeed/ai-residency-word-embeddings-data dataset repo on the Hub instead,
 # where data belongs rather than in git. data/ may also hold a locally cached copy.
 data/*
 

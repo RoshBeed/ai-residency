@@ -216,7 +216,7 @@ predictor_info.json
 data/*
 # Nothing is excepted any more. The Hacker News extract used to be, because it came
 # from a mirror that is not reachable from every network and so could not be fetched
-# again — it now lives in the roshbeed/ai-residency-week1-hn-posts dataset repo instead, which
+# again — it now lives in the roshbeed/ai-residency-word-embeddings-data dataset repo instead, which
 # is where data belongs rather than in git.
 
 # Course slides and team presentation (kept locally for reference, not committed)

@@ -84,7 +84,7 @@ class Config(BaseConfig):
     cbow_num_epochs: int = 5
     cbow_eval_word: str = "computer"
     cbow_eval_every: int = 10_000
-    text8_url: str = "https://huggingface.co/datasets/ardMLX/text8/resolve/main/text8"
+    text8_url: str = "https://huggingface.co/datasets/roshbeed/ai-residency-text8/resolve/main/text8"
 
     # Legacy single-example regressor demo, kept because the README documents it.
     regressor_learning_rate: float = 0.005
@@ -100,12 +100,12 @@ class Config(BaseConfig):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week2-vector-search-retrieval"
+    hf_repo_id: str | None = "roshbeed/ai-residency-vector-search-retrieval"
     # The tokenizer vocabulary, the CBOW corpus and the tokenized triples. All are
     # derived here rather than downloaded, and none are committed, so without a home
     # off this machine they existed only on the laptop that built them — which is why
     # the portfolio hub had to bind-mount data/ from a sibling repo.
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-week2-retrieval-data"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-vector-search-retrieval-data"
     wandb_project: str | None = "ai-residency-week2-vector-search-retrieval"
 
     # --- Data artifacts -----------------------------------------------------
