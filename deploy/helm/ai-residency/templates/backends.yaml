@@ -1,7 +1,7 @@
 {{- /*
 One Deployment + one ClusterIP Service per entry in .Values.backends. Service names
-are deliberately left as the plain map key (week1-word-embeddings, week2, ...) rather than Helm's
-usual release-prefixed fullname, so they resolve exactly like docker-compose's own
+are deliberately left as the plain map key (word-embeddings, vit-classifier, ...) rather than
+Helm's usual release-prefixed fullname, so they resolve exactly like docker-compose's own
 service-name DNS did, and so the frontend's <KEY>_API_URL env vars (see frontend.yaml)
 need no per-service special-casing. This assumes one release per namespace, same as
 the docker-compose file assumes one stack per compose project.
@@ -33,12 +33,17 @@ spec:
       labels:
         app.kubernetes.io/name: {{ $name }}
     spec:
+      {{- if $.Values.serviceAccount.create }}
+      serviceAccountName: {{ $.Values.serviceAccount.name }}
+      {{- end }}
+      {{- include "ai-residency.podSecurityContext" $ | nindent 6 }}
       {{- if or $svc.waitForRedis $svc.bootstrapCommand }}
       initContainers:
         {{- if $svc.waitForRedis }}
         - name: wait-for-redis
           image: "{{ $.Values.redis.image }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           command:
             - sh
             - -c
@@ -52,6 +57,7 @@ spec:
         - name: bootstrap-index
           image: "{{ $svc.image }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           {{- if $svc.bootstrapOptional }}
           # Populating the index is a convenience, not a precondition for serving: the
           # API degrades to "not ready, retry per request" on its own when the artifacts
@@ -98,18 +104,28 @@ spec:
         - name: {{ $name }}
           image: "{{ $svc.image }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           ports:
             - containerPort: {{ $svc.containerPort }}
           {{- if $.Values.probes.enabled }}
-          # Every backend exposes /health (ai-residency-common's serving helpers). Without
-          # probes, a Service starts routing traffic the moment the container process
-          # exists -- which for these pods is minutes before the model is loaded, so the
-          # first requests hit a pod that cannot answer them.
+          # Two endpoints, two meanings -- and they must not be the same URL.
           #
-          # startupProbe covers that cold start on its own budget (a backend may pull
-          # weights from the Hub before it can serve), and while it runs the liveness
-          # probe is suppressed -- otherwise a slow-but-healthy model load looks like a
-          # hang and gets restarted, forever.
+          # /health is liveness: the process is up. It answers 200 unconditionally, so a
+          # model that is slow to load, or absent entirely, never gets a pod restarted.
+          #
+          # /ready is readiness: this pod can answer a real request. It answers 503 while
+          # the weights are missing, which is what takes the pod out of the Service's
+          # endpoints instead of routing traffic to a backend that can only 503 back.
+          #
+          # Pointing both at /health -- which is what this chart used to do -- makes the
+          # readiness probe decorative: it cannot fail, so an unusable pod is marked Ready
+          # and gets traffic anyway, the exact failure the probe exists to prevent. The
+          # liveness probe had the mirror problem: a wedged model still answered 200, so it
+          # could never be restarted.
+          #
+          # startupProbe covers the cold start on its own budget (a backend may pull weights
+          # from the Hub first) and suppresses liveness while it runs, so a slow-but-healthy
+          # load is not mistaken for a hang.
           startupProbe:
             httpGet:
               path: {{ $svc.healthPath | default $.Values.probes.healthPath }}
@@ -118,7 +134,7 @@ spec:
             failureThreshold: {{ $.Values.probes.startup.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: {{ $svc.healthPath | default $.Values.probes.healthPath }}
+              path: {{ $svc.readyPath | default $.Values.probes.readyPath }}
               port: {{ $svc.containerPort }}
             periodSeconds: {{ $.Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ $.Values.probes.readiness.timeoutSeconds }}
@@ -131,17 +147,7 @@ spec:
             timeoutSeconds: {{ $.Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ $.Values.probes.liveness.failureThreshold }}
           {{- end }}
-          {{- if or $svc.memoryRequest $svc.memoryLimit }}
-          resources:
-            {{- if $svc.memoryRequest }}
-            requests:
-              memory: {{ $svc.memoryRequest }}
-            {{- end }}
-            {{- if $svc.memoryLimit }}
-            limits:
-              memory: {{ $svc.memoryLimit }}
-            {{- end }}
-          {{- end }}
+          {{- include "ai-residency.resources" (dict "ctx" $ "spec" $svc) | nindent 10 }}
           {{- if or $.Values.secrets.hfToken $.Values.secrets.wandbApiKey }}
           envFrom:
             # optional: a release installed without credentials still starts, and its
@@ -171,9 +177,7 @@ spec:
       volumes:
         {{- range $vol := $svc.volumes }}
         - name: {{ $vol.name }}
-          hostPath:
-            path: {{ tpl $vol.hostPath $ }}
-            type: {{ $vol.type }}
+          {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" $vol) | nindent 10 }}
         {{- end }}
       {{- end }}
 ---

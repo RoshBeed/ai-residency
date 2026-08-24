@@ -1,34 +1,33 @@
 # Default values for ai-residency.
 #
-# This chart is the Kubernetes analog of this repo's own docker-compose.yml -- see
-# that file's comments for *why* each remaining volume mount exists (the Hugging Face
-# are gitignored from the published image, so real artifacts get mounted in at runtime
-# from the sibling ai-residency-weekN-... repo on the host instead). It targets a single-node
-# cluster running on the same host as those sibling repos -- built for and verified
-# against Docker Desktop's built-in Kubernetes.
+# The Kubernetes analog of this repo's own docker-compose.yml. Both bring up the nine
+# backends, Redis and the frontend from the same images; this adds what compose has no
+# equivalent for -- probes, resource requests, and a security context.
+#
+# Nothing here mounts a checkpoint. Every runtime is ephemeral: a container, a CI runner
+# and a rented GPU box all start with an empty disk, so each service resolves its weights
+# from the Hugging Face Hub at startup. The model and dataset repos are public, so a
+# release installed with no credentials at all still comes up and serves.
 
-# Root directory on the *node's host filesystem* under which this repo and its six
-# the repository root. No checkpoint volumes: the runtime is ephemeral, so services
-# so every hostPath volume below is
-# written as a Go template string and rendered with `tpl` against this value, so
-# moving the whole portfolio to a different path only requires changing this one line.
-# This only works because Docker Desktop's Kubernetes node's filesystem *is* the Mac's
-# filesystem -- a real multi-node cluster would need actual artifact hosting (git-lfs,
-# release assets, DVC) instead, the same caveat already documented in this repo's own
-# README for the docker-compose version.
-hostRoot: /Users/rosh/mlx/ai-residency
-
-# The Hugging Face model cache on the *node's host filesystem*. Deliberately a
-# separate value from hostRoot: the cache lives under the user's home directory, not
-# under the portfolio checkout, so deriving it from hostRoot silently mounts an empty
-# directory (DirectoryOrCreate happily creates one) and every pod re-downloads several
-# GB of weights on each cold start -- the exact opposite of what the mount is for.
-# Compose expresses the same path as ${HOME}/.cache/huggingface.
-hfCachePath: /Users/rosh/.cache/huggingface
+# The Hugging Face model cache on the *node's* filesystem, mounted by the three services
+# whose backbones are large enough that re-downloading them on every pod restart hurts.
+# It is a convenience, not a dependency -- an empty cache just means a slower cold start.
+#
+# This is a hostPath, which ties those three to a single-node cluster (it is verified
+# against Docker Desktop's built-in Kubernetes, whose node filesystem is the Mac's).
+# On a real multi-node cluster, point them at a PersistentVolumeClaim instead:
+#   --set hfCache.mode=pvc --set hfCache.claimName=<your-claim>
+hfCache:
+  # "hostPath" (single-node, the default) or "pvc" (any cluster), or "none" to run with
+  # no cache at all and let every pod download its own copy.
+  mode: hostPath
+  hostPath: /Users/rosh/.cache/huggingface
+  claimName: ""
 
 image:
-  # Every image is pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), pushed
-  # there by each week repo's own `make docker-push-serve` / `docker-push-train`.
+  # Images are pulled from Docker Hub under `roshb` (Docker Hub account). That is a
+  # different account from `roshbeed` (Hugging Face), which owns the model and dataset
+  # repos -- the two are not interchangeable.
   #
   # Locally-built images are NOT visible to this cluster. Docker Desktop's Kubernetes
   # runs the node as a kind container with its own containerd image store, so a
@@ -72,10 +71,14 @@ train:
     LOG_LEVEL: "INFO"
 
 # Liveness/readiness/startup probes for every backend and the frontend. Compose has no
-# equivalent, so this is Kubernetes-specific -- and it matters more here than it looks:
-# without a readinessProbe a Service adds a pod to its endpoints as soon as the
-# container starts, which for these pods is minutes before the model has finished
-# loading, so early requests are routed to a backend that cannot answer them.
+# equivalent, so this is Kubernetes-specific.
+#
+# The two paths are deliberately different endpoints, and that is the whole point.
+# /health is liveness and always answers 200 -- a model that is slow to load, or missing,
+# must not get a pod restarted. /ready answers 503 until the service can actually serve,
+# so an unusable pod is kept out of its Service's endpoints instead of being sent traffic
+# it can only 503 back. Pointing both at /health gives you a readiness probe that cannot
+# fail, which is the same as having no readiness probe at all.
 #
 # The startup budget is deliberately generous (10s x 60 = up to 10 minutes): a cold
 # start may pull weights from the Hugging Face Hub before the app can serve. While the
@@ -84,6 +87,7 @@ train:
 probes:
   enabled: true
   healthPath: /health
+  readyPath: /ready
   startup:
     periodSeconds: 10
     failureThreshold: 60
@@ -96,6 +100,44 @@ probes:
     timeoutSeconds: 5
     failureThreshold: 3
 
+# Nothing here talks to the Kubernetes API, so no pod needs a mounted API token.
+serviceAccount:
+  create: true
+  name: ai-residency
+
+# Restricts who may reach the backends and Redis. Inert on a cluster whose CNI does not
+# enforce NetworkPolicy (Docker Desktop's does not), so it costs nothing to leave on.
+networkPolicy:
+  enabled: true
+
+# Applied to every pod and every container in this chart -- backends, frontend, Redis,
+# the init containers and the training Jobs.
+#
+# Nothing here needs root: each image runs a Python process that reads its own code and
+# writes to a cache directory. Running as root anyway is the default only because it is
+# the default, and it is the first thing any cluster with Pod Security Standards
+# enforced will reject.
+#
+# readOnlyRootFilesystem is off: the Hugging Face client writes its cache, and several
+# services write temp files for ffmpeg. Confining those to an emptyDir and turning this
+# on is the next step, not a blocker for dropping root.
+securityContext:
+  enabled: true
+  pod:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    # Makes every mounted volume group-writable by the pod's fsGroup, which is what lets
+    # a non-root UID write the HF cache it was previously writing as root.
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  container:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: ["ALL"]
+
 frontend:
   image: roshb/ai-residency-frontend
   containerPort: 8501
@@ -103,6 +145,7 @@ frontend:
   # Streamlit's own health endpoint -- the frontend is not a FastAPI backend and has
   # no /health of its own.
   healthPath: /_stcore/health
+  cpuRequest: 100m
   memoryRequest: 512Mi
   memoryLimit: 768Mi
   service:
@@ -112,10 +155,13 @@ frontend:
     type: LoadBalancer
 
 redis:
-  image: redis/redis-stack-server:latest
+  # Pinned, like every other image here: `latest` silently changes what a release
+  # brings up between two installs of the same chart version.
+  image: redis/redis-stack-server:7.4.0-v3
   command: ["redis-stack-server", "--save", "", "--appendonly", "no"]
   port: 6379
   serviceName: redis
+  cpuRequest: 50m
   memoryRequest: 128Mi
   memoryLimit: 256Mi
 
@@ -140,15 +186,25 @@ redis:
 #   kubectl exec -n ai-residency <pod> -- \
 #     sh -c 'echo $(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))Mi'
 #
-#   frontend 379Mi   word-embeddings 2286Mi   content-scoring 1345Mi
-#   vector-search-retrieval 294Mi      vit-classifier / vit-seq2seq 447Mi combined                    multimodal-captioning 5410Mi
-#   whisper-fine-tuning 1845Mi     rlhf-ppo 4640Mi                   redis 12Mi
+#   frontend 379Mi                 word-embeddings 2286Mi     content-scoring 1345Mi
+#   vector-search-retrieval 294Mi  vit-classifier 447Mi       vit-seq2seq 447Mi
+#   multimodal-captioning 5410Mi   whisper-fine-tuning 1845Mi rlhf-ppo 4640Mi
+#   redis 12Mi
 #
-# Requests are the peak rounded up, and they sum to ~18.6GiB. That is the number that
-# has to fit: this host reports 23.4GiB allocatable, so everything schedules. Read the
-# real figure rather than trusting one written here, since it moves whenever Docker
-# Desktop's memory slider does:
+# Requests are the peak rounded up, and they sum to 21632Mi (~21.1GiB) across all
+# eleven pods. That is the number that has to fit: this host reports 23.4GiB
+# allocatable, so everything schedules, with little to spare. Read the real figure
+# rather than trusting one written here, since it moves whenever Docker Desktop's
+# memory slider does:
 # `kubectl get node -o jsonpath='{.items[0].status.allocatable.memory}'`
+#
+# cpuRequest is set too, and deliberately low. It is not a measurement -- these are
+# bursty inference pods that idle near zero and spike to a full core for the length of
+# one request. The request is what the scheduler reserves and what decides who gets
+# throttled under contention; setting it to the burst would leave the node unschedulable
+# for a load that almost never happens. No CPU *limit* is set anywhere on purpose: a CPU
+# limit throttles rather than kills, and throttling a model mid-inference turns a fast
+# request into a slow one for no benefit on a single-tenant node.
 #
 # memoryLimit is also set on every container (requests alone gate scheduling, not
 # runtime usage). Limits sit ~40% above the measured peak. That headroom is the point:
@@ -156,33 +212,36 @@ redis:
 # and it was OOMKilled in normal use. Limits may sum past allocatable; unlike requests
 # they are a burst ceiling, not a reservation.
 backends:
-  # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference (Dockerfile.serve) ---
+  # --- CBOW vectors: nearest-neighbour and analogy lookup ---
   word-embeddings:
     image: roshb/ai-residency-word-embeddings-serve
     trainImage: roshb/ai-residency-word-embeddings-train
     trainCommand: ["python", "-m", "word_embeddings.train"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 2560Mi
     memoryLimit: 3584Mi
     env: {}
 
-  # --- Week 1b: content-scoring — the regression head over those frozen vectors ---
+  # --- The regression head over those frozen vectors ---
   content-scoring:
     image: roshb/ai-residency-content-scoring-serve
     trainImage: roshb/ai-residency-content-scoring-train
     trainCommand: ["python", "-m", "content_scoring.train"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 1536Mi
     memoryLimit: 2048Mi
     env: {}
 
-  # --- Week 2: needs its own Redis (HNSW retrieval index) ---
+  # --- Dual-encoder retrieval: the one backend that needs Redis (HNSW index) ---
   vector-search-retrieval:
     image: roshb/ai-residency-vector-search-retrieval-serve
     trainImage: roshb/ai-residency-vector-search-retrieval-train
     # The encoder towers. The CBOW and triples stages need their own data prep.
     trainCommand: ["python", "-m", "models.training"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
     # Blocks on redis actually accepting connections before the app container
@@ -221,6 +280,7 @@ backends:
       AI_RESIDENCY_CLASSIFIER_EPOCHS: "1"
     trainCommand: ["python", "-m", "vit_classifier.trainer"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
     env: {}
@@ -231,27 +291,26 @@ backends:
     trainImage: roshb/ai-residency-vit-seq2seq-train
     trainCommand: ["python", "-m", "vit_seq2seq.trainer"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 512Mi
     memoryLimit: 1024Mi
     env: {}
 
-  # --- Multimodal captioning ---
-  # baked in (including /caption/stream SSE support); mounting all of /app over the
-  # image would shadow those changes.
+  # --- Multimodal captioning: CLIP -> adapter -> Qwen3 ---
   multimodal-captioning:
     image: roshb/ai-residency-multimodal-captioning-serve
     trainImage: roshb/ai-residency-multimodal-captioning-train
     trainCommand: ["python", "-m", "multimodal_captioning.training"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 6144Mi
     memoryLimit: 7680Mi
     env:
-      HF_HOME: /root/.cache/huggingface
+      HF_HOME: /home/app/.cache/huggingface
     volumes:
       - name: hf-cache
-        hostPath: "{{ .Values.hfCachePath }}"
-        mountPath: /root/.cache/huggingface
-        type: DirectoryOrCreate
+        mountPath: /home/app/.cache/huggingface
+        kind: hfCache
 
   # --- Whisper fine-tuning ---
   whisper-fine-tuning:
@@ -259,6 +318,7 @@ backends:
     trainImage: roshb/ai-residency-whisper-fine-tuning-train
     trainCommand: ["python", "-m", "whisper_fine_tuning.training"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 2048Mi
     memoryLimit: 2816Mi
     env: {}
@@ -269,14 +329,14 @@ backends:
     trainImage: roshb/ai-residency-speech-emotion-recognition-train
     trainCommand: ["python", "-m", "speech_emotion_recognition.training"]
     containerPort: 8000
+    cpuRequest: 100m
     memoryRequest: 2048Mi
     memoryLimit: 2816Mi
     env: {}
     volumes:
       - name: hf-cache
-        hostPath: "{{ .Values.hfCachePath }}"
-        mountPath: /root/.cache/huggingface
-        type: DirectoryOrCreate
+        mountPath: /home/app/.cache/huggingface
+        kind: hfCache
 
   # --- RLHF / PPO ---
   rlhf-ppo:
@@ -287,18 +347,16 @@ backends:
     containerPort: 8000
     # Three SmolLM2-135M copies (~270MB each) + DeBERTa reward model (~1.2GB)
     # ≈ 2GB of weights. Peak during PPO step ~4-5GB with activations.
+    cpuRequest: 100m
     memoryRequest: 5120Mi
     memoryLimit: 6656Mi
     env:
-      HF_HOME: /root/.cache/huggingface
+      HF_HOME: /home/app/.cache/huggingface
     volumes:
       # The HF model cache so a pod restart (OOM or otherwise) does not force a fresh
       # download of SmolLM2-135M + the DeBERTa reward model on every cold start. Also
       # needed because this pod has no other way to persist the cache: the container
       # filesystem is ephemeral.
       - name: hf-cache
-        hostPath: "{{ .Values.hfCachePath }}"
-        mountPath: /root/.cache/huggingface
-        type: DirectoryOrCreate
-      # Checkpoints written by PPOTrainer._save_ckpt so repeated calls compound
-      # across pod restarts, not just within one lifetime.
+        mountPath: /home/app/.cache/huggingface
+        kind: hfCache

@@ -1,7 +1,7 @@
 {{- /*
 <KEY>_API_URL env vars are generated from .Values.backends' keys, not hardcoded --
 adding a 7th backend to values.yaml automatically wires the frontend to it, same as
-docker-compose.yml's explicit (hand-written) WEEK1_API_URL..WEEK6_API_URL block does
+docker-compose.yml's explicit (hand-written) <SERVICE>_API_URL block does
 today, just data-driven instead of copy-pasted. Hyphens in a key (word-embeddings)
 become underscores in the env var name so the frontend's os.getenv still matches.
 */ -}}
@@ -22,10 +22,15 @@ spec:
       labels:
         app.kubernetes.io/name: frontend
     spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- end }}
+      {{- include "ai-residency.podSecurityContext" . | nindent 6 }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" . | nindent 10 }}
           ports:
             - containerPort: {{ .Values.frontend.containerPort }}
           {{- if .Values.probes.enabled }}
@@ -53,17 +58,7 @@ spec:
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           {{- end }}
-          {{- if or .Values.frontend.memoryRequest .Values.frontend.memoryLimit }}
-          resources:
-            {{- if .Values.frontend.memoryRequest }}
-            requests:
-              memory: {{ .Values.frontend.memoryRequest }}
-            {{- end }}
-            {{- if .Values.frontend.memoryLimit }}
-            limits:
-              memory: {{ .Values.frontend.memoryLimit }}
-            {{- end }}
-          {{- end }}
+          {{- include "ai-residency.resources" (dict "ctx" . "spec" .Values.frontend) | nindent 10 }}
           env:
             {{- range $name := (keys .Values.backends | sortAlpha) }}
             - name: {{ upper (replace "-" "_" $name) }}_API_URL

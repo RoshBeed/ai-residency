@@ -1,7 +1,7 @@
 apiVersion: v2
 name: ai-residency
 description: >-
-  All six AI Residency week backends (as standalone FastAPI containers) plus one
+  All nine AI Residency backends (as standalone FastAPI containers) plus one
   Streamlit frontend, deployed to a single-node Kubernetes cluster. Kubernetes analog
   of this repo's own docker-compose.yml -- same services, same env vars, same volume
   mounts, just expressed as Deployments/Services instead of compose services.

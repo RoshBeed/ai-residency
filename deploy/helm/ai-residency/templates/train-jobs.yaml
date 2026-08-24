@@ -34,10 +34,15 @@ spec:
       # Never: a failed training run should be inspected, not silently retried at
       # cost. backoffLimit: 0 above says the same thing to the Job controller.
       restartPolicy: Never
+      {{- if $.Values.serviceAccount.create }}
+      serviceAccountName: {{ $.Values.serviceAccount.name }}
+      {{- end }}
+      {{- include "ai-residency.podSecurityContext" $ | nindent 6 }}
       containers:
         - name: train
           image: "{{ $svc.trainImage }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           command:
             {{- toYaml $svc.trainCommand | nindent 12 }}
           envFrom:
@@ -68,8 +73,6 @@ spec:
           volumeMounts:
             {{- range $vol := $svc.volumes }}
             - name: {{ $vol.name }}
-              # Deliberately not read-only, unlike the serving mounts: this is the
-              # process that writes the checkpoint.
               mountPath: {{ $vol.mountPath }}
             {{- end }}
           {{- end }}
@@ -77,9 +80,7 @@ spec:
       volumes:
         {{- range $vol := $svc.volumes }}
         - name: {{ $vol.name }}
-          hostPath:
-            path: {{ tpl $vol.hostPath $ }}
-            type: {{ $vol.type }}
+          {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" $vol) | nindent 10 }}
         {{- end }}
       {{- end }}
 ---
