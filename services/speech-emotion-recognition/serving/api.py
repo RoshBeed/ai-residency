@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from ai_residency_common import (
+    add_health_routes,
     decode_audio,
     get_logger,
     resolve_checkpoint,
@@ -87,18 +88,17 @@ app = FastAPI(
 )
 
 
-@app.get("/health")
-@app.get("/")
-async def root() -> dict[str, Any]:
-    """Health check, also reporting whether the model is live and where it came from."""
-    return {
-        "status": "ok",
+add_health_routes(
+    app,
+    ready=lambda: _model is not None,
+    detail=lambda: {
         "model_loaded": _model is not None,
         "checkpoint_loaded": _model is not None,
         "checkpoint_source": _checkpoint_source,
         "emotions": list(_config.emotions),
         "device": str(_device) if _device is not None else "none",
-    }
+    },
+)
 
 
 @app.post("/predict", response_model=EmotionResponse)

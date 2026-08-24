@@ -1,9 +1,8 @@
 """Shared helpers for the AI Residency portfolio.
 
-Six standalone repos (one per residency week) depend on this package so that device
-selection, logging, checkpoint format, config fields, seeding, artifact hosting and
-experiment tracking are identical across all of them instead of reimplemented six
-times.
+Every service in this workspace depends on this package, so device selection, logging,
+checkpoint format, config fields, seeding, artifact hosting, experiment tracking and the
+liveness/readiness contract are defined once instead of reimplemented ten times.
 
 Importing this package loads a `.env` file if one is nearby, so `HF_TOKEN` and
 `WANDB_API_KEY` reach `push_checkpoint` and `init_tracking` without being exported by
@@ -23,6 +22,7 @@ from ai_residency_common.hub import (
 )
 from ai_residency_common.logging import get_logger
 from ai_residency_common.serving import (
+    add_health_routes,
     decode_audio,
     decode_image,
     load_model,
@@ -41,6 +41,7 @@ load_env()
 __all__ = [
     "BaseConfig",
     "ResolvedCheckpoint",
+    "add_health_routes",
     "decode_audio",
     "decode_image",
     "finish_tracking",

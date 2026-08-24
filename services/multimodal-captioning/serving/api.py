@@ -8,17 +8,26 @@ Server-Sent Event the moment the model emits it (greedy decoding, autoregressive
 so the frontend can animate the caption being written rather than showing a spinner.
 
 Binary input goes base64-encoded in a pydantic field rather than as a multipart upload,
-matching the convention the other week repos already use.
+matching the convention the other backends already use.
 """
 
 import queue
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import decode_image, get_device, get_logger, run_app, stream_sse
+from ai_residency_common import (
+    add_health_routes,
+    decode_image,
+    get_device,
+    get_logger,
+    run_app,
+    stream_sse,
+)
 from config import CHECKPOINTS, Config
 from multimodal_captioning.captioning import (
     CaptionResult,
@@ -31,9 +40,35 @@ __all__ = ["app"]
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="Image Captioning API (CLIP + Qwen3)", version="1.0.0")
-
 _config = Config()
+
+# Whether CLIP and Qwen3 finished loading. Adapters stay lazy -- which one to use is a
+# per-request choice -- but the two backbones are the same for every request, so they
+# are warmed once at startup. That is also what makes readiness meaningful here: the
+# alternative signal, "has any adapter been loaded yet", is false on a perfectly
+# healthy pod that has simply not been asked for a caption, so a readiness probe on it
+# would keep the pod out of the Service forever.
+_backbones_ready = False
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Warm CLIP and Qwen3 so the first caption request does not pay for the load."""
+    global _backbones_ready
+    try:
+        load_backbones(_config)
+        _backbones_ready = True
+        logger.info("Backbones warm; ready to caption")
+    except Exception as error:
+        logger.error("Could not load the backbones, /ready will report 503: %s", error)
+    yield
+
+
+app = FastAPI(
+    title="Image Captioning API (CLIP + Qwen3)",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 class CaptionRequest(BaseModel):
@@ -61,26 +96,20 @@ class CaptionResponse(BaseModel):
     prompt_used: str = ""
 
 
-@app.get("/health")
-@app.get("/")
-def health() -> dict[str, Any]:
-    """Liveness check used by compose and the Helm chart.
-
-    Registered on `/` as well, matching the other five backends. This one answered
-    404 there, which made the hub's `make status` (which curls `/`) report it as
-    down while it was serving captions perfectly well.
-
-    Adapters load lazily on the first request, so `checkpoint_source` is empty until
-    one has been captioned with. It then records whether those weights came off local
-    disk or the Hub.
-    """
-    return {
-        "status": "ok",
+# `checkpoint_source` stays empty until a caption has actually been generated, because
+# adapters load on demand. It then records whether those weights came off local disk
+# or the Hub.
+add_health_routes(
+    app,
+    ready=lambda: _backbones_ready,
+    detail=lambda: {
         "device": str(get_device()),
         "checkpoints": {name: info.description for name, info in CHECKPOINTS.items()},
+        "backbones_loaded": _backbones_ready,
         "checkpoint_loaded": bool(CHECKPOINT_SOURCES),
         "checkpoint_source": dict(CHECKPOINT_SOURCES),
-    }
+    },
+)
 
 
 @app.post("/caption", response_model=CaptionResponse)

@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import format_sse, get_logger, run_app
+from ai_residency_common import add_health_routes, format_sse, get_logger, run_app
 from config import Config
 from retrieval import query_engine
 from retrieval.query_engine import (
@@ -97,18 +97,14 @@ app = FastAPI(
 )
 
 
-@app.get("/health")
-@app.get("/")
-def root() -> dict[str, Any]:
-    """Liveness check, also reporting where the query tower's weights came from.
-
-    Redis readiness is still reported by `/query`, not here.
-    """
-    return {
-        "status": "ok",
+add_health_routes(
+    app,
+    ready=lambda: query_engine.query_tower_source != "none",
+    detail=lambda: {
         "checkpoint_loaded": query_engine.query_tower_source != "none",
         "checkpoint_source": query_engine.query_tower_source,
-    }
+    },
+)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -158,7 +154,7 @@ def query_stream(request: QueryRequest) -> StreamingResponse:
 
     The retrieval itself is fast (one encoding + one Redis KNN search), so these
     stages are fine-grained milestones within it. This endpoint exists so every
-    week's API has a consistent SSE contract.
+    service's API has a consistent SSE contract.
 
     Args:
         request: The query text and how many results to return.

@@ -7,14 +7,13 @@ once at startup, average a title's word vectors, run them through the scorer.
 
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import format_sse, get_logger, run_app
+from ai_residency_common import add_health_routes, format_sse, get_logger, run_app
 from config import Config
 from content_scoring.predict import ModelState, create_title_embedding, load_models, predict_score
 
@@ -84,18 +83,19 @@ async def root() -> dict[str, str]:
     }
 
 
-@app.get("/health")
-async def health() -> dict[str, Any]:
-    """Liveness check used by compose and the portfolio hub."""
-    return {
-        "status": "ok",
+add_health_routes(
+    app,
+    ready=lambda: state.is_loaded,
+    detail=lambda: {
         "model_loaded": state.is_loaded,
         "checkpoint_loaded": state.is_loaded,
         "checkpoint_source": {
             "cbow": state.cbow_source,
             "predictor": state.predictor_source,
         },
-    }
+    },
+    include_root=False,
+)
 
 
 @app.post("/predict", response_model=PredictionResponse)
