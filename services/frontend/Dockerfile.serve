@@ -15,10 +15,18 @@
 # Named Dockerfile.serve like every other service's, so the one CI job and the one
 # make target reach it without a special case for this directory.
 
-FROM python:3.11-slim
+# Pinned by digest for the same reason Dockerfile.base is: the tag is rebuilt on every
+# base-OS patch, so an unpinned tag makes two builds of one commit differ.
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 
 WORKDIR /app
 RUN pip install --no-cache-dir uv
+
+# This image does not build FROM ai-residency-base-serve, so it creates the same
+# unprivileged user that image would have provided. UID 1000 matches the chart's
+# securityContext.runAsUser, here as everywhere else.
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/app app
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY pyproject.toml uv.lock ./
@@ -34,5 +42,13 @@ COPY services/frontend services/frontend
 
 WORKDIR /app/services/frontend
 ENV PATH="/app/.venv/bin:$PATH"
+# Drop to the unprivileged user the base image created. Everything above this line
+# installs; nothing below it needs root. The service directory is chowned because a
+# few services write into it at run time (temp files, a checkpoint directory), and a
+# root-owned working directory would make those fail on the first request instead of
+# at build time. UID 1000 matches securityContext.runAsUser in the Helm chart.
+RUN chown -R app:app /app/services/frontend
+USER app
+
 EXPOSE 8501
 CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
