@@ -38,7 +38,7 @@ image:
   pullPolicy: IfNotPresent
   # Pinned to a commit rather than `latest`: one tag names the exact set built
   # and verified together. `--set image.tag=latest` tracks the tip instead.
-  tag: sha-322314c548a6efe819cc4f9c18c4601edd48b5a1
+  tag: sha-8e0e1c1c09db44cede681e639d673c9a1719c74e
 
 # Credentials, mounted into every backend and every training Job as environment.
 # Deliberately empty here: `make helm-install` / `helm-upgrade` fill them with
