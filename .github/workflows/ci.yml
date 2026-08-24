@@ -323,10 +323,21 @@ jobs:
   # scanning -- a lockfile audit misses everything the base OS contributes.
   #
   # Scans the serving base rather than all ten images: they share every layer below
-  # their own source, so ten scans would report the same CVEs ten times. Reports rather
-  # than blocks (`exit-code: 0`): a base-image CVE with no fix available should not
-  # stop a portfolio deploy, but it should be visible. Results land in the repository's
-  # Security tab.
+  # their own source, so ten scans would report the same CVEs ten times.
+  #
+  # Results go to the job summary, not to the Security tab. Uploading SARIF is code
+  # scanning, and code scanning on a *private* repository needs GitHub Advanced
+  # Security -- without it the upload fails with "Resource not accessible by
+  # integration" no matter what permissions the job declares. The scan itself ran fine;
+  # only the upload could not work here. A summary table needs no entitlement, shows up
+  # on the run page, and is the right shape for a report that informs rather than gates.
+  #
+  # If this repository ever goes public, swapping this for
+  # github/codeql-action/upload-sarif gets the Security tab back.
+  #
+  # Reports rather than blocks (exit-code 0): a base-image CVE with no fix available
+  # should be visible, not a merge gate. ignore-unfixed drops the ones nothing can be
+  # done about.
   scan:
     name: Scan the published base image
     needs: images-base
@@ -334,7 +345,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v5
 
@@ -342,14 +352,24 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
-          format: sarif
-          output: trivy.sarif
+          format: table
+          output: trivy.txt
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "0"
 
-      - name: Upload to the Security tab
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy.sarif
-          category: trivy-base-serve
+      - name: Report
+        run: |
+          {
+            echo "## Trivy — ai-residency-base-serve"
+            echo
+            echo "\`sha-${{ github.sha }}\` · CRITICAL and HIGH, fixable only."
+            echo
+            if [ -s trivy.txt ]; then
+              echo '```'
+              cat trivy.txt
+              echo '```'
+            else
+              echo "No fixable CRITICAL or HIGH vulnerabilities."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
