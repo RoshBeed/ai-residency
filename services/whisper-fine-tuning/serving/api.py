@@ -21,6 +21,8 @@ that wasn't that exact clip.
 import os
 import queue
 import tempfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import torch
@@ -28,8 +30,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ai_residency_common import add_health_routes, get_logger, run_app, stream_sse
 from ai_residency_common import decode_audio as decode_base64_audio
-from ai_residency_common import get_logger, run_app, stream_sse
 from config import Config
 from whisper_fine_tuning.models import (
     decode_audio,
@@ -48,10 +50,36 @@ config = Config()
 # The same ground-truth text the CLI demo fine-tunes toward.
 TARGET_TEXT = config.target_text
 
+_weights_ready = False
+"""Whether Whisper-tiny's weights resolved at startup. Reported by `/ready`."""
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Resolve Whisper-tiny once at boot, so readiness means something here.
+
+    This service has no checkpoint of its own to load: `/transcribe` deliberately
+    builds a *fresh* copy per request, because fine-tuning mutates it in place. That
+    left nothing for a readiness probe to check. Loading the weights once at startup
+    both proves they are fetchable -- on a cold pod they come over the network -- and
+    populates the on-disk cache every later request reads from, so the first caller
+    no longer pays the download.
+    """
+    global _weights_ready
+    try:
+        load_whisper_model(config)
+        _weights_ready = True
+        logger.info("Whisper weights resolved; ready to transcribe")
+    except Exception as error:
+        logger.error("Could not resolve the Whisper weights, /ready will report 503: %s", error)
+    yield
+
+
 app = FastAPI(
     title="Whisper Fine-Tuning API",
-    description="Base-vs-fine-tuned Whisper transcription comparison (Week 5).",
+    description="Base-vs-fine-tuned Whisper transcription comparison.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -83,11 +111,14 @@ class TranscribeResponse(BaseModel):
     fine_tune_trace: list[FineTuneStep] = []
 
 
-@app.get("/health")
-@app.get("/")
-def health() -> dict[str, Any]:
-    """Liveness check used by compose and the Helm chart."""
-    return {"status": "ok", "device": str(config.device)}
+add_health_routes(
+    app,
+    ready=lambda: _weights_ready,
+    detail=lambda: {
+        "device": str(config.device),
+        "checkpoint_loaded": _weights_ready,
+    },
+)
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)

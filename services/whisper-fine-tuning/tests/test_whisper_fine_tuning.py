@@ -81,7 +81,9 @@ def test_health_endpoint_reports_device() -> None:
 def test_transcribe_rejects_invalid_base64() -> None:
     client = TestClient(app)
     response = client.post("/transcribe", json={"audio_data": "not base64!!"})
-    assert response.status_code == 400
+    # 422, not 400: the request is well-formed, one field's content is unprocessable.
+    # Shared with every other backend via ai_residency_common.decode_audio.
+    assert response.status_code == 422
 
 
 def test_transcribe_rejects_empty_audio() -> None:

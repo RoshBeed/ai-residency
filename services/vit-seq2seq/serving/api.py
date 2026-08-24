@@ -29,6 +29,7 @@ from PIL.Image import Image as PILImage
 from pydantic import BaseModel
 
 from ai_residency_common import (
+    add_health_routes,
     get_device,
     get_logger,
     load_checkpoint,
@@ -232,18 +233,17 @@ def predict_seq2seq(image_tensor: torch.Tensor) -> tuple[str, float, list[DigitT
     return prediction, confidence, digit_trace
 
 
-@app.get("/health")
-@app.get("/")
-async def root() -> dict[str, Any]:
-    """Health check, also reporting whether the model is live and where it came from."""
-    return {
+add_health_routes(
+    app,
+    ready=lambda: _seq2seq is not None,
+    detail=lambda: {
         "message": "Vision Transformer seq2seq API",
-        "status": "ok",
         "model_loaded": _seq2seq is not None,
         "checkpoint_loaded": _seq2seq is not None,
         "checkpoint_source": _checkpoint_source,
         "device": str(_device),
-    }
+    },
+)
 
 
 @app.get("/models")

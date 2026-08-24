@@ -9,14 +9,19 @@ second implementation.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ai_residency_common import get_logger, load_checkpoint, resolve_required, run_app
+from ai_residency_common import (
+    add_health_routes,
+    get_logger,
+    load_checkpoint,
+    resolve_required,
+    run_app,
+)
 from config import Config
 
 __all__ = ["app"]
@@ -30,17 +35,25 @@ class EmbeddingState:
     def __init__(self) -> None:
         self.embeddings: torch.Tensor | None = None
         self.word_to_index: dict[str, int] = {}
+        self.index_to_word: dict[int, str] = {}
         self.source: str = "none"
+
+    def load(self, embeddings: torch.Tensor, word_to_index: dict[str, int], source: str) -> None:
+        """Adopt a loaded checkpoint, inverting the vocabulary once.
+
+        `index_to_word` used to be a property, which rebuilt the whole inverse dict on
+        every read -- and it is read on the hot path of both `/nearest` and `/analogy`,
+        so every request paid a full pass over the vocabulary to answer a top-k query.
+        """
+        self.embeddings = embeddings
+        self.word_to_index = word_to_index
+        self.index_to_word = {index: word for word, index in word_to_index.items()}
+        self.source = source
 
     @property
     def is_loaded(self) -> bool:
         """Whether the checkpoint was loaded successfully."""
         return self.embeddings is not None
-
-    @property
-    def index_to_word(self) -> dict[int, str]:
-        """Inverse of the vocabulary, for turning a nearest neighbour back into a word."""
-        return {index: word for word, index in self.word_to_index.items()}
 
 
 state = EmbeddingState()
@@ -63,11 +76,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Load the checkpoint on startup, leaving the service degraded if it is absent."""
     try:
         config = Config()
-        path, state.source = resolve_required(config.cbow_checkpoint, config.hf_repo_id)
+        path, source = resolve_required(config.cbow_checkpoint, config.hf_repo_id)
         checkpoint = load_checkpoint(path)
-        state.embeddings = checkpoint["model_state_dict"]["in_embed.weight"].cpu()
-        state.word_to_index = checkpoint["extra"]["word_to_lemma_index"]
-        logger.info("Loaded %s embeddings from %s", tuple(state.embeddings.shape), state.source)
+        embeddings = checkpoint["model_state_dict"]["in_embed.weight"].cpu()
+        state.load(embeddings, checkpoint["extra"]["word_to_lemma_index"], source)
+        logger.info("Loaded %s embeddings from %s", tuple(embeddings.shape), source)
     except (FileNotFoundError, KeyError, RuntimeError) as error:
         logger.error("Could not load embeddings, /nearest will return 503: %s", error)
     yield
@@ -81,11 +94,16 @@ app = FastAPI(
 )
 
 
+# `k` is bounded rather than free. Unbounded, a request for k=10**9 reached `topk` and
+# came back as a 500 for what is a client error.
+MAX_K = 100
+
+
 class NearestRequest(BaseModel):
     """Input for `/nearest`."""
 
     word: str
-    k: int = 5
+    k: int = Field(default=5, ge=1, le=MAX_K)
 
 
 class AnalogyRequest(BaseModel):
@@ -94,7 +112,7 @@ class AnalogyRequest(BaseModel):
     a: str
     b: str
     c: str
-    k: int = 1
+    k: int = Field(default=1, ge=1, le=MAX_K)
 
 
 class NearestResponse(BaseModel):
@@ -116,15 +134,16 @@ async def root() -> dict[str, str]:
     }
 
 
-@app.get("/health")
-async def health() -> dict[str, Any]:
-    """Liveness check used by compose and the portfolio hub."""
-    return {
-        "status": "ok",
+add_health_routes(
+    app,
+    ready=lambda: state.is_loaded,
+    detail=lambda: {
         "model_loaded": state.is_loaded,
         "checkpoint_loaded": state.is_loaded,
         "checkpoint_source": state.source,
-    }
+    },
+    include_root=False,
+)
 
 
 @app.post("/nearest", response_model=NearestResponse)
