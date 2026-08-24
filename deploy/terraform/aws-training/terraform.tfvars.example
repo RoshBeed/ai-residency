@@ -1,27 +1,43 @@
-# AWS Configuration
+# Copy to terraform.tfvars and fill in. That file is gitignored; this one is committed,
+# so no real token belongs here.
+
+# --- Instance -------------------------------------------------------------------
 aws_region    = "us-east-1"
 instance_type = "g4dn.xlarge" # 1x NVIDIA T4 GPU, 4 vCPUs, 16 GB RAM
-spot_price    = "0.50"        # Maximum $0.50 per hour
 volume_size   = 100
 
-# SSH Configuration
-ssh_key_path = "~/.ssh/id_rsa"
+# Empty bids the on-demand price, which is what AWS recommends: you still pay the
+# current spot price, and the request is not left unfulfillable when the market sits
+# above a hardcoded cap. Set a string like "0.50" only to enforce a hard ceiling.
+spot_price = ""
 
-# Credentials -- training pushes its own checkpoint to the Hub and logs to W&B, this
-# module doesn't re-upload anything separately.
+# --- Access ---------------------------------------------------------------------
+# Empty (the default) creates NO inbound rule at all. Reach the instance with
+#   aws ssm start-session --target $(terraform output -raw instance_id)
+# which needs no open port. Only set these if you specifically want SSH, and then set
+# it to your own address -- `curl -s ifconfig.me` -- never 0.0.0.0/0.
+allowed_ssh_cidr = ""
+ssh_key_name     = ""
+ssh_key_path     = "~/.ssh/id_rsa"
+
+# --- Credentials ----------------------------------------------------------------
+# Written to SSM Parameter Store as SecureString and read back by the instance through
+# its IAM role. They are not passed through user_data, which every process on the box
+# can read from the metadata service.
+#
+# Training pushes its own checkpoint to the Hub and logs to W&B; this module does not
+# re-upload anything separately.
 hf_token      = "hf_your_token_here" # https://huggingface.co/settings/tokens
 wandb_api_key = ""                   # optional -- omit and the run just logs offline
-
-# Which service to train. Push its image first: `make push SERVICE=<name>`.
-train_image   = "roshb/ai-residency-vit-classifier-train:latest"
-train_command = "" # e.g. "seq2seq" to override Week 3's default classifier stage
 
 # Only needed if train_image is a private Docker Hub repository.
 docker_hub_username = ""
 docker_hub_token    = ""
 
-# Training Configuration
-max_training_time = 24 # Maximum training time in hours before auto-termination
+# --- What to run ----------------------------------------------------------------
+# Push the image first: `make push SERVICE=<name>` at the repository root.
+train_image   = "roshb/ai-residency-vit-classifier-train:latest"
+train_command = "" # empty runs the image's own CMD; otherwise a full module path
 
-# Environment
-environment = "training"
+max_training_time = 24 # hours before auto-termination
+environment       = "training"
