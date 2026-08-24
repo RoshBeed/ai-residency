@@ -51,7 +51,7 @@ jobs:
       # The runner is x86-64, which is what the GPU instances are, so this is a
       # native build rather than the slow emulated one a Mac would do.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.base
@@ -113,7 +113,7 @@ jobs:
         if: >-
           github.event.inputs.services == 'all'
           || contains(github.event.inputs.services, matrix.service)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/${{ matrix.service }}/Dockerfile.train
