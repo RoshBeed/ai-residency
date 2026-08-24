@@ -1,39 +1,47 @@
-AI Residency Portfolio deployed to namespace "{{ .Release.Namespace }}".
+AI Residency portfolio deployed to namespace "{{ .Release.Namespace }}".
 
-Images are pulled from Docker Hub (roshbeed/ai-residency-weekN-serve / -train), published by each
-`make push SERVICE=<name>` at the repository root. If you've republished any
-image, pull it and roll the pods:
+Images are pulled from Docker Hub under `roshb`, published by CI on every push to main and
+tagged `sha-<commit>`. (`roshbeed` is the *Hugging Face* account that holds the weights and
+datasets -- different account, not interchangeable.)
 
-  docker pull roshb/ai-residency-word-embeddings-serve:latest   # (or whichever changed)
-  kubectl rollout restart deployment -n {{ .Release.Namespace }}
-  # or just: make helm-upgrade (re-applies the chart and restarts deployments for you)
+  Image tag in this release: {{ .Values.image.tag }}
 
 Frontend (LoadBalancer -- Docker Desktop binds this to localhost automatically):
 
   kubectl get svc frontend -n {{ .Release.Namespace }}
   open http://localhost:{{ .Values.frontend.servicePort }}
 
-Backends are ClusterIP-only (mirrors production shape: only the frontend talks to
-them directly). To reach one from your Mac for debugging, port-forward it (remote port
-below is each backend's real containerPort, not a hardcoded guess -- if you've
-overridden a backend's containerPort in values.yaml, these reflect that override):
+Backends are ClusterIP-only, so only the frontend reaches them. To reach one from your machine
+for debugging, port-forward it. They all listen on 8000, so forward one at a time (or pick a
+different local port per shell):
 {{- range $name := (keys .Values.backends | sortAlpha) }}
 {{- $svc := index $.Values.backends $name }}
-  kubectl port-forward -n {{ $.Release.Namespace }} svc/{{ $name }} 800{{ trimPrefix "week" $name }}:{{ $svc.containerPort }}
+  kubectl port-forward -n {{ $.Release.Namespace }} svc/{{ $name }} {{ $svc.containerPort }}:{{ $svc.containerPort }}
 {{- end }}
 
-One-time step for vector-search-retrieval (same as the docker-compose version -- this cluster's own
-redis starts empty):
+Two endpoints, two meanings. `/health` says the process is up and always answers 200.
+`/ready` says this pod can actually serve, and answers 503 until its weights are loaded --
+which is what keeps an unusable pod out of its Service's endpoints. A pod showing 0/1 READY
+for a long time is reporting honestly; check what it says:
 
-  kubectl exec -n {{ .Release.Namespace }} deploy/vector-search-retrieval -- uv run python -m retrieval.save_doc_embeddings_to_redis
+  kubectl exec -n {{ .Release.Namespace }} deploy/<name> -- \
+    python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/ready').read())"
 
 Check status:
 
   kubectl get pods -n {{ .Release.Namespace }}
 
-Memory note: this node's allocatable memory (`kubectl describe node`) is likely well under what all
-8 pods' memoryRequest values add up to, on purpose (see values.yaml's comment above `backends:`) --
-some pods may sit Pending rather than all 8 crash-looping over scarce memory. Free room for a
-Pending one with:
+Scheduling: the backends' memoryRequest values sum to roughly 21GiB across
+{{ add (len .Values.backends) 2 }} pods. Compare that against what this node will actually give you --
+
+  kubectl get node -o jsonpath='{.items[0].status.allocatable.memory}'
+
+-- because if it is short, some pods sit Pending rather than the whole set crash-looping over
+scarce memory. That is the requests doing their job. Free room for a Pending pod with:
 
   kubectl scale deploy/<name> -n {{ .Release.Namespace }} --replicas=0
+{{- if not .Values.securityContext.enabled }}
+
+WARNING: securityContext.enabled is false, so these pods run as root. Leave it on unless you
+are debugging something that specifically needs it.
+{{- end }}

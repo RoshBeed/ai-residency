@@ -1,5 +1,5 @@
 {{- /*
-the retrieval service's own HNSW retrieval index -- ephemeral, no PVC, matching docker-compose's
+The retrieval service's own HNSW index -- ephemeral, no PVC, matching docker-compose's
 `--save "" --appendonly no` (ephemeral by design there too). Not bound to a host port
 or LoadBalancer -- only the retrieval pod needs to reach this, over the cluster's
 internal DNS (service name "redis"), same as it was compose-internal-only there.
@@ -21,24 +21,34 @@ spec:
       labels:
         app.kubernetes.io/name: {{ .Values.redis.serviceName }}
     spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- end }}
+      {{- include "ai-residency.podSecurityContext" . | nindent 6 }}
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "ai-residency.containerSecurityContext" . | nindent 10 }}
           command: {{ .Values.redis.command | toJson }}
           ports:
             - containerPort: {{ .Values.redis.port }}
-          {{- if or .Values.redis.memoryRequest .Values.redis.memoryLimit }}
-          resources:
-            {{- if .Values.redis.memoryRequest }}
-            requests:
-              memory: {{ .Values.redis.memoryRequest }}
-            {{- end }}
-            {{- if .Values.redis.memoryLimit }}
-            limits:
-              memory: {{ .Values.redis.memoryLimit }}
-            {{- end }}
-          {{- end }}
+          {{- include "ai-residency.resources" (dict "ctx" . "spec" .Values.redis) | nindent 10 }}
+          # Readiness matters here for the same reason it does on the backends: the
+          # retrieval pod's init container blocks on Redis actually answering, and an
+          # endpoint that appears before the server accepts connections defeats that.
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.redis.port }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.redis.port }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,63 @@
+{{- /*
+Who may talk to whom inside the namespace.
+
+Without a NetworkPolicy every pod can reach every other pod, so the Redis holding the
+retrieval index is reachable from any container in the cluster -- and it has no password.
+These rules say the only things that hold: the frontend calls the backends, the retrieval
+backend calls Redis, and nothing else reaches Redis at all.
+
+Egress is left open. Every backend has to reach the Hugging Face Hub to resolve its
+weights, and pinning that to an IP range would break the moment the CDN moved.
+
+Requires a CNI that enforces NetworkPolicy. Docker Desktop's built-in Kubernetes does
+not, so these are inert there -- they are declarative documentation of the intended
+topology that becomes enforcement on any real cluster. Set `networkPolicy.enabled=false`
+to omit them.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backends
+  labels:
+    {{- include "ai-residency.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          {{- range $name, $svc := .Values.backends }}
+          - {{ $name }}
+          {{- end }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.redis.serviceName }}
+  labels:
+    {{- include "ai-residency.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.redis.serviceName }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range $name, $svc := .Values.backends }}
+        {{- if $svc.waitForRedis }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $name }}
+        {{- end }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+{{- end }}
