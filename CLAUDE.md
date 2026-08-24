@@ -45,6 +45,13 @@ Face account that does not exist.
 
 ## Standing rules
 
+**Nothing depends on someone else's account.** Weights, datasets and the text8 corpus are all
+under `roshbeed/` on the Hub. text8 used to be fetched from a teammate's personal repo, which is
+a single point of failure outside this project's control — it is mirrored at
+`roshbeed/ai-residency-text8`, verified byte-identical to the canonical source at
+mattmahoney.net. Re-hosting a *standard public corpus* is right; the earlier "don't re-host
+third-party data" note was about not copying someone's proprietary dataset, and it got misapplied.
+
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
 Hub, serving pulls from it. **The model and dataset repos are public**, so serving needs no
 credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_residency_common`'s `resolve_checkpoint` /

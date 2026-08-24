@@ -129,7 +129,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
                 "https://arxiv.org/abs/1301.3781",
             ),
         ],
-        "datasets": [("text8", "https://huggingface.co/datasets/ardMLX/text8"), ("HN Posts", "#")],
+        "datasets": [("text8", "https://huggingface.co/datasets/roshbeed/ai-residency-text8"), ("HN Posts", "#")],
         "model_links": [],
         "stats": [
             ("Vocabulary", "258,196 words"),

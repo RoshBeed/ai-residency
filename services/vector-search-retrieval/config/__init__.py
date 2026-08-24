@@ -84,7 +84,7 @@ class Config(BaseConfig):
     cbow_num_epochs: int = 5
     cbow_eval_word: str = "computer"
     cbow_eval_every: int = 10_000
-    text8_url: str = "https://huggingface.co/datasets/ardMLX/text8/resolve/main/text8"
+    text8_url: str = "https://huggingface.co/datasets/roshbeed/ai-residency-text8/resolve/main/text8"
 
     # Legacy single-example regressor demo, kept because the README documents it.
     regressor_learning_rate: float = 0.005
