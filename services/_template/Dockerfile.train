@@ -6,7 +6,7 @@
 # the workspace's root pyproject.toml, the single shared uv.lock and libs/common,
 # none of which live inside a service.
 #
-#   docker build -f services/_template/Dockerfile.train -t roshbeed/ai-residency-_template-train:latest .
+#   docker build -f services/_template/Dockerfile.train -t roshb/ai-residency-_template-train:latest .
 #   (or: make build SERVICE=_template)
 
 ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
@@ -37,5 +37,13 @@ RUN uv sync --frozen --no-install-package torch --no-install-package torchvision
 
 
 WORKDIR /app/services/_template
+
+# Drop to the unprivileged user the base image created. Everything above this line
+# installs; nothing below it needs root. The service directory is chowned because a
+# few services write into it at run time (temp files, a checkpoint directory), and a
+# root-owned working directory would make those fail on the first request instead of
+# at build time. UID 1000 matches securityContext.runAsUser in the Helm chart.
+RUN chown -R app:app /app/services/_template
+USER app
 
 CMD ["python", "-m", "template.training"]
