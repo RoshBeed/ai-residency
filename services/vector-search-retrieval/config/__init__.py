@@ -100,12 +100,12 @@ class Config(BaseConfig):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week2-vector-search-retrieval"
+    hf_repo_id: str | None = "roshbeed/ai-residency-vector-search-retrieval"
     # The tokenizer vocabulary, the CBOW corpus and the tokenized triples. All are
     # derived here rather than downloaded, and none are committed, so without a home
     # off this machine they existed only on the laptop that built them — which is why
     # the portfolio hub had to bind-mount data/ from a sibling repo.
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-week2-retrieval-data"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-vector-search-retrieval-data"
     wandb_project: str | None = "ai-residency-week2-vector-search-retrieval"
 
     # --- Data artifacts -----------------------------------------------------

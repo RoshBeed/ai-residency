@@ -71,7 +71,7 @@ class PPOConfig(BaseConfig):
     # nothing here trains is a demonstration that the algorithm runs end to end, not
     # a model whose behaviour has meaningfully improved. The file name says so.
     checkpoint_name: str = "policy_after_one_ppo_step.pth"
-    hf_repo_id: str | None = "roshbeed/ai-residency-week6-rlhf-ppo"
+    hf_repo_id: str | None = "roshbeed/ai-residency-rlhf-ppo"
     wandb_project: str | None = "ai-residency-week6-rlhf-ppo"
 
     @property

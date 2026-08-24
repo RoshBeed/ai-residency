@@ -38,6 +38,6 @@ class Config(BaseConfig):
     audio_path: Path = field(default_factory=lambda: Path("data/audio.mp3"))
     target_text: str = "My name is Rosh"
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week5-audio-fine-tuning"
+    hf_repo_id: str | None = "roshbeed/ai-residency-whisper-fine-tuning"
     hf_dataset_repo_id: str | None = "roshbeed/ai-residency-whisper-fine-tuning-data"
     wandb_project: str | None = "ai-residency-whisper-fine-tuning"

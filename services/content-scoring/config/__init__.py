@@ -38,18 +38,18 @@ class Config(BaseConfig):
     patience: int = 10
     weight_decay: float = 1e-5
 
-    cbow_repo_id: str | None = "roshbeed/ai-residency-week1-word-embeddings"
+    cbow_repo_id: str | None = "roshbeed/ai-residency-word-embeddings"
     cbow_checkpoint: Path = field(default_factory=lambda: Path("checkpoints/cbow/cbow_model.pt"))
     posts_file: Path = field(default_factory=lambda: Path("data/hn_data_cleaned.json"))
 
     checkpoint_name: str = "best_predictor.pth"
     info_name: str = "predictor_info.json"
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week1-content-scoring"
+    hf_repo_id: str | None = "roshbeed/ai-residency-content-scoring"
     # The labelled Hacker News posts live here rather than in git. They came from a
     # Postgres mirror that is not reachable from every network, so they are the one
     # input this repo cannot simply fetch or regenerate.
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-week1-hn-posts"
+    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-data"
     wandb_project: str | None = "ai-residency-week1-content-scoring"
 
     @property

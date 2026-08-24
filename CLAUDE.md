@@ -46,7 +46,8 @@ Face account that does not exist.
 ## Standing rules
 
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
-Hub, serving pulls from it. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
+Hub, serving pulls from it. **The model and dataset repos are public**, so serving needs no
+credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
 `resolve_required` / `load_model`, never a bare `Path.exists()`. Do not add checkpoint mounts to
 compose or `hostPath` volumes to the chart. Uploads need a stable, guessable filename — a
 run-timestamped name is unfetchable by anything downstream.

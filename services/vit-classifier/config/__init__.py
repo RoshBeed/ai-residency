@@ -90,7 +90,7 @@ class Config(BaseConfig):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    hf_repo_id: str | None = "roshbeed/ai-residency-week3-vision-transformers"
+    hf_repo_id: str | None = "roshbeed/ai-residency-vit-classifier"
     wandb_project: str | None = "ai-residency-vit-classifier"
 
     @property

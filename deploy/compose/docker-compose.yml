@@ -10,6 +10,10 @@
 # them back. A path that works only because a file happens to sit on one machine
 # is not a deployment, and the mounts that used to be here hid exactly that.
 #
+# HF_TOKEN is optional and only needed for *pushing*. The model and dataset repos
+# are public, so `docker compose up` on a machine with no credentials at all pulls
+# what it needs and serves.
+#
 # `train` services are profile-gated, so a bare `docker compose up` never trains.
 #
 # Images are pinned to a commit, not to `latest`. One tag names the exact set that

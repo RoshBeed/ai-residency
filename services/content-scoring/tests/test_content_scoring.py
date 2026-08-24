@@ -43,4 +43,4 @@ class TestConfig:
         assert Config().seed == 42
 
     def test_cbow_checkpoint_is_pulled_from_the_word_embeddings_repo(self) -> None:
-        assert Config().cbow_repo_id == "roshbeed/ai-residency-week1-word-embeddings"
+        assert Config().cbow_repo_id == "roshbeed/ai-residency-word-embeddings"

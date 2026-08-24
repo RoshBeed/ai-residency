@@ -49,7 +49,7 @@ TODO.md
 # Local Weights & Biases run directories.
 wandb/
 
-# Sample images live in the roshbeed/ai-residency-week4-sample-images dataset repo and are
+# Sample images live in the roshbeed/ai-residency-multimodal-captioning-data dataset repo and are
 # fetched on first use. A repo is for code.
 data/
 
