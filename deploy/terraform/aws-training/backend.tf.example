@@ -1,0 +1,24 @@
+# Remote state, as an example rather than a default.
+#
+# The state file records every resource this module creates. It no longer contains the
+# three training secrets -- those moved to SSM Parameter Store -- but it still holds the
+# instance id, the security group and the parameter ARNs, and a local `terraform.tfstate`
+# is a single file on one laptop with no locking and no history.
+#
+# Copy this to `backend.tf`, fill in the bucket, and `terraform init -migrate-state`.
+# The bucket is deliberately not created by this module: a backend cannot depend on
+# resources the same module manages.
+#
+#   aws s3api create-bucket --bucket <your-bucket> --region us-east-1
+#   aws s3api put-bucket-versioning --bucket <your-bucket> \
+#       --versioning-configuration Status=Enabled
+
+terraform {
+  backend "s3" {
+    bucket       = "REPLACE-ME-terraform-state"
+    key          = "ai-residency/training/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
