@@ -19,3 +19,19 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Digest bumps to python:3.11-slim are wanted -- they are the base-OS security
+    # patches, and the reason the FROM is pinned by digest rather than by tag alone.
+    # Interpreter *version* bumps are not: 3.11 is pinned deliberately in four places
+    # that have to agree (.python-version, ruff's target-version, mypy's python_version,
+    # and the image), and CLAUDE.md records what happens when they do not -- a 3.11
+    # assumption against a newer interpreter made CI reject numpy's own stubs. Moving
+    # all four is a migration, not a dependency bump.
+    #
+    # semver-minor matters here as much as major: for a Docker tag, 3.11 -> 3.14 reads
+    # as major 3, minor 11 -> 14, so ignoring only major would let it straight back in.
+    # Patch and digest updates are untouched by both entries.
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
