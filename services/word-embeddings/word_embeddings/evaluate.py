@@ -8,7 +8,7 @@ Two standard word2vec checks, both weak on their own and worth stating plainly:
 They are a smoke signal that the vectors learned *structure* during a long run, not
 a measure of embedding quality. The real evaluation of these vectors is the
 downstream content-scoring head in the sibling
-`ai-residency-week1-content-scoring` repo. ``visualise_embeddings`` projects the space
+`content-scoring` service. ``visualise_embeddings`` projects the space
 to 2D with t-SNE.
 
 Run ``python -m word_embeddings.evaluate`` to load the saved checkpoint and print both.

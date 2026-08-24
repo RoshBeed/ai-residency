@@ -1,7 +1,7 @@
 """Whisper model loading, audio preprocessing and decoding.
 
 Everything here wraps the `openai-whisper` package rather than defining an
-architecture, because Part 1 of this week fine-tunes the released Whisper weights
+architecture, because Part 1 fine-tunes the released Whisper weights
 rather than training a model from scratch.
 
 One wrapper is doing real work rather than just renaming. `whisper.load_model` picks

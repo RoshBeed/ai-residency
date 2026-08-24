@@ -127,7 +127,7 @@ accept.
 
 Both degrade rather than fail. With no Hugging Face token, training runs and saves locally after
 logging a warning. With no `WANDB_API_KEY`, the run goes to offline mode and can be synced later
-with `wandb sync`. Someone cloning a week repo without these accounts can still run `make train`.
+with `wandb sync`. Someone cloning this repo without these accounts can still run `make train`.
 
 ## Development
 

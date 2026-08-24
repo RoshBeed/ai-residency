@@ -35,21 +35,14 @@ target-version = "py311"
 # Each member is its own import root: `config`, `serving` and the topic package are
 # first-party *within a service*, not third-party just because the repository root
 # moved up a level. Without this, isort reclassifies every intra-service import.
-src = [
-    "libs/common/src",
-    "libs/vision-transformer/src",
-    "services/_template",
-    "services/speech-emotion-recognition",
-    "services/whisper-fine-tuning",
-    "services/content-scoring",
-    "services/frontend",
-    "services/multimodal-captioning",
-    "services/rlhf-ppo",
-    "services/vector-search-retrieval",
-    "services/vit-classifier",
-    "services/vit-seq2seq",
-    "services/word-embeddings",
-]
+#
+# Globs rather than a hand-written list. The enumerated version had to be edited by
+# hand for every new service -- in a repo whose README promises that adding one needs
+# only a copy and a `uv lock`, because the Makefile, the CI matrix and the Dockerfile
+# COPYs all derive themselves from the directory listing. Missing an entry here does
+# not error; it silently reshuffles that service's imports on the next `ruff format`.
+src = ["libs/*/src", "services/*"]
+
 
 [tool.ruff.lint]
 select = [
@@ -74,19 +67,22 @@ convention = "google"
 # These two modules *are* unicode-to-ASCII replacement tables. RUF001/RUF003 read
 # the lookalike characters they exist to map as mistakes.
 "services/word-embeddings/word_embeddings/etl.py" = ["RUF001", "RUF003"]
-"services/word-embeddings/tests/test_week1.py" = ["RUF001"]
+"services/word-embeddings/tests/test_word_embeddings.py" = ["RUF001"]
 
 # Walkthrough notebooks introduce imports beside the markdown cell that explains
 # them, rather than all at the top. Their printed output is prose, so it uses real
 # typographic characters (en dash, multiplication sign) that RUF001 reads as typos.
 "notebooks/**/*.ipynb" = ["E402", "I001", "RUF001"]
 
-# The frontend is one Streamlit page per service, and most of its length is display
-# content rather than logic: an inline SVG logo, the copy shown on each page, and
-# dimension labels written properly as "28 x 28" with a multiplication sign. Wrapping
-# a sentence to satisfy a line-length rule, or spelling the character wrong to satisfy
-# RUF001, would damage what the reader sees. Every code-level finding here was fixed.
+# The frontend is mostly display content rather than logic: a stylesheet, an inline SVG
+# logo, the prose shown on each page, and dimension labels written properly as "28 x 28"
+# with a multiplication sign. Wrapping a CSS rule to satisfy a line-length limit, or
+# spelling the character wrong to satisfy RUF001, would damage what the reader sees.
+# Scoped to the display modules only -- components.py holds the logic, and is held to
+# the same standard as every other module here.
 "services/frontend/app.py" = ["E501", "RUF001"]
+"services/frontend/theme.py" = ["E501", "RUF001"]
+"services/frontend/projects.py" = ["E501", "RUF001"]
 
 # The original exploratory notebook the rlhf-ppo package was refactored out of.
 # Kept as a historical record, not held to the package's standard.

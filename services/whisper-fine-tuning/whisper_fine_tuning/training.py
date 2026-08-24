@@ -1,6 +1,6 @@
 """Fine-tuning loop.
 
-Part 1 of this week is deliberately a single-example demo: take released Whisper-tiny
+Part 1 is deliberately a single-example demo: take released Whisper-tiny
 weights, take one clip whose transcript the model gets wrong, and take one gradient
 step toward the correct text. It is a smoke test that the loss, the teacher-forced
 shift and the optimizer are all wired up correctly, not a real training run.
@@ -63,7 +63,7 @@ def shift_for_teacher_forcing(
     The decoder predicts token `t + 1` from the tokens up to `t`, so the targets are
     the input shifted left by one and the logits are truncated by one. Getting this
     off by one produces a model that learns to echo its input rather than continue it,
-    which is a bug this portfolio has hit for real in another week and which stays
+    which is a bug this portfolio has hit for real in another service and which stays
     invisible until inference.
 
     Args:

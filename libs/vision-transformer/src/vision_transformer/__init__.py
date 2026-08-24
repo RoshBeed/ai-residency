@@ -1,6 +1,6 @@
 """Transformer building blocks, written from scratch rather than taken from `torch.nn`.
 
-Composing these by hand is the point of the week: `nn.TransformerEncoderLayer` would
+Composing these by hand is the point: `nn.TransformerEncoderLayer` would
 have hidden the attention maths this repo exists to demonstrate.
 """
 

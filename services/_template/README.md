@@ -5,10 +5,10 @@ portfolio conforms to. It is a working repo, not a sketch: `make train` trains a
 synthetic data, `make serve` answers requests, and `make check` passes. That matters, because a
 template nobody has run is a template that doesn't work.
 
-This repo is also the **source of `roshb/ai-residency-base-serve`**, the Docker image every week's own
+The repository root is also the **source of `roshb/ai-residency-base-serve`**, the image every service's own
 `Dockerfile.train`/`Dockerfile.serve` builds `FROM`. Explanatory write-ups, diagrams and the UI all
 live in [`services/frontend`](https://github.com/RoshBeed/ai-residency/tree/main/services/frontend) now, not
-here — this repo (and every week repo shaped like it) is container source, not documentation.
+here — this service (and every service shaped like it) is container source, not documentation.
 
 ## Instantiating it
 

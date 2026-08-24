@@ -16,7 +16,7 @@ from ai_residency_common import BaseConfig, load_env
 
 @dataclass
 class _RepoConfig(BaseConfig):
-    """Stands in for a week repo's own Config, with its own extra fields."""
+    """Stands in for a service's own Config, with its own extra fields."""
 
     num_samples: int = 100
     train_on_cpu: bool = True

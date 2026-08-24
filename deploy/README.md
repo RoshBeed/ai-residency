@@ -100,7 +100,7 @@ memory ceiling (~7.65GB on the machine this was built on — check `docker stats
 resource settings on yours). Running all the backends for an extended period eventually OOM-kills
 one of the heavier ones (observed here: multimodal-captioning after ~25 hours, rlhf-ppo shortly after that) —
 `docker compose ps -a` will show `Exited (137)` for whichever one got killed. This isn't a bug in
-this repo — it's Docker Desktop's own memory ceiling. Fix: `docker compose up -d weekN` restarts
+this repo — it's Docker Desktop's own memory ceiling. Fix: `docker compose up -d <service>` restarts
 just that one; give Docker Desktop more memory in its settings if you want long sustained uptime
 for the full stack; or don't run all of them for days at a stretch on a constrained host.
 
@@ -201,12 +201,12 @@ Real inference through the cluster — the frontend on the `LoadBalancer`, calli
 ![Word Embeddings page served from Kubernetes, returning real nearest neighbours for "python" with cosine scores](assets/kubernetes-inference.png)
 
 **If anything is also running outside the cluster, stop it first — confirmed to actually happen:**
-this repo's own `docker compose up` stack, *and* any individual week repo's own standalone
-`docker compose up` (e.g. Week 3's own `serve` containers, left over from verifying that repo) both
+this repo's own `docker compose up` stack, *and* any standalone container left running from
+`docker compose up` (leftover containers from verifying a service on its own) both
 stand up real, heavy containers that compete for the exact same memory budget as the cluster.
 `docker ps` shows Kubernetes-managed containers with a `k8s_<container>_<pod>_<namespace>_...` name
 prefix — anything without that prefix is running outside the cluster. `docker compose down` (from
-this repo, or the individual week repo) clears it.
+either one) clears it.
 
 ## Deploying to real hosts (RunPod / AWS / Hetzner)
 
@@ -233,7 +233,7 @@ deploy rather than assuming a 200 means it is working.
 ### Training box
 
 ```bash
-git clone <week repo> && cd <week repo>
+git clone https://github.com/RoshBeed/ai-residency && cd ai-residency
 cp .env.example .env      # fill in both tokens
 uv sync
 AI_RESIDENCY_NUM_EPOCHS=50 make train
@@ -247,21 +247,21 @@ Per-repo caveats worth knowing before you rent anything:
 
 | Repo | Caveat |
 |---|---|
-| Week 1 — word embeddings | `train-corpus` needs a Hacker News Postgres mirror that is not publicly reachable; `train-cbow` works from data on the Hub. |
-| Week 1 — content scoring | Trains only the regression head; pulls the frozen CBOW vectors from the word-embeddings repo's Hub checkpoint. |
-| Week 2 | Needs Redis for serving (not for training). `make serve` is the HTTP service; `make query` is an interactive CLI. |
-| Week 3 | Two trainers with separate epoch caps — the classifier reads `AI_RESIDENCY_CLASSIFIER_EPOCHS`, not `AI_RESIDENCY_NUM_EPOCHS`. |
-| Week 4 | `make train` overwrites a **committed** adapter. Set `AI_RESIDENCY_CHECKPOINT_NAME` to something else. Pins itself to CPU: MPS training here was non-reproducible. |
-| Week 5 | Needs the **system** `ffmpeg` binary, not the pip package of the same name. |
-| Week 6 | One PPO step, deliberately — there is no epoch loop, because nothing here trains the reward model. |
+| `word-embeddings` | `train-corpus` needs a Hacker News Postgres mirror that is not publicly reachable; `train-cbow` works from data on the Hub. |
+| `content-scoring` | Trains only the regression head; pulls the frozen CBOW vectors from the word-embeddings Hub checkpoint. |
+| `vector-search-retrieval` | Needs Redis for serving (not for training). `make serve` is the HTTP service; `make query` is an interactive CLI. |
+| `vit-classifier` / `vit-seq2seq` | Separate epoch caps — the classifier reads `AI_RESIDENCY_CLASSIFIER_EPOCHS`, not `AI_RESIDENCY_NUM_EPOCHS`. |
+| `multimodal-captioning` | `make train` overwrites a **committed** adapter. Set `AI_RESIDENCY_CHECKPOINT_NAME` to something else. Pins itself to CPU: MPS training here was non-reproducible. |
+| `whisper-fine-tuning` / `speech-emotion-recognition` | Need the **system** `ffmpeg` binary, not the pip package of the same name. |
+| `rlhf-ppo` | One PPO step, deliberately — there is no epoch loop, because nothing here trains the reward model. |
 
 ### AWS EC2 spot GPU — alternative to RunPod
 
 `infra/aws-training/` is Terraform that provisions a single AWS spot GPU instance, pulls a pushed
-`roshb/ai-residency-<service>` image (built by that week's own `Dockerfile.train`,
+`roshb/ai-residency-<service>-train` image (built by that service's own `Dockerfile.train`,
 `make push SERVICE=<name>`), runs it, and terminates itself when training finishes or times out. It
-moved here from Week 3 (where it started as a Week-3-only script) because it isn't Week-3-specific
-infrastructure — `train_image` picks which week's already-built image to run.
+moved here from the vision-transformer work (where it started as a single-service script) because it isn't specific to one service
+infrastructure — `train_image` picks which service's already-built image to run.
 
 ```bash
 cd infra/aws-training
@@ -273,14 +273,14 @@ terraform apply     # provisions a real, billable spot instance
 
 Or `./quick-start.sh` for interactive setup, `./monitor.sh` to check on a running instance,
 `./cleanup.sh` to tear it down manually. Full detail — including two real bugs found while
-generalizing this out of Week 3 (a Terraform template referencing undefined variables, and a
+generalizing this out of one service's own copy (a Terraform template referencing undefined variables, and a
 duplicate output definition — either alone means the original could never have passed
 `terraform validate`) — is in `infra/aws-training/README.md`.
 
 ### Inference box
 
 ```bash
-git clone <week repo> && cd <week repo>
+git clone https://github.com/RoshBeed/ai-residency && cd ai-residency
 cp .env.example .env      # HF_TOKEN alone is enough
 uv sync
 make serve
@@ -294,14 +294,16 @@ then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshb/ai-residency-<servic
 
 ## Related
 
-The frontend and the full documentation for all weeks live in `services/frontend`. The
+The frontend and the full write-up for every service live in `services/frontend`. The
 backend repos are container source only: two Dockerfiles (`Dockerfile.train` for a RunPod/AWS
 GPU host, `Dockerfile.serve` for Kubernetes) and a short technical README:
 
-[Week 1 — word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) ·
-[Week 1 — content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) ·
-[Week 2](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) ·
-[Week 3](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) ·
-[Week 4](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) ·
-[Week 5](https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning) ·
-[Week 6](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo)
+[Word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) ·
+[Content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) ·
+[Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) ·
+[ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) ·
+[ViT seq2seq](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) ·
+[Image captioning](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) ·
+[Whisper fine-tuning](https://github.com/RoshBeed/ai-residency/tree/main/services/whisper-fine-tuning) ·
+[Speech emotion recognition](https://github.com/RoshBeed/ai-residency/tree/main/services/speech-emotion-recognition) ·
+[RLHF / PPO](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo)

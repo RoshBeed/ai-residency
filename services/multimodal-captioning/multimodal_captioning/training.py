@@ -2,7 +2,7 @@
 
 This is the real batched loop that produced `checkpoints/adapter_flickr_batched.pth`,
 lifted out of the exploratory notebook (now in
-`ai-residency-frontend/notebooks/week4-multimodal-captioning/notebook.ipynb`) and put on
+`notebooks/multimodal-captioning/notebook.ipynb`) and put on
 the portfolio's canonical shape:
 
     Config -> set_seed -> build loaders -> compute_baseline -> init_tracking

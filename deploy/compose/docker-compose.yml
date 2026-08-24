@@ -23,56 +23,103 @@
 
 
 services:
-  # --- Week 1a: word-embeddings — nearest-neighbour/analogy inference container ---
+  # --- CBOW vectors: nearest-neighbour and analogy inference ---
   word-embeddings:
     image: roshb/ai-residency-word-embeddings-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8001:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
-  # --- Week 1b: content-scoring — the regression head that consumes those vectors ---
+  # --- The regression head that consumes those vectors ---
   content-scoring:
     image: roshb/ai-residency-content-scoring-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8007:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
-  # --- Week 2: needs its own Redis (HNSW retrieval index) ---
+  # --- Redis, for the retrieval service's HNSW index ---
   redis:
-    image: redis/redis-stack-server:latest
+    image: redis/redis-stack-server:7.4.0-v3
     command: ["redis-stack-server", "--save", "", "--appendonly", "no"]
-    # No host port mapping -- only vector-search-retrieval's own serve container needs to reach this,
-    # over the internal compose network (service name "redis"). Deliberately
-    # not bound to the host to avoid colliding with the original Week2 repo's own
-    # persistent redis container, which already owns host port 6390.
+    # No host port mapping: only vector-search-retrieval needs to reach this, over the
+    # internal compose network (service name "redis"). Nothing outside it should.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   vector-search-retrieval:
     image: roshb/ai-residency-vector-search-retrieval-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     depends_on:
-      - redis
+      # `condition: service_healthy`, not a bare list entry: the bare form only orders
+      # container *start*, so this one could come up and try to reach a Redis that had
+      # not begun accepting connections yet. The Helm chart closes the same race with
+      # an init container.
+      redis:
+        condition: service_healthy
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
-    volumes:
-      # Trained towers + CBOW vocab/embeddings, gitignored from the image -- mount
-      # from the sibling repo at runtime. data/ holds tokenized_triples.json, needed
-      # once to (re)populate this hub's own (fresh, empty) redis index.
-      - ../../services/vector-search-retrieval/data:/app/data
+    # No data mount. The query tower, the CBOW vocabulary and tokenized_triples.json
+    # all resolve from this service's Hugging Face dataset repo at startup, the same
+    # way every other backend resolves its weights -- see retrieval/query_engine.py and
+    # retrieval/save_doc_embeddings_to_redis.py, both of which go through
+    # `resolve_required(..., repo_type="dataset")`.
+    #
+    # The mount that used to be here pointed at a host directory and made this the one
+    # serving container that behaved differently on the machine that trained it.
     ports:
       - "8002:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
     image: roshb/ai-residency-vit-classifier-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8003:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -82,6 +129,15 @@ services:
     image: roshb/ai-residency-vit-seq2seq-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8008:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -91,6 +147,15 @@ services:
     working_dir: /app
     ports:
       - "8004:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -99,6 +164,15 @@ services:
     image: roshb/ai-residency-whisper-fine-tuning-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8005:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -108,6 +182,15 @@ services:
     image: roshb/ai-residency-speech-emotion-recognition-serve:${IMAGE_TAG:-sha-322314c548a6efe819cc4f9c18c4601edd48b5a1}
     ports:
       - "8009:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -118,6 +201,15 @@ services:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
       - "8006:8000"
+    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
+    # service can actually serve, so `depends_on: condition: service_healthy` below
+    # waits for a backend that works rather than one that has merely started.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -150,14 +242,16 @@ services:
 
   # --- Training, profile-gated so a plain `docker compose up` never starts a run ---
   #
-  # Each pulls the week repo's Dockerfile.train image (a real, distinct image from
-  # the serving one). AI_RESIDENCY_NUM_EPOCHS (read by every repo's Config, see ai-residency-common's
-  # BaseConfig) keeps these to a smoke run by default; override it for a real one.
+  # Each pulls that service's Dockerfile.train image (a real, distinct image from the
+  # serving one). AI_RESIDENCY_NUM_EPOCHS (read by every Config, see
+  # ai_residency_common.BaseConfig) keeps these to a smoke run by default; override it
+  # for a real one.
   #
   #   HF_TOKEN=... docker compose --profile train run --rm train-vit-classifier
   #
-  # Checkpoint mounts are writable here, unlike the read-only serving mounts: this is
-  # the process that writes them.
+  # These mount a host directory so a local run's intermediate data (corpora, tokenized
+  # triples) survives between stages. Serving mounts nothing: it resolves everything
+  # from the Hub.
 
   train-word-embeddings:
     profiles: [train]

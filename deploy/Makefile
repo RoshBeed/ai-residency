@@ -18,8 +18,15 @@ export WANDB_API_KEY
 HELM_RELEASE := ai-residency
 HELM_NAMESPACE := ai-residency
 HELM_CHART := ./helm/ai-residency
-HELM_SECRETS := --set-string secrets.hfToken=$(HF_TOKEN) \
-                --set-string secrets.wandbApiKey=$(WANDB_API_KEY)
+# Passed via a temp file rather than on the command line: an argument to helm is
+# visible in `ps` to every user on the machine for as long as the install runs.
+# --set-file reads the value from a path instead, and the file is created under
+# `umask 077` and deleted straight after.
+HELM_SECRETS = $(shell umask 077; \
+	d=$$(mktemp -d); \
+	printf '%s' '$(HF_TOKEN)' > $$d/hf; \
+	printf '%s' '$(WANDB_API_KEY)' > $$d/wandb; \
+	echo "--set-file secrets.hfToken=$$d/hf --set-file secrets.wandbApiKey=$$d/wandb")
 # Suffixes each training Job's name. A Job's pod template is immutable, so a second
 # run needs a new name; the epoch second is the cheapest thing that is always unique.
 TRAIN_RUN ?= $(shell date +%s)
@@ -31,10 +38,17 @@ TRAIN_RUN ?= $(shell date +%s)
 pull: ## Pull every backend + frontend image from Docker Hub
 	docker compose -f compose/docker-compose.yml pull
 
+# Derived from the compose file rather than written out, so a renamed or added service
+# cannot leave this printing names that no longer exist -- which is what it used to do,
+# advertising "vision-transformers:8003" and "audio-fine-tuning:8005" long after both
+# were split and renamed.
+BACKENDS := $(shell awk '/^  [a-z][a-z0-9-]*:$$/ {svc=substr($$1,1,length($$1)-1)} /^      - "80[0-9][0-9]:8000"$$/ {gsub(/[" ]/,"",$$2); split($$2,p,":"); print svc ":" p[1]}' compose/docker-compose.yml)
+PORTS := $(shell echo "$(BACKENDS)" | tr ' ' '\n' | cut -d: -f2 | sort)
+
 up: ## Start every backend + the frontend
 	docker compose -f compose/docker-compose.yml up -d
 	@echo "Frontend: http://localhost:8500"
-	@echo "Backends: word-embeddings:8001 content-scoring:8007 vector-search-retrieval:8002 vision-transformers:8003 multimodal-captioning:8004 audio-fine-tuning:8005 rlhf-ppo:8006"
+	@echo "Backends: $(BACKENDS)"
 
 index-retrieval: ## One-time: populate this stack's own (independent, starts-empty) vector-search-retrieval redis index
 	docker compose -f compose/docker-compose.yml exec vector-search-retrieval python -m retrieval.save_doc_embeddings_to_redis
@@ -48,10 +62,16 @@ down: ## Stop and remove all containers
 logs: ## Tail logs from every service
 	docker compose -f compose/docker-compose.yml logs -f
 
-status: ## Show which backends are currently reachable (via /health)
-	@for w in 8001 8007 8002 8003 8004 8005 8006; do \
-		curl -s -o /dev/null -w "port $$w: %{http_code}\n" http://localhost:$$w/health || echo "port $$w: unreachable"; \
+status: ## Show which backends are up (/health) and which can actually serve (/ready)
+	@for w in $(PORTS); do \
+		health=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$w/health 2>/dev/null); \
+		ready=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$w/ready 2>/dev/null); \
+		[ "$$health" = "000" ] && health="down"; \
+		[ "$$ready" = "000" ] && ready="down"; \
+		printf 'port %s  health %s  ready %s\n' "$$w" "$$health" "$$ready"; \
 	done
+	@echo "ready 503 means the process is up but has no usable checkpoint -- it is out of"
+	@echo "the load balancer's rotation under Kubernetes, and answers 503 here."
 
 # Docker Desktop runs its Kubernetes node as a kind container with its own containerd
 # image store. A `docker build` on the host reaches dockerd and stops there, so the
@@ -96,7 +116,7 @@ helm-uninstall: ## Remove the Helm release (namespace itself is left in place, n
 helm-status: ## Show pod/service status for the Helm release
 	kubectl get pods,svc -n $(HELM_NAMESPACE)
 
-helm-train: ## Run a training Job on the cluster: make helm-train SERVICE=vision-transformers [EPOCHS=1]
+helm-train: ## Run a training Job on the cluster: make helm-train SERVICE=vit-classifier [EPOCHS=1]
 	helm upgrade $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) $(HELM_SECRETS) \
 		--set train.enabled=true \
 		--set train.runName=$(TRAIN_RUN) \
@@ -106,8 +126,10 @@ helm-train: ## Run a training Job on the cluster: make helm-train SERVICE=vision
 
 helm-train-logs: ## Tail whichever training Jobs are currently running
 	kubectl get jobs -n $(HELM_NAMESPACE)
-	kubectl logs -n $(HELM_NAMESPACE) -l app.kubernetes.io/name --tail=40 --prefix \
-		--selector='app.kubernetes.io/name in (word-embeddings-train,content-scoring-train,vector-search-retrieval-train,vision-transformers-train,multimodal-captioning-train,audio-fine-tuning-train,rlhf-ppo-train)'
+	@# Selected by job-name, not by an enumerated list of service names -- the old list
+	@# still named "vision-transformers-train" and "audio-fine-tuning-train", neither of
+	@# which has existed since those services were split and renamed.
+	kubectl logs -n $(HELM_NAMESPACE) --tail=40 --prefix --selector='job-name' 
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'

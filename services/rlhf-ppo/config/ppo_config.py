@@ -72,7 +72,7 @@ class PPOConfig(BaseConfig):
     # a model whose behaviour has meaningfully improved. The file name says so.
     checkpoint_name: str = "policy_after_one_ppo_step.pth"
     hf_repo_id: str | None = "roshbeed/ai-residency-rlhf-ppo"
-    wandb_project: str | None = "ai-residency-week6-rlhf-ppo"
+    wandb_project: str | None = "ai-residency-rlhf-ppo"
 
     @property
     def checkpoint_path(self) -> Path:
