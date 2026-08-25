@@ -7,8 +7,6 @@ Images arrive base64-encoded in a pydantic field rather than as multipart upload
 matching the convention every other service uses.
 """
 
-import base64
-import io
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,12 +16,11 @@ import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-from PIL.Image import Image as PILImage
 from pydantic import BaseModel
 
 from ai_residency_common import (
     add_health_routes,
+    decode_image,
     get_device,
     get_logger,
     load_checkpoint,
@@ -156,14 +153,14 @@ def preprocess_image(image_data: str, img_size: int) -> torch.Tensor:
         Normalised tensor of shape `(1, 1, img_size, img_size)` on the serving device.
 
     Raises:
-        HTTPException: If the payload is not a decodable image.
+        HTTPException: 422 if the payload is not a decodable image.
     """
-    try:
-        image: PILImage = Image.open(io.BytesIO(base64.b64decode(image_data)))
-    except Exception as error:
-        raise HTTPException(
-            status_code=400, detail=f"Image preprocessing failed: {error}"
-        ) from error
+    # `decode_image` rather than a local `Image.open`. The local version passed a
+    # truncated PNG straight through, because `Image.open` only reads the header --
+    # the pixel data is decoded lazily, so the failure surfaced later, outside the
+    # try block, as a 500. The shared helper calls `.load()` inside its own guard,
+    # which is the whole reason it exists.
+    image = decode_image(image_data)
 
     if image.mode != "L":
         image = image.convert("L")
