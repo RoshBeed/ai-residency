@@ -5,11 +5,14 @@ shape-correct, and that a training run is reproducible and writes a checkpoint w
 name matches the architecture that produced it.
 """
 
+import base64
+import io
 from pathlib import Path
 
 import pytest
 import torch
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from config import ClassifierArch, Config
 from serving.api import app
@@ -158,3 +161,33 @@ def test_predict_returns_a_digit_for_a_real_image() -> None:
     body = response.json()
     assert body["pred"] in [str(digit) for digit in range(10)]
     assert 0.0 <= body["confidence"] <= 1.0
+
+
+def test_a_truncated_image_is_rejected_rather_than_crashing() -> None:
+    """`Image.open` reads the header and decodes the pixels lazily.
+
+    A PNG whose header is intact but whose pixel data is cut off therefore opens
+    cleanly and fails later, during `convert`/`resize` -- past whatever guard the
+    decode sat behind, so the caller got a 500 for a malformed request. Routing
+    through `decode_image`, which calls `.load()` inside its own guard, is what turns
+    that into a 422.
+    """
+    image = Image.new("L", (28, 28), 0)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    full = buffer.getvalue()
+    truncated = base64.b64encode(full[: len(full) * 2 // 3]).decode()
+
+    with TestClient(app) as client:
+        response = client.post("/predict", json={"image_data": truncated})
+
+    assert response.status_code == 422, response.text
+    assert "image" in response.json()["detail"].lower()
+
+
+def test_undecodable_payloads_are_all_422() -> None:
+    """One status code for one class of failure, whatever shape the junk arrives in."""
+    with TestClient(app) as client:
+        for payload in ("not base64!!", "", "AAAA"):
+            response = client.post("/predict", json={"image_data": payload})
+            assert response.status_code == 422, f"{payload!r} gave {response.status_code}"
