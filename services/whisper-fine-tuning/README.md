@@ -23,9 +23,9 @@ make install
 make serve SERVICE=whisper-fine-tuning
 ```
 
-`openai-whisper` shells out to the **ffmpeg binary** to decode audio. The pip package of the
-same name does not provide it — install the real thing (`brew install ffmpeg`, `apt install
-ffmpeg`). The Dockerfiles install it for you.
+No system packages needed. Audio is read through libsndfile, which handles the demo clip's
+MP3 directly. This used to require the **ffmpeg binary**, because `openai-whisper` shelled
+out to it; moving onto `libs/speech` removed that.
 
 Checkpoints are resolved locally first, then from the Hugging Face Hub, so serving works on a host
 that has never trained anything.
@@ -249,5 +249,5 @@ original Whisper paper [1] (arXiv:2212.04356) directly.
 ## Dependencies
 
 PyTorch · OpenAI `whisper` · Hugging Face `transformers` (`WhisperTokenizer`) · Streamlit ·
-`streamlit-audiorec` · librosa · matplotlib / seaborn · ffmpeg (system binary) · CREMA-D / EmoDB
+`streamlit-audiorec` · librosa · matplotlib / seaborn · CREMA-D / EmoDB
 datasets

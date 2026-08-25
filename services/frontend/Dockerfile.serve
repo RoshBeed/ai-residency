@@ -35,7 +35,7 @@ COPY pyproject.toml uv.lock ./
 # dependency actually changes. `--parents` keeps the directory structure, which
 # is why this needs no per-member enumeration to go stale.
 COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
-COPY libs/common libs/common
+COPY libs libs
 RUN uv sync --frozen --no-install-project --package ai-residency-frontend
 
 COPY services/frontend services/frontend

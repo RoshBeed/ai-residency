@@ -492,7 +492,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "shift a pre-trained model's output for a specific target. The emotion-token "
             "extension explores the practical reality of modifying a pre-trained "
             "tokenizer and the tradeoff between task specialization and preserving "
-            "original capabilities. The system `ffmpeg` binary is a hard prerequisite "
+            "original capabilities. "
             "(Whisper shells out to it for audio decoding)."
         ),
         "docs_path": "services/whisper-fine-tuning/README.md",
