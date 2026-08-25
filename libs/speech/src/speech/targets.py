@@ -25,6 +25,7 @@ def encode_target(
     processor: WhisperProcessor,
     text: str,
     *,
+    prefix: bool = True,
     decoder_start_token_id: int | None = None,
 ) -> torch.Tensor:
     """Encode the text the decoder should learn to produce.
@@ -49,6 +50,16 @@ def encode_target(
         processor: Supplies the tokenizer.
         text: Ground truth -- a transcript, or a single token like `"<|happy|>"` if
             the tokenizer has been extended with it.
+        prefix: Whether to keep Whisper's language/task/timestamp prefix. True is
+            right for transcription, where the model should produce a full multitask
+            sequence.
+
+            False is right when the decoder's *first* emission is the whole answer --
+            classifying a clip by having the decoder name it. With the prefix, the
+            model is trained to emit `<|en|>` at step one and the label several steps
+            later; a caller that reads step one then gets the language token rather
+            than the answer, which is a mismatch that trains and serves without ever
+            erroring.
         decoder_start_token_id: The id the model prepends. Defaults to the
             tokenizer's own `<|startoftranscript|>`, which is the same thing for every
             Whisper checkpoint; pass the model's `config.decoder_start_token_id` to be
@@ -57,6 +68,11 @@ def encode_target(
     Returns:
         Token ids of shape `(sequence,)`, ready to pass as `labels`.
     """
+    if not prefix:
+        ids = processor.tokenizer(text, add_special_tokens=False).input_ids
+        ids.append(processor.tokenizer.convert_tokens_to_ids("<|endoftext|>"))
+        return torch.tensor(ids, dtype=torch.long)
+
     encoded = processor.tokenizer(text, add_special_tokens=True, return_tensors="pt")
     labels: torch.Tensor = encoded.input_ids[0]
 
