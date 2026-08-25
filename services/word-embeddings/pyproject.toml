@@ -14,6 +14,7 @@ dependencies = [
     # `uv sync` succeeding) — see TODO.md for what was actually exercised.
     "torch>=2.9.0",
     "ai-residency-common",
+    "ai-residency-word2vec",
     "numpy>=2.3.0",
     "scikit-learn>=1.7.0",
     "wandb>=0.23.0",
@@ -54,6 +55,7 @@ pythonpath = ["."]
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }
+ai-residency-word2vec = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
