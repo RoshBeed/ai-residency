@@ -44,7 +44,7 @@ jobs:
       all: ${{ steps.detect.outputs.all }}
       any: ${{ steps.detect.outputs.any }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -119,7 +119,11 @@ jobs:
     name: Lint (whole workspace)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      # setup-uv stays on v7 deliberately. v8, v9 and v10 are three consecutive
+      # breaking majors, and v9's break is that it caches far more aggressively --
+      # billed cache usage, not a behaviour this repo asked for. Crossing three of
+      # those is a migration to do on purpose, not a version bump to drift into.
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -140,7 +144,7 @@ jobs:
       matrix:
         member: ${{ fromJSON(needs.changes.outputs.members) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -194,8 +198,8 @@ jobs:
       && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -231,8 +235,8 @@ jobs:
         # name every image, or pinning it in deploy/ does not describe a real set.
         service: ${{ fromJSON(needs.changes.outputs.all) }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -376,7 +380,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Scan
         uses: aquasecurity/trivy-action@v0.36.0
