@@ -6,7 +6,7 @@ reimplement Whisper loading or inference.
 
 Binary audio arrives base64-encoded inside a JSON body rather than as a multipart
 upload, which is the convention every backend in this portfolio uses. It is written to
-a temp file because Whisper needs a path to hand to `ffmpeg`, not raw bytes.
+a temp file because the audio readers take a path rather than raw bytes.
 
 Each request loads a fresh copy of Whisper-tiny and fine-tunes it in place on the
 audio it was sent, exactly as the CLI demo does. There is no persisted fine-tuned
@@ -25,7 +25,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -35,7 +34,6 @@ from ai_residency_common import decode_audio as decode_base64_audio
 from config import Config
 from whisper_fine_tuning.models import (
     decode_audio,
-    get_tokenizer,
     load_whisper_model,
     prepare_training_data,
 )
@@ -145,47 +143,39 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
-        model, device = load_whisper_model(config)
-        tokenizer = get_tokenizer()
+        whisper = load_whisper_model(config)
 
         try:
-            base_output = decode_audio(model, device, tmp_path)
+            base_output = decode_audio(whisper, tmp_path)
         except RuntimeError as error:
             raise HTTPException(
-                status_code=400, detail=f"Failed to transcribe audio: {error}"
+                status_code=422, detail=f"Failed to transcribe audio: {error}"
             ) from error
 
-        tokens, mel = prepare_training_data(tokenizer, device, tmp_path, request.target_text)
-        baseline_loss = evaluate(model, tokens, mel)
+        features, labels = prepare_training_data(whisper, tmp_path, request.target_text)
+        baseline_loss = evaluate(whisper, features, labels)
 
         steps: list[FineTuneStep] = []
 
         def on_step(step: int, loss: float) -> None:
-            """Decode the clip with the just-updated weights, without disturbing training.
+            """Decode the clip with the just-updated weights, between gradient steps.
 
-            `decode_audio` doesn't manage train/eval mode itself, and running it inside
-            the fine-tuning loop's own train-mode forward passes would leave dropout
-            active during decoding and needlessly build a gradient graph -- switch to
-            eval briefly, decode under `no_grad`, then hand control back to `fine_tune`
-            in the same `model.train()` state it was already running in.
+            `speech.transcribe` runs under `no_grad` and restores whatever train/eval
+            mode it found, so this no longer has to bracket the call by hand -- getting
+            that wrong would leave dropout active during decoding, or leave the model
+            in eval for the rest of the loop.
             """
-            model.eval()
-            with torch.no_grad():
-                text = decode_audio(model, device, tmp_path)
-            model.train()
-            steps.append(FineTuneStep(step=step, loss=loss, text=text))
+            steps.append(FineTuneStep(step=step, loss=loss, text=decode_audio(whisper, tmp_path)))
 
-        model = fine_tune(
-            model,
-            tokenizer,
-            device,
+        whisper = fine_tune(
+            whisper,
             tmp_path,
             request.target_text,
             learning_rate=config.learning_rate,
             num_steps=5,
             on_step=on_step,
         )
-        ft_output = decode_audio(model, device, tmp_path)
+        ft_output = decode_audio(whisper, tmp_path)
 
         return TranscribeResponse(
             base_output=base_output,
@@ -226,38 +216,33 @@ def transcribe_stream(request: TranscribeRequest) -> StreamingResponse:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
-            model, device = load_whisper_model(config)
-            tokenizer = get_tokenizer()
+            whisper = load_whisper_model(config)
 
-            base_output = decode_audio(model, device, tmp_path)
+            base_output = decode_audio(whisper, tmp_path)
             events.put({"stage": "base_transcript", "text": base_output})
 
-            tokens, mel = prepare_training_data(tokenizer, device, tmp_path, request.target_text)
-            baseline_loss = evaluate(model, tokens, mel)
+            features, labels = prepare_training_data(whisper, tmp_path, request.target_text)
+            baseline_loss = evaluate(whisper, features, labels)
             events.put({"stage": "baseline_loss", "loss": baseline_loss})
 
             steps: list[dict[str, Any]] = []
 
             def on_step(step: int, loss: float) -> None:
-                model.eval()
-                with torch.no_grad():
-                    text = decode_audio(model, device, tmp_path)
-                model.train()
-                step_event = {"step": step, "loss": loss, "text": text}
+                # transcribe restores the train/eval mode it found, so the loop is
+                # handed back exactly the state it was running in.
+                step_event = {"step": step, "loss": loss, "text": decode_audio(whisper, tmp_path)}
                 steps.append(step_event)
                 events.put({"stage": "step", **step_event})
 
             fine_tune(
-                model,
-                tokenizer,
-                device,
+                whisper,
                 tmp_path,
                 request.target_text,
                 learning_rate=config.learning_rate,
                 num_steps=5,
                 on_step=on_step,
             )
-            ft_output = decode_audio(model, device, tmp_path)
+            ft_output = decode_audio(whisper, tmp_path)
 
             events.put(
                 {

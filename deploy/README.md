@@ -259,7 +259,7 @@ Per-repo caveats worth knowing before you rent anything:
 | `vector-search-retrieval` | Needs Redis for serving (not for training). `make serve` is the HTTP service; `make query` is an interactive CLI. |
 | `vit-classifier` / `vit-seq2seq` | Separate epoch caps — the classifier reads `AI_RESIDENCY_CLASSIFIER_EPOCHS`, not `AI_RESIDENCY_NUM_EPOCHS`. |
 | `multimodal-captioning` | `make train` overwrites a **committed** adapter. Set `AI_RESIDENCY_CHECKPOINT_NAME` to something else. Pins itself to CPU: MPS training here was non-reproducible. |
-| `whisper-fine-tuning` / `speech-emotion-recognition` | Need the **system** `ffmpeg` binary, not the pip package of the same name. |
+| `whisper-fine-tuning` / `speech-emotion-recognition` | Nothing special. They used to need the system `ffmpeg` binary, which `openai-whisper` shelled out to; both are on `libs/speech` now and read audio through libsndfile. |
 | `rlhf-ppo` | One PPO step, deliberately — there is no epoch loop, because nothing here trains the reward model. |
 
 ### AWS EC2 spot GPU — alternative to RunPod

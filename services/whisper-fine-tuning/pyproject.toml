@@ -7,9 +7,9 @@ requires-python = ">=3.11"
 authors = [{ name = "RoshBeed" }]
 dependencies = [
     "ai-residency-common",
+    "ai-residency-speech",
     "torch",
     "torchaudio",
-    "openai-whisper",
     "requests",
     "numpy",
     "fastapi",
@@ -38,6 +38,7 @@ pythonpath = ["."]
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }
+ai-residency-speech = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 torchaudio = [{ index = "pytorch-cpu" }]
 

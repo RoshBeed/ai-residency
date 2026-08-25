@@ -22,9 +22,6 @@ construction, and reporting it against its own starting point says so plainly.
 from collections.abc import Callable
 
 import torch
-from torch import nn
-from whisper.model import Whisper
-from whisper.tokenizer import Tokenizer
 
 from ai_residency_common import (
     finish_tracking,
@@ -36,83 +33,59 @@ from ai_residency_common import (
     set_seed,
 )
 from config import Config
-from whisper_fine_tuning.models import (
-    forward,
-    get_tokenizer,
-    load_whisper_model,
-    prepare_training_data,
-)
+from speech import Whisper
+from whisper_fine_tuning.models import load_whisper_model, prepare_training_data
 
 __all__ = [
     "compute_loss",
     "evaluate",
     "fine_tune",
     "main",
-    "shift_for_teacher_forcing",
     "train",
 ]
 
 logger = get_logger(__name__)
 
 
-def shift_for_teacher_forcing(
-    logits: torch.Tensor, tokens: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Align decoder logits with the tokens they are meant to predict.
-
-    The decoder predicts token `t + 1` from the tokens up to `t`, so the targets are
-    the input shifted left by one and the logits are truncated by one. Getting this
-    off by one produces a model that learns to echo its input rather than continue it,
-    which is a bug this portfolio has hit for real in another service and which stays
-    invisible until inference.
-
-    Args:
-        logits: Decoder output, shape `(batch, sequence, vocab)`.
-        tokens: Decoder input token ids, shape `(batch, sequence)`.
-
-    Returns:
-        A `(predictions, targets)` pair, both of length `sequence - 1`.
-    """
-    return logits[:, :-1, :].contiguous(), tokens[:, 1:].contiguous()
-
-
-def compute_loss(model: Whisper, tokens: torch.Tensor, mel: torch.Tensor) -> torch.Tensor:
+def compute_loss(whisper: Whisper, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     """Return the teacher-forced cross-entropy loss for one batch.
 
+    The shift the decoder needs -- predicting position *n* from positions before it --
+    is done by the model, which builds its decoder input by shifting `labels` right and
+    prepending `decoder_start_token_id`. This used to be written out here as
+    `logits[:, :-1]` against `tokens[:, 1:]` plus a separate cross-entropy, which is
+    the same operation done by hand against a library that did not offer it.
+
     Args:
-        model: A loaded Whisper model.
-        tokens: Decoder input token ids, shape `(batch, sequence)`.
-        mel: Encoder input spectrogram.
+        whisper: A loaded model.
+        features: Encoder input, shape `(batch, 80, 3000)`.
+        labels: Target token ids, shape `(batch, sequence)`.
 
     Returns:
         Scalar loss.
     """
-    criterion = nn.CrossEntropyLoss()
-    predictions, targets = shift_for_teacher_forcing(forward(model, tokens, mel), tokens)
-    loss: torch.Tensor = criterion(predictions.transpose(1, 2), targets)
+    loss: torch.Tensor = whisper.model(input_features=features, labels=labels).loss
     return loss
 
 
-def evaluate(model: Whisper, tokens: torch.Tensor, mel: torch.Tensor) -> float:
+def evaluate(whisper: Whisper, features: torch.Tensor, labels: torch.Tensor) -> float:
     """Return the loss for one batch without updating any weights.
 
     Args:
-        model: A loaded Whisper model.
-        tokens: Decoder input token ids.
-        mel: Encoder input spectrogram.
+        whisper: A loaded model.
+        features: Encoder input.
+        labels: Target token ids.
 
     Returns:
         The loss as a plain float.
     """
-    model.eval()
+    whisper.model.eval()
     with torch.no_grad():
-        return float(compute_loss(model, tokens, mel).item())
+        return float(compute_loss(whisper, features, labels).item())
 
 
 def fine_tune(
-    model: Whisper,
-    tokenizer: Tokenizer,
-    device: torch.device,
+    whisper: Whisper,
     audio_path: str,
     target_text: str,
     *,
@@ -128,9 +101,7 @@ def fine_tune(
     correction is independent rather than a continuation of one long run.
 
     Args:
-        model: Model to update, modified in place and also returned.
-        tokenizer: Multilingual tokenizer.
-        device: Device the model is on.
+        whisper: Model to update, modified in place and also returned.
         audio_path: Audio to fine-tune against.
         target_text: The transcript the model should produce for that audio.
         learning_rate: Adam learning rate.
@@ -140,21 +111,21 @@ def fine_tune(
             loop instead of only seeing the final result.
 
     Returns:
-        The same model, updated.
+        The same bundle, its model updated.
     """
-    tokens, mel = prepare_training_data(tokenizer, device, audio_path, target_text)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    features, labels = prepare_training_data(whisper, audio_path, target_text)
+    optimizer = torch.optim.Adam(whisper.model.parameters(), lr=learning_rate)
 
-    model.train()
+    whisper.model.train()
     for step in range(1, num_steps + 1):
-        loss = compute_loss(model, tokens, mel)
+        loss = compute_loss(whisper, features, labels)
         optimizer.zero_grad()
         torch.autograd.backward(loss)
         optimizer.step()
         if on_step is not None:
             on_step(step, float(loss.item()))
 
-    return model
+    return whisper
 
 
 def train(config: Config) -> float:
@@ -168,19 +139,18 @@ def train(config: Config) -> float:
     """
     set_seed(config.seed)
 
-    model, device = load_whisper_model(config)
-    tokenizer = get_tokenizer()
+    whisper = load_whisper_model(config)
     audio_path = str(config.audio_path)
-    tokens, mel = prepare_training_data(tokenizer, device, audio_path, config.target_text)
+    features, labels = prepare_training_data(whisper, audio_path, config.target_text)
 
-    baseline_loss = evaluate(model, tokens, mel)
+    baseline_loss = evaluate(whisper, features, labels)
     logger.info(
         "Baseline (released weights, before any update) loss on %r: %.4f",
         config.target_text,
         baseline_loss,
     )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.Adam(whisper.model.parameters(), lr=config.learning_rate)
     init_tracking(
         config.wandb_project,
         config={"baseline_loss": baseline_loss, **vars(config)},
@@ -188,8 +158,8 @@ def train(config: Config) -> float:
 
     best_loss = float("inf")
     for step in range(1, config.num_epochs + 1):
-        model.train()
-        loss = compute_loss(model, tokens, mel)
+        whisper.model.train()
+        loss = compute_loss(whisper, features, labels)
         optimizer.zero_grad()
         # `Tensor.backward` carries no annotations in torch, so strict mypy rejects
         # calling it on a genuinely-typed Tensor. This is the same code path.
@@ -197,7 +167,7 @@ def train(config: Config) -> float:
         optimizer.step()
 
         train_loss = float(loss.item())
-        val_loss = evaluate(model, tokens, mel)
+        val_loss = evaluate(whisper, features, labels)
         log_metrics({"train_loss": train_loss, "val_loss": val_loss}, step=step)
         logger.info(
             "Step %d/%d  train_loss=%.4f  val_loss=%.4f",
@@ -211,12 +181,12 @@ def train(config: Config) -> float:
             best_loss = val_loss
             save_checkpoint(
                 config.checkpoint_path,
-                model,
+                whisper.model,
                 optimizer=optimizer,
                 epoch=step,
                 metrics={"val_loss": val_loss, "baseline_loss": baseline_loss},
                 extra={
-                    "whisper_model_name": config.whisper_model_name,
+                    "model_name": config.model_name,
                     "target_text": config.target_text,
                 },
             )

@@ -21,7 +21,9 @@ class Config(BaseConfig):
     Attributes:
         learning_rate: Adam learning rate for the fine-tuning steps.
         num_epochs: Fine-tuning steps taken on the single example.
-        whisper_model_name: Which `openai-whisper` checkpoint to fine-tune.
+        model_name: Which Whisper checkpoint to fine-tune, as a Hugging Face id.
+            Was a bare `"tiny"` while this service used `openai-whisper`; that
+            package names its checkpoints differently from the Hub.
         checkpoint_name: File name for the fine-tuned weights, under `checkpoint_dir`.
         audio_path: Where the demo clip lives locally. It is not committed -- the
             runtime is ephemeral -- so it is pulled from `hf_dataset_repo_id` when
@@ -32,7 +34,7 @@ class Config(BaseConfig):
     learning_rate: float = 1e-4
     num_epochs: int = 1
 
-    whisper_model_name: str = "tiny"
+    model_name: str = "openai/whisper-tiny"
     checkpoint_name: str = "whisper_finetuned.pth"
 
     audio_path: Path = field(default_factory=lambda: Path("data/audio.mp3"))

@@ -11,7 +11,7 @@ the same functions rather than reimplementing them.
 
 from ai_residency_common import get_logger, resolve_required, set_seed
 from config import Config
-from whisper_fine_tuning.models import decode_audio, get_tokenizer, load_whisper_model
+from whisper_fine_tuning.models import decode_audio, load_whisper_model
 from whisper_fine_tuning.training import fine_tune
 
 __all__ = ["main", "run_demo"]
@@ -41,19 +41,16 @@ def run_demo(config: Config) -> tuple[str, str]:
     logger.info("Demo clip from %s", source)
     audio_path = str(resolved)
 
-    model, device = load_whisper_model(config)
-    tokenizer = get_tokenizer()
+    whisper = load_whisper_model(config)
 
-    base_output = decode_audio(model, device, audio_path)
-    model = fine_tune(
-        model,
-        tokenizer,
-        device,
+    base_output = decode_audio(whisper, audio_path)
+    whisper = fine_tune(
+        whisper,
         audio_path,
         config.target_text,
         learning_rate=config.learning_rate,
     )
-    fine_tuned_output = decode_audio(model, device, audio_path)
+    fine_tuned_output = decode_audio(whisper, audio_path)
 
     return base_output, fine_tuned_output
 
