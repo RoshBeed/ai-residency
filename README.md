@@ -168,14 +168,20 @@ make install    # one venv for the whole workspace
 make check      # ruff, strict mypy, pytest — every service
 ```
 
-182 tests, and strict mypy over every member of the workspace — with no `type: ignore`
-anywhere in the repo.
+Four shared libraries, because three services had grown their own word2vec and two their own
+Whisper layer — one per team that worked on them. Consolidating those found real bugs, not
+just duplication: a CBOW that crashed on a batch of one, and a Whisper label sequence that
+trained the decoder one position out of step with what it was asked at inference.
+
+Strict mypy over every member of the workspace, with no `type: ignore` anywhere in the repo.
 
 ```
 ai-residency/
 ├── libs/
 │   ├── common/              device, logging, checkpoints, config, Hub, health/ready — used by all
-│   └── vision-transformer/  attention, encoder, decoder, patch embedding — used by the two ViTs
+│   ├── vision-transformer/  attention, encoder, decoder, patch embedding — the two ViTs
+│   ├── word2vec/            CBOW and skip-gram, negative sampling or softmax
+│   └── speech/              Whisper loading, features, labels, decoding
 ├── services/                one directory per service — package, tests, Dockerfiles, write-up
 │   └── frontend/            the Streamlit app, one page per system
 ├── deploy/                  docker-compose, the Helm chart, Terraform for a GPU training host
