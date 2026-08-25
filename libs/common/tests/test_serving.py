@@ -16,6 +16,7 @@ from ai_residency_common.serving import (
     decode_image,
     load_model,
     resolve_required,
+    retrying,
     run_app,
 )
 
@@ -195,3 +196,65 @@ def test_root_can_be_left_to_the_service() -> None:
 
     add_health_routes(app, ready=lambda: True, include_root=False)
     assert TestClient(app).get("/").json() == {"message": "mine"}
+
+
+def test_retrying_stops_calling_once_it_succeeds() -> None:
+    """The common case: load once, then answer from memory."""
+    calls = []
+
+    def load() -> bool:
+        calls.append(1)
+        return True
+
+    ready = retrying(load, min_interval_seconds=0)
+    assert ready() is True
+    assert ready() is True
+    assert len(calls) == 1
+
+
+def test_retrying_recovers_from_a_transient_failure() -> None:
+    """The reason this exists.
+
+    A checkpoint resolved once at startup makes a transient network failure permanent:
+    the pod answers 503 for the rest of its life, and liveness cannot rescue it because
+    the process is fine. Readiness retries instead.
+    """
+    attempts = {"n": 0}
+
+    def load() -> bool:
+        attempts["n"] += 1
+        return attempts["n"] >= 3
+
+    ready = retrying(load, min_interval_seconds=0)
+    assert ready() is False
+    assert ready() is False
+    assert ready() is True
+    assert ready() is True
+    assert attempts["n"] == 3
+
+
+def test_retrying_rate_limits_attempts() -> None:
+    """A readiness probe runs every ten seconds; re-downloading a multi-gigabyte
+    checkpoint that often would be worse than staying down."""
+    calls = []
+
+    def load() -> bool:
+        calls.append(1)
+        return False
+
+    ready = retrying(load, min_interval_seconds=3600)
+    ready()
+    ready()
+    ready()
+    assert len(calls) == 1
+
+
+def test_retrying_treats_a_raising_loader_as_not_ready() -> None:
+    """A probe must never 500. Whatever the loader does, /ready answers."""
+
+    def load() -> bool:
+        raise RuntimeError("hub unreachable")
+
+    ready = retrying(load, min_interval_seconds=0)
+    assert ready() is False
+    assert ready() is False

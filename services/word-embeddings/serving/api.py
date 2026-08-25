@@ -20,6 +20,7 @@ from ai_residency_common import (
     get_logger,
     load_checkpoint,
     resolve_required,
+    retrying,
     run_app,
 )
 from config import Config
@@ -71,9 +72,15 @@ def _nearest_words(
     ]
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Load the checkpoint on startup, leaving the service degraded if it is absent."""
+def load_embeddings() -> bool:
+    """Resolve and load the checkpoint. Returns whether the service can now serve.
+
+    Called at startup and, if that fails, again from `/ready` on a rate limit -- so a
+    checkpoint that was unreachable at boot is picked up when it becomes reachable,
+    instead of leaving the pod not-ready for the rest of its life.
+    """
+    if state.is_loaded:
+        return True
     try:
         config = Config()
         path, source = resolve_required(config.cbow_checkpoint, config.hf_repo_id)
@@ -83,6 +90,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("Loaded %s embeddings from %s", tuple(embeddings.shape), source)
     except (FileNotFoundError, KeyError, RuntimeError) as error:
         logger.error("Could not load embeddings, /nearest will return 503: %s", error)
+        return False
+    return True
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Load the checkpoint on startup, leaving the service degraded if it is absent."""
+    load_embeddings()
     yield
 
 
@@ -136,7 +151,11 @@ async def root() -> dict[str, str]:
 
 add_health_routes(
     app,
-    ready=lambda: state.is_loaded,
+    # Retried rather than decided once: a checkpoint that could not be resolved at
+    # startup -- a DNS blip during a mass restart, say -- would otherwise leave this
+    # pod not-ready permanently, with liveness unable to help because the process is
+    # perfectly healthy.
+    ready=retrying(load_embeddings),
     detail=lambda: {
         "model_loaded": state.is_loaded,
         "checkpoint_loaded": state.is_loaded,
