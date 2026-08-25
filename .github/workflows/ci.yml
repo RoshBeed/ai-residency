@@ -217,7 +217,12 @@ jobs:
   images:
     name: Publish ${{ matrix.service }}
     needs: [changes, images-base]
-    if: needs.images-base.result == 'success'
+    # `always()` for the same reason images-base needs it: a commit that touches no
+    # service skips the check matrix, and a skip propagates to everything downstream
+    # unless the condition contains a status function. Without it, a docs-only commit
+    # published the base image and none of the ten that depend on it -- a sha- tag
+    # naming an incomplete set, which is exactly what publishing-all exists to avoid.
+    if: always() && needs.images-base.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -366,7 +371,7 @@ jobs:
   scan:
     name: Scan the published base image
     needs: images-base
-    if: needs.images-base.result == 'success'
+    if: always() && needs.images-base.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
