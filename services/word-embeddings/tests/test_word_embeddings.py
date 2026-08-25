@@ -8,12 +8,13 @@ embeddings carrying their vocabulary with them.
 from typing import Any
 
 import pytest
+import torch
 from fastapi.testclient import TestClient
 
 from config import Config
 from serving.api import app
 from word_embeddings.etl import TextProcessor
-from word_embeddings.model import CBOWNS, CBOWConfig
+from word_embeddings.model import build_cbow
 
 
 class TestTextNormalization:
@@ -33,19 +34,28 @@ class TestTextNormalization:
 
 
 class TestCbowModel:
-    """CBOWNS takes a CBOWConfig. Calling it with loose ints raised TypeError at
-    runtime, which is how the prediction path was broken."""
+    """The model comes from libs/word2vec now; this checks the service's own view of
+    it -- the shape everything downstream reads, and that a single-example batch works.
+    """
 
-    def test_constructs_from_a_config(self) -> None:
-        model = CBOWNS(CBOWConfig(vocab_size=64, embed_size=8))
+    def test_builds_the_matrix_everything_downstream_reads(self) -> None:
+        model = build_cbow(64, 8)
         assert model.in_embed.weight.shape == (64, 8)
+        assert model.embeddings.shape == (64, 8)
 
-    def test_rejects_positional_ints(self) -> None:
-        # Typed as Any so this stays a runtime contract test rather than something
-        # mypy rejects at check time — no suppression needed.
-        model_class: Any = CBOWNS
-        with pytest.raises(TypeError):
-            model_class(64, 8)
+    def test_a_batch_of_one_works(self) -> None:
+        """The previous implementation raised IndexError here.
+
+        It scored negatives with `torch.bmm(...).squeeze()` -- no dim -- which
+        collapses the batch axis along with the one it meant to remove.
+        """
+        model = build_cbow(64, 8, num_negatives=5)
+        loss = model(
+            torch.randint(0, 64, (1,)),
+            torch.randint(0, 64, (1, 4)),
+            torch.randint(0, 64, (1, 5)),
+        )
+        assert loss.shape == ()
 
 
 class TestApi:
