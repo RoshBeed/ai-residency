@@ -117,14 +117,44 @@ def test_load_waveform_honours_max_duration(tmp_path: Path) -> None:
 
 
 @needs_model
-def test_encode_target_includes_whispers_own_prefix(processor: WhisperProcessor) -> None:
-    """The tokenizer emits start-of-transcript itself, which is why the services no
-    longer assemble that prefix by hand from special-token ids."""
+def test_encode_target_drops_the_token_the_model_prepends(processor: WhisperProcessor) -> None:
+    """The whole reason encode_target exists.
+
+    WhisperForConditionalGeneration builds its decoder input by shifting labels right
+    and prepending decoder_start_token_id, which *is* <|startoftranscript|>. Leave the
+    tokenizer's own copy in and the decoder input starts [SOT, SOT, ...].
+    """
+    raw = processor.tokenizer("My name is Rosh", add_special_tokens=True).input_ids
     labels = encode_target(processor, "My name is Rosh")
 
-    tokens = processor.tokenizer.convert_ids_to_tokens(labels.tolist())
-    assert tokens[0] == "<|startoftranscript|>"
-    assert tokens[-1] == "<|endoftext|>"
+    assert processor.tokenizer.convert_ids_to_tokens(raw[:1]) == ["<|startoftranscript|>"]
+    assert labels.tolist() == raw[1:]
+    assert processor.tokenizer.convert_ids_to_tokens(labels.tolist())[-1] == "<|endoftext|>"
+
+
+@needs_model
+def test_the_doubled_start_token_would_change_the_loss(processor: WhisperProcessor) -> None:
+    """Not a style point -- it silently changes what the model is trained to do.
+
+    With the duplicate the decoder is one position out of step, so it learns to emit
+    <|startoftranscript|> exactly where a caller will later read its answer. Nothing
+    errors; the loss simply describes a different task.
+    """
+    from transformers import WhisperForConditionalGeneration
+
+    model = WhisperForConditionalGeneration.from_pretrained(MODEL, local_files_only=True)
+    model.eval()
+    features = to_features(processor, tone(3.0)).unsqueeze(0)
+
+    correct = encode_target(processor, "My name is Rosh").unsqueeze(0)
+    doubled = torch.cat([correct[:, :1] * 0 + model.config.decoder_start_token_id, correct], dim=1)
+
+    with torch.no_grad():
+        clean = model(input_features=features, labels=correct).loss.item()
+        broken = model(input_features=features, labels=doubled).loss.item()
+
+    assert clean != pytest.approx(broken, abs=0.01)
+    assert clean < broken
 
 
 @needs_model
