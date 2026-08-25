@@ -84,13 +84,6 @@ convention = "google"
 "services/frontend/theme.py" = ["E501", "RUF001"]
 "services/frontend/projects.py" = ["E501", "RUF001"]
 
-# The original exploratory notebook the rlhf-ppo package was refactored out of.
-# Kept as a historical record, not held to the package's standard.
-"notebooks/rlhf-ppo/rosh.ipynb" = [
-    "B007", "B905", "E501", "F401", "F811", "F821",
-    "I001", "RUF010", "RUF015", "SIM108",
-]
-
 # ---------------------------------------------------------------------------
 # Types
 # ---------------------------------------------------------------------------
