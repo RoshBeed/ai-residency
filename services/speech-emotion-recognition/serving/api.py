@@ -17,8 +17,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import librosa
-import numpy as np
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -31,6 +29,7 @@ from ai_residency_common import (
     run_app,
 )
 from config import Config
+from speech import features_from_file
 from speech_emotion_recognition.models import load_model_and_processor
 
 __all__ = ["app"]
@@ -123,19 +122,20 @@ async def predict(request: AudioRequest) -> EmotionResponse:
         handle.write(audio_bytes)
         handle.flush()
         try:
-            waveform, _ = librosa.load(
+            # The same decode-and-featurise path training uses, so a clip cannot be
+            # preprocessed one way to train on and another way to predict from.
+            features = features_from_file(
+                _processor,
                 handle.name,
-                sr=_config.sample_rate,
-                duration=_config.max_duration_seconds,
-            )
+                sample_rate=_config.sample_rate,
+                max_duration=_config.max_duration_seconds,
+            ).unsqueeze(0)
         except Exception as error:
             raise HTTPException(
-                status_code=400, detail=f"Could not decode audio: {error}"
+                status_code=422, detail=f"Could not decode audio: {error}"
             ) from error
 
-    features = _processor.feature_extractor(
-        np.asarray(waveform), sampling_rate=_config.sample_rate, return_tensors="pt"
-    ).input_features.to(_device)
+    features = features.to(_device)
 
     # Score the emotion tokens directly rather than generating text: the label is one
     # token, so the decoder's first step already holds the whole answer, and reading it

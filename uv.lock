@@ -336,6 +336,7 @@ version = "0.1.0"
 source = { virtual = "services/speech-emotion-recognition" }
 dependencies = [
     { name = "ai-residency-common" },
+    { name = "ai-residency-speech" },
     { name = "fastapi" },
     { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "librosa", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -362,6 +363,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ai-residency-common", editable = "libs/common" },
+    { name = "ai-residency-speech", editable = "libs/speech" },
     { name = "fastapi" },
     { name = "librosa" },
     { name = "matplotlib" },
