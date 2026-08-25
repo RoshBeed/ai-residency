@@ -7,8 +7,11 @@ repo. Private, at `github.com/RoshBeed/ai-residency`.
 ## Layout
 
 ```
-libs/common/                 device, logging, checkpoints, config, seeding, Hub, W&B — used by all
-libs/vision-transformer/     attention, encoder, decoder, patch embedding — used by the two ViTs
+libs/common/                 device, logging, checkpoints, config, seeding, Hub, W&B, health/ready
+libs/vision-transformer/     attention, encoder, decoder, patch embedding — the two ViTs
+libs/word2vec/               CBOW and skip-gram, negative sampling or softmax — word-embeddings,
+                             vector-search-retrieval
+libs/speech/                 Whisper loading, features, labels, decoding — the two audio services
 services/<name>/             one per system: package, config/, serving/, tests/, Dockerfiles, README
 services/_template/          the shape a new service starts from; a working one, not a skeleton
 services/frontend/           the Streamlit app, one page per system
@@ -37,6 +40,12 @@ make -C services/<name> help      # that service's own pipeline stages
 - **After adding or renaming a workspace member**, run `uv lock`. The Dockerfiles pick it up on
   their own: they copy manifests with `COPY --parents libs/*/... services/*/...`, so there is no
   per-member list to go stale.
+
+**One implementation per algorithm.** Three services had grown their own word2vec and two
+their own Whisper layer, because each week's team either started fresh or picked up the
+previous team's code. Those are `libs/word2vec` and `libs/speech` now. When you find a fourth
+copy of something, the answer is a library, not a tidy-up of one copy — the git history keeps
+the provenance either way.
 
 **Two registries, two usernames.** Docker Hub is **`roshb`** (image names only); Hugging Face is
 **`roshbeed`** (`hf_repo_id`, `hf_dataset_repo_id`, hub URLs). They are not interchangeable, and a
@@ -123,6 +132,11 @@ those builds are native rather than the slow emulation a Mac would do.
 - **`helm uninstall` returns before deletion finishes.** An install started right after can have
   its objects deleted by the tail of the previous release — a reinstall once came up with all
   eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
+- **Whisper labels must not start with `<|startoftranscript|>`.** The model prepends
+  `decoder_start_token_id` itself when it shifts labels right, and that token *is* SOT, so
+  passing the tokenizer's output through unchanged trains the decoder one position out of
+  step. Nothing errors; the loss simply describes a different task. Use
+  `speech.encode_target`, which drops it.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **buildx resolves a base-image tag against the registry, not the local store.** `make base`
   followed by `make build SERVICE=x` silently built against the *published* base until the Makefile
