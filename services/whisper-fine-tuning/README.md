@@ -118,17 +118,26 @@ structured token prefix, not a different model per task:
 Figure 1 from the original paper (Radford et al. [1], arXiv:2212.04356).
 ![Whisper's multitask training token format, from Radford et al. 2022](assets/fig3-multitask-format.png)
 
-Every branch in this diagram is a real, still-used code path in `openai-whisper` today: a
+Every branch in this diagram is a real, still-used code path in Whisper today: a
 `PREV` token plus previous text tokens for optional prompting, a `LANGUAGE TAG` for identification,
 `TRANSCRIBE` vs. `TRANSLATE` for the task, and either the timestamp-token branch (for
 time-aligned transcription) or `NO TIMESTAMPS` for plain text-only output, all terminating in
-`EOT`. This repo only ever exercises the single narrowest path through it: `SOT → language →
-TRANSCRIBE → text tokens → EOT`, no previous-text prompting, no translation, no timestamps. That's
-what `whisper_fine_tuning/models.py`'s `create_tokens()` builds (`sot, language_token, transcribe, *encode(text),
-eot`) for a single training example. Concretely, the string
+`EOT`. This service exercises the single narrowest path through it: `SOT → language →
+TRANSCRIBE → NO TIMESTAMPS → text tokens → EOT`, with no previous-text prompting and no
+translation. Concretely, the string
 `<|startoftranscript|><|en|><|transcribe|><|notimestamps|>Hello, my name is Bes.<|endoftext|>`
-becomes the token sequence `[50258, 50259, 50359, 50363, 15947, 11, 452, 1315, 307, 8190, 13,
-50257]`.
+becomes `[50258, 50259, 50359, 50363, 15947, 11, 452, 1315, 307, 8190, 13, 50257]`.
+
+That sequence now comes from the tokenizer, via `speech.encode_target`. It used to be
+assembled by hand from special-token ids, and the hand-built version left out `50363`
+— `<|notimestamps|>` — so the code trained against a sequence this very paragraph
+described correctly and the implementation did not produce. Reading the two side by
+side is what turned that up; they lived in different files, so nothing compared them.
+
+`encode_target` also drops the leading `50258`. Whisper's model prepends
+`decoder_start_token_id` itself when it shifts labels right, and that token *is* `SOT`
+— leaving the tokenizer's copy in makes the decoder input start `[50258, 50258, …]`
+and trains the model one position out of step with what it is asked at inference.
 
 ### 3.3 Fine-Tuning on One Example
 

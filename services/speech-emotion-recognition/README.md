@@ -131,7 +131,7 @@ structured token prefix, not a different model per task:
 Figure 1 from the original paper (Radford et al. [1], arXiv:2212.04356).
 ![Whisper's multitask training token format, from Radford et al. 2022](assets/fig3-multitask-format.png)
 
-Every branch in this diagram is a real, still-used code path in `openai-whisper` today: a
+Every branch in this diagram is a real, still-used code path in Whisper today: a
 `PREV` token plus previous text tokens for optional prompting, a `LANGUAGE TAG` for identification,
 `TRANSCRIBE` vs. `TRANSLATE` for the task, and either the timestamp-token branch (for
 time-aligned transcription) or `NO TIMESTAMPS` for plain text-only output, all terminating in
