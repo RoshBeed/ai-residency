@@ -1,97 +1,113 @@
 # AI Residency — ML systems, built end to end
 
 Nine machine-learning systems, each taken from scratch to a containerized service, plus the
-frontend and deployment that run all of them. The point isn't only the models — it's the
+frontend and the deployment that run all of them. The point isn't only the models — it's the
 engineering around them: real architectures implemented from the ground up, one shared library,
-one lockfile, and identical deployment on three runtimes (macOS, docker-compose, Kubernetes).
+one lockfile, and the same images running on three runtimes (a laptop, docker-compose,
+Kubernetes).
 
-```mermaid
-flowchart LR
-    subgraph clients["Client"]
-        UI["Streamlit frontend"]
-    end
-    subgraph cluster["Kubernetes / docker-compose"]
-        W1["Word embeddings"]
-        W1b["Content scoring"]
-        W2["Retrieval"]
-        W3["ViT"]
-        W4["Captioning"]
-        W5["Whisper"]
-        W6["PPO"]
-        R[("Redis<br/>HNSW index")]
-    end
-    C["libs/common<br/>shared library"]
-    H[("Hugging Face Hub<br/>weights")]
+Every image is public and every checkpoint resolves from the Hugging Face Hub at startup, so
+none of this needs credentials, a GPU, or a build.
 
-    UI --> W1 & W1b & W2 & W3 & W4 & W5 & W6
-    W2 --> R
-    W1b --> W1
-    W1 & W1b & W2 & W3 & W4 & W5 & W6 --> C
-    C --> H
-    subgraph train["Training box (RunPod / AWS spot GPU)"]
-        T["train image"] --> H
-    end
+## Run it
+
+One command. It pulls ten published images and serves all nine systems behind one UI at
+**http://localhost:8500**.
+
+```bash
+git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy
+make up
 ```
 
-A GPU box trains and pushes weights to the Hub; a cheap CPU box pulls them and serves. The weights
-and datasets are public, so serving needs nothing but the image — no credentials:
+Nothing is built locally — compose pulls `roshb/ai-residency-*` straight from Docker Hub, and
+each container fetches its own weights on first start. Expect a few minutes on a cold run while
+those downloads happen; each page works as its backend finishes.
+
+```bash
+make status     # which backends are up (/health) and which can serve (/ready)
+make down       # stop everything
+```
+
+If `make up` reports `Bind for 0.0.0.0:8500 failed`, something else already holds that port —
+most likely a Helm release of this same chart, whose `LoadBalancer` Service claims it even with
+its pods scaled to zero. `make helm-uninstall` frees it.
+
+### If you don't have ~17GB of RAM
+
+Everything at once is heavy, so run the frontend against a subset instead. The pages you didn't
+start say so rather than erroring.
+
+```bash
+make up SERVICES="word-embeddings vit-classifier"
+```
+
+| Service | Resident once loaded | Notes |
+|---|--:|---|
+| `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically |
+| `vit-classifier` | 0.45 GB | Draw a digit, see the real patch grid |
+| `vit-seq2seq` | 0.45 GB | Multi-digit, streams tokens as it decodes |
+| `content-scoring` | 1.3 GB | |
+| `whisper-fine-tuning` | 1.8 GB | Fine-tunes live, per request |
+| `word-embeddings` | 2.3 GB | Nearest neighbours and analogies |
+| `speech-emotion-recognition` | — | No trained checkpoint yet, so it answers 503 by design |
+| `rlhf-ppo` | 4.6 GB | Heaviest, and the most interesting trace |
+| `multimodal-captioning` | 5.4 GB | CLIP + Qwen3 |
+| the frontend | 0.4 GB | Always started |
+
+Those are cgroup peaks read after each service had loaded its models and answered a real request,
+not estimates.
+
+### A single backend, no UI
+
+Each service is independently deployable and answers plain HTTP:
 
 ```bash
 docker run -p 8000:8000 roshb/ai-residency-word-embeddings-serve
+curl -s localhost:8000/ready
+curl -s -X POST localhost:8000/nearest \
+  -H 'content-type: application/json' -d '{"word": "king", "k": 3}'
 ```
 
 That container starts with an empty disk, pulls its own checkpoint, and answers.
 
-## The systems
+## How it fits together
 
-Each links to its own full write-up — architecture, method, results, references.
+```mermaid
+flowchart LR
+    UI["Streamlit frontend<br/>localhost:8500"]
 
-| System | Architecture | Demonstrated |
-|---|---|---|
-| [Word embeddings](services/word-embeddings) | CBOW word2vec with negative sampling, from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy and similarity checks) |
-| [Content scoring](services/content-scoring) | Regression head over frozen CBOW embeddings | Trained end to end on real Hacker News post data |
-| [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | Trained towers served through Redis/RediSearch ANN search |
-| [ViT classifier](services/vit-classifier) | Encoder-only ViT from scratch: patch embedding, self-attention, encoder blocks | 91.78% on the MNIST test set, against an 11.35% majority baseline |
-| [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | 68.00% exact-sequence match, against 0.10% random |
-| [Image captioning](services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end to end |
-| [Whisper fine-tuning](services/whisper-fine-tuning) | Whisper fine-tuned live on a single clip | `"My name is Roosh."` → `"My name is Rosh"`, in five gradient steps |
-| [Speech emotion recognition](services/speech-emotion-recognition) | Emotion as a token Whisper's decoder emits, not a classifier head | Corpus pipeline, extended tokenizer, fine-tuning and serving end to end |
-| [RLHF / PPO](services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy and value updates | Full PPO step runs end to end against Qwen3-0.6B-Base |
+    subgraph text["Text"]
+        WE["word-embeddings"]
+        CS["content-scoring"]
+        VSR["vector-search-retrieval"]
+    end
+    subgraph vision["Vision"]
+        VC["vit-classifier"]
+        VS["vit-seq2seq"]
+        MC["multimodal-captioning"]
+    end
+    subgraph audio["Audio"]
+        WF["whisper-fine-tuning"]
+        SER["speech-emotion-recognition"]
+    end
+    PPO["rlhf-ppo<br/>(RL)"]
 
-## Layout
+    R[("Redis<br/>HNSW index")]
+    HUB[("Hugging Face Hub<br/>weights + datasets")]
+    GPU["training image<br/>on a rented GPU"]
 
-```
-ai-residency/
-├── libs/
-│   ├── common/           device, logging, checkpoints, config, Hub, tracking — used by all
-│   └── vision-transformer/  attention, encoder, decoder, patch embedding — used by the two ViTs
-├── services/             one directory per service — package, tests, Dockerfiles, write-up
-│   ├── _template/        the shape a new service starts from; a working one, not a skeleton
-│   └── frontend/         the Streamlit app, one page per system
-├── deploy/               docker-compose, the Helm chart, Terraform for a GPU training host
-├── notebooks/            exploratory notebooks, one folder per system
-├── pyproject.toml        the uv workspace: one lockfile, one ruff and mypy configuration
-└── Makefile              install / check / build / push, dispatching on SERVICE=
-```
-
-Every service is independently deployable — its own image, its own Deployment, its own resource
-limits. What it is *not* is independently versioned: every push to `main` publishes **all ten**
-images under one `sha-<commit>` tag, and `deploy/` pins that tag, so the whole system is
-reproducible from a single identifier. CI narrows *checks* to what changed; it deliberately does
-not narrow publishing, because a tag that names only some of the images is not a deployable set.
-
-Containers run as an unprivileged user (UID 1000), and the chart sets a matching
-`securityContext` — `runAsNonRoot`, no privilege escalation, all capabilities dropped.
-
-## Running it
-
-```bash
-make install                              # one venv for the whole workspace
-make check                                # ruff, strict mypy, pytest, every service
-make serve SERVICE=vit-classifier         # one backend on :8000
+    UI --> text & vision & audio & PPO
+    VSR --> R
+    text & vision & audio & PPO -.->|"weights at startup"| HUB
+    GPU ==>|"trains, pushes"| HUB
 ```
 
-Every backend exposes two endpoints that a deployment cares about, from one shared helper in
+A GPU box trains and pushes weights to the Hub; cheap CPU containers pull them and serve. No
+service calls another at request time, and nothing depends on a file that happens to sit on one
+machine — which is what lets the same images run unchanged on a laptop, under compose, and on a
+cluster.
+
+Each backend exposes two endpoints a deployment cares about, from one shared helper in
 `libs/common`:
 
 | | meaning | answers |
@@ -99,53 +115,76 @@ Every backend exposes two endpoints that a deployment cares about, from one shar
 | `/health` | the process is up | always 200 — a missing checkpoint must not restart a pod |
 | `/ready` | this instance can serve | **503** until weights are loaded, so an unusable pod stays out of the load balancer |
 
-The chart points `livenessProbe` at the first and `readinessProbe` at the second. Pointing both
-at `/health` gives a readiness probe that cannot fail, which is the same as having none.
+The Helm chart points `livenessProbe` at the first and `readinessProbe` at the second. Pointing
+both at `/health` gives a readiness probe that cannot fail, which is the same as having none.
 
-The whole stack. CI builds, smoke-tests and publishes every image, so `make up` below pulls what
-it needs and nothing has to be built first. The targets below are for exercising a Dockerfile
-change locally before pushing it:
+## The systems
 
-```bash
-make base        # roshb/ai-residency-base-serve (CPU)
-make base-train  # roshb/ai-residency-base-train (CUDA)
-for s in $(ls services | grep -vE '^(_template)$'); do make build SERVICE=$s; done
-```
+Each links to its own write-up — architecture, method, results and references.
 
-`make build` passes the base it just built as `--build-arg BASE_IMAGE=`, because buildx otherwise
-resolves that tag against the registry and silently builds against the published base instead.
+| System | Architecture | What it demonstrates |
+|---|---|---|
+| [Word embeddings](services/word-embeddings) | CBOW word2vec with negative sampling, from scratch | The whole unsupervised loop written directly — vocabulary, subsampling, negative sampling, training — with no `gensim` and no pretrained vectors |
+| [Content scoring](services/content-scoring) | Regression head over frozen CBOW embeddings | Transfer learning onto an encoder this repo produced itself; the head is the only thing trained |
+| [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), triplet loss | The offline/online split a real retrieval system has: documents encoded once into an ANN index, queries encoded per request |
+| [ViT classifier](services/vit-classifier) | Encoder-only ViT: patch embedding, self-attention, encoder blocks | Attention written out rather than called — no `nn.TransformerEncoderLayer` anywhere |
+| [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | The decoder half — causal masking and cross-attention — sharing one encoder with the classifier through `libs/vision-transformer` |
+| [Image captioning](services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Late fusion across two frozen pretrained backbones, with only the projection adapter trained, and tokens streamed to the browser as they are generated |
+| [Whisper fine-tuning](services/whisper-fine-tuning) | Whisper fine-tuned live, per request | A training loop as an HTTP endpoint: five gradient steps, each one streamed as it happens |
+| [Speech emotion recognition](services/speech-emotion-recognition) | Emotion as a token Whisper's decoder emits | Extending a pretrained tokenizer with new tokens instead of bolting a classifier head onto the encoder |
+| [RLHF / PPO](services/rlhf-ppo) | PPO from scratch — generation, KL penalty, reward, advantage, policy and value updates | All twelve stages of a PPO step written out and exposed one stage at a time, against a real preference-trained reward model |
 
-Serving images carry the CPU build of torch — ~1.6GB, and the right thing for a Kubernetes node.
-Training images add the CUDA build on top and target `linux/amd64`, since they run on a rented
-NVIDIA box; they are ~10GB and slow to build under emulation, so CI or the GPU host itself is the
-better place for them.
+## Deployment
+
+The same images orchestrated two ways, on top of the single `docker run` above.
 
 ```bash
 cd deploy
-make up                                   # docker-compose; frontend on :8500
-
-make load-images                          # Kubernetes only: see below
-make helm-install                         # frontend on :8500
+make up                  # docker-compose, frontend on :8500
+make helm-install        # Kubernetes, frontend on :8500
 ```
 
-docker-compose reads the host's images directly. **Kubernetes does not** — Docker Desktop runs its
-node as a kind container with its own containerd store, and `imagePullPolicy: IfNotPresent` means
-it silently keeps whatever it already had. `make load-images` imports them; run it after every
-rebuild.
+The chart adds what compose has no equivalent for: liveness and readiness probes, measured memory
+requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
+NetworkPolicies restricting the backends to the frontend.
 
-See [`deploy/README.md`](deploy/README.md) for the cluster details, and
-[`libs/common/README.md`](libs/common/README.md) for what every service shares.
+Every push to `main` builds all ten images, **smoke-tests each one before pushing it** — non-root,
+both probe endpoints registered, working directory writable — and publishes them under a single
+`sha-<commit>` tag. `deploy/` pins that tag, so one identifier names a set that was built and
+verified together.
 
-## Adding a service
+```bash
+make pin-images TAG=sha-abc123    # repoint compose and the chart together
+```
 
-Copy `services/_template/` to `services/<name>/`, rename its package directory and the
-`template` references inside it, then `uv lock`. It is a working service — it trains, serves and
-passes its own checks — so the copy runs before you have changed anything.
+See [`deploy/README.md`](deploy/README.md) for cluster details and the Terraform that provisions a
+spot GPU box for training, and [`libs/common/README.md`](libs/common/README.md) for what every
+service shares.
 
-Everything else picks it up on its own: `SERVICES` in the Makefile is derived from the directory
-listing, CI's matrix from the same, the Dockerfiles copy manifests by glob, and ruff's `src` roots
-are globs rather than an enumerated list.
+## Working on it
+
+```bash
+make install    # one venv for the whole workspace
+make check      # ruff, strict mypy, pytest — every service
+```
+
+182 tests, and strict mypy over every member of the workspace — with no `type: ignore`
+anywhere in the repo.
+
+```
+ai-residency/
+├── libs/
+│   ├── common/              device, logging, checkpoints, config, Hub, health/ready — used by all
+│   └── vision-transformer/  attention, encoder, decoder, patch embedding — used by the two ViTs
+├── services/                one directory per service — package, tests, Dockerfiles, write-up
+│   └── frontend/            the Streamlit app, one page per system
+├── deploy/                  docker-compose, the Helm chart, Terraform for a GPU training host
+├── notebooks/               exploratory notebooks, one folder per system
+├── pyproject.toml           the uv workspace: one lockfile, one ruff and mypy configuration
+└── Makefile                 install / check / build / push, dispatching on SERVICE=
+```
 
 ---
 
-*These systems originated as projects in the [Machine Learning Institute](https://ml.institute/) residency.*
+*These systems originated as projects in the [Machine Learning Institute](https://ml.institute/)
+residency.*

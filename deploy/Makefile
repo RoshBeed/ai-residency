@@ -45,10 +45,33 @@ pull: ## Pull every backend + frontend image from Docker Hub
 BACKENDS := $(shell awk '/^  [a-z][a-z0-9-]*:$$/ {svc=substr($$1,1,length($$1)-1)} /^      - "80[0-9][0-9]:8000"$$/ {gsub(/[" ]/,"",$$2); split($$2,p,":"); print svc ":" p[1]}' compose/docker-compose.yml)
 PORTS := $(shell echo "$(BACKENDS)" | tr ' ' '\n' | cut -d: -f2 | sort)
 
-up: ## Start every backend + the frontend
-	docker compose -f compose/docker-compose.yml up -d
+# The frontend's compose service depends_on all nine backends, so a bare `up` starts
+# the lot -- around 19GB resident once every model is loaded. SERVICES= runs the
+# frontend against a chosen subset instead, which is the difference between this being
+# demoable on a 16GB laptop and not.
+#
+# --no-deps is what makes the subset actually a subset; without it depends_on drags the
+# other eight back in. The frontend handles the missing ones on its own: each page
+# checks /ready and says the backend is not running, rather than erroring.
+#
+# Redis is added automatically when vector-search-retrieval is selected, since that one
+# genuinely cannot serve without it.
+SUBSET := $(if $(filter vector-search-retrieval,$(SERVICES)),redis) $(SERVICES)
+
+up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-classifier"
+	@if [ -n "$(SERVICES)" ]; then \
+		docker compose -f compose/docker-compose.yml up -d --no-deps frontend $(SUBSET); \
+	else \
+		docker compose -f compose/docker-compose.yml up -d; \
+	fi
+	@echo ""
 	@echo "Frontend: http://localhost:8500"
-	@echo "Backends: $(BACKENDS)"
+	@if [ -n "$(SERVICES)" ]; then \
+		echo "Running:  $(SUBSET)"; \
+		echo "The other pages will say their backend is not running, which is correct."; \
+	else \
+		echo "Backends: $(BACKENDS)"; \
+	fi
 
 index-retrieval: ## One-time: populate this stack's own (independent, starts-empty) vector-search-retrieval redis index
 	docker compose -f compose/docker-compose.yml exec vector-search-retrieval python -m retrieval.save_doc_embeddings_to_redis
