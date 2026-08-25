@@ -84,21 +84,28 @@ def retrying(
     Returns:
         A `ready` callable for `add_health_routes`.
     """
-    state = {"ready": False, "last_attempt": 0.0}
+    # `None`, not 0.0. `time.monotonic()` counts from an arbitrary origin -- on a
+    # freshly booted machine it is a small number, so `now - 0.0` can be less than the
+    # interval and the *first* attempt gets rate-limited away before it ever happens.
+    # That is invisible on a host with days of uptime and silently costs an hour on a
+    # new node, which is exactly when a service is starting for the first time.
+    ready_now = False
+    last_attempt: float | None = None
 
     def check() -> bool:
-        if state["ready"]:
+        nonlocal ready_now, last_attempt
+        if ready_now:
             return True
         now = time.monotonic()
-        if now - state["last_attempt"] < min_interval_seconds:
+        if last_attempt is not None and now - last_attempt < min_interval_seconds:
             return False
-        state["last_attempt"] = now
+        last_attempt = now
         try:
-            state["ready"] = bool(load())
+            ready_now = bool(load())
         except Exception as error:
             logger.warning("Readiness retry failed, will try again: %s", error)
-            state["ready"] = False
-        return bool(state["ready"])
+            ready_now = False
+        return ready_now
 
     return check
 
