@@ -26,6 +26,7 @@ members = [
     "ai-residency-frontend",
     "ai-residency-multimodal-captioning",
     "ai-residency-rlhf-ppo",
+    "ai-residency-speech",
     "ai-residency-speech-emotion-recognition",
     "ai-residency-template",
     "ai-residency-vector-search-retrieval",
@@ -34,6 +35,7 @@ members = [
     "ai-residency-vit-seq2seq",
     "ai-residency-whisper-fine-tuning",
     "ai-residency-word-embeddings",
+    "ai-residency-word2vec",
 ]
 
 [manifest.dependency-groups]
@@ -291,6 +293,44 @@ dev = [
 ]
 
 [[package]]
+name = "ai-residency-speech"
+version = "0.1.0"
+source = { editable = "libs/speech" }
+dependencies = [
+    { name = "ai-residency-common" },
+    { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "librosa", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+    { name = "transformers" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-residency-common", editable = "libs/common" },
+    { name = "librosa" },
+    { name = "numpy" },
+    { name = "torch", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "transformers" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
 name = "ai-residency-speech-emotion-recognition"
 version = "0.1.0"
 source = { virtual = "services/speech-emotion-recognition" }
@@ -447,8 +487,22 @@ dependencies = [
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "torch", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+]
 
 [[package]]
 name = "ai-residency-vit-classifier"
@@ -671,6 +725,32 @@ dev = [
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260724" },
     { name = "types-tqdm", specifier = ">=4.70.0.20260731" },
+]
+
+[[package]]
+name = "ai-residency-word2vec"
+version = "0.1.0"
+source = { editable = "libs/word2vec" }
+dependencies = [
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version < '3.15' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "python_full_version >= '3.15' or sys_platform != 'darwin'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "torch", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

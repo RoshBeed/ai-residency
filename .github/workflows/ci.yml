@@ -40,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.detect.outputs.services }}
+      members: ${{ steps.detect.outputs.members }}
       all: ${{ steps.detect.outputs.all }}
       any: ${{ steps.detect.outputs.any }}
     steps:
@@ -56,6 +57,16 @@ jobs:
           changed=$(git diff --name-only "$base" HEAD)
           all=$(ls -d services/*/ | sed 's|services/||;s|/||' | grep -v '^_template$')
 
+          # Every checkable member, as a path. Libraries are checked too, which they
+          # were not before: the matrix covered services only, so libs/common's own
+          # test suite -- the most-shared code here -- had never actually run in CI.
+          # A change to it triggered every service, which exercises it through their
+          # imports, but never ran its own tests.
+          #
+          # `ai-residency-<basename>` is the package name for every member, libraries
+          # included, so one matrix can cover both.
+          members=$(ls -d libs/*/ services/*/ | sed 's|/$||' | grep -v '/_template$')
+
           # The shared library, the lockfile, the lint config and CI itself all
           # affect every service.
           #
@@ -65,23 +76,34 @@ jobs:
           # and on any push whose diff is empty.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             selected="$all"
-          elif echo "$changed" | grep -qE '^(libs/common/|uv\.lock|pyproject\.toml|\.github/)'; then
+            selected_members="$members"
+          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/)'; then
             selected="$all"
+            selected_members="$members"
           else
             selected=$(for s in $all; do
               if echo "$changed" | grep -q "^services/$s/"; then echo "$s"; fi
             done)
+            selected_members=$(for m in $members; do
+              if echo "$changed" | grep -q "^$m/"; then echo "$m"; fi
+            done)
           fi
 
           # An empty selection has to serialise as [] -- `printf | jq -R` on an
-          # empty string yields [""], a matrix with one nameless service.
+          # empty string yields [""], a matrix with one nameless entry.
           if [ -z "$selected" ]; then
             json='[]'
           else
             json=$(printf '%s\n' $selected | jq -R . | jq -sc .)
           fi
+          if [ -z "$selected_members" ]; then
+            members_json='[]'
+          else
+            members_json=$(printf '%s\n' $selected_members | jq -R . | jq -sc .)
+          fi
           echo "services=$json" >> "$GITHUB_OUTPUT"
-          echo "any=$([ -n "$selected" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "members=$members_json" >> "$GITHUB_OUTPUT"
+          echo "any=$([ -n "$selected_members" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           # Checks are narrowed by the path filter; publishing is not. Every push to
           # main publishes all ten images under one sha- tag, so that tag names a
@@ -105,29 +127,32 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
 
+  # One job per workspace member -- libraries as well as services. `matrix.member` is
+  # a path (libs/common, services/rlhf-ppo), and the package name is always
+  # ai-residency-<basename>, which is what lets one matrix cover both.
   check:
-    name: ${{ matrix.service }}
+    name: ${{ matrix.member }}
     needs: changes
     if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: ${{ fromJSON(needs.changes.outputs.services) }}
+        member: ${{ fromJSON(needs.changes.outputs.members) }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      - name: Install this service only
-        run: uv sync --frozen --package ai-residency-${{ matrix.service }}
+      - name: Install this member only
+        run: uv sync --frozen --package "ai-residency-$(basename ${{ matrix.member }})"
 
-      # mypy runs from inside the service: each one has its own top-level
+      # mypy runs from inside the member: each service has its own top-level
       # `config` package, so a single invocation across the tree sees several
       # modules named `config` and refuses to start.
       - name: Type-check
-        working-directory: services/${{ matrix.service }}
+        working-directory: ${{ matrix.member }}
         run: uv run --project . mypy --config-file ../../pyproject.toml .
 
       # pytest exits 5 on "no tests collected", which is a fact about a service
@@ -135,12 +160,12 @@ jobs:
       # -- its display helpers, project metadata and HTTP client live in Streamlit-free
       # modules precisely so they can be imported and asserted against here.
       - name: Test
-        working-directory: services/${{ matrix.service }}
+        working-directory: ${{ matrix.member }}
         run: |
           if [ -d tests ]; then
             uv run --project . pytest -q
           else
-            echo "::warning::${{ matrix.service }} has no tests/ directory"
+            echo "::warning::${{ matrix.member }} has no tests/ directory"
           fi
 
   # The serving base, once, rather than rebuilt inside each of the ten service
