@@ -49,7 +49,7 @@ image:
   pullPolicy: IfNotPresent
   # Pinned to a commit rather than `latest`: one tag names the exact set built
   # and verified together. `--set image.tag=latest` tracks the tip instead.
-  tag: sha-8e0e1c1c09db44cede681e639d673c9a1719c74e
+  tag: sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f
 
 # Credentials, mounted into every backend and every training Job as environment.
 # Deliberately empty here: `make helm-install` / `helm-upgrade` fill them with
@@ -262,9 +262,19 @@ backends:
     waitForRedis: true
     # Runs once at pod startup, after Redis is confirmed reachable, and populates the
     # HNSW index from the MS MARCO corpus so /query works without a manual bootstrap step.
+    # `python -m`, not `uv run python -m`. The image already has the venv on PATH, and
+    # `uv run` re-resolves the workspace at container start -- which it cannot do as the
+    # non-root user, and which started failing outright once this service gained a
+    # second library dependency:
+    #
+    #   `ai-residency-word2vec` was included because
+    #   `ai-residency-vector-search-retrieval` depends on `ai-residency-word2vec`
+    #   Build failures usually indicate a problem with the package or the build environment
+    #
+    # bootstrapOptional swallowed that, so the pod came up and only the index was
+    # missing -- the safety net working, and hiding the cause. Every other command in
+    # this file already runs the interpreter directly.
     bootstrapCommand:
-      - uv
-      - run
       - python
       - -m
       - retrieval.save_doc_embeddings_to_redis

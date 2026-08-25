@@ -23,6 +23,7 @@ since a wedged model still answered 200 and so could never be restarted.
 
 import base64
 import io
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -43,10 +44,70 @@ __all__ = [
     "decode_image",
     "load_model",
     "resolve_required",
+    "retrying",
     "run_app",
 ]
 
 logger = get_logger(__name__)
+
+
+def retrying(
+    load: Callable[[], bool],
+    *,
+    min_interval_seconds: float = 60.0,
+) -> Callable[[], bool]:
+    """Wrap a loader so readiness retries it, rather than giving up at startup.
+
+    Resolving a checkpoint happens once, in the app's lifespan, and a transient
+    failure there is permanent: the pod answers 503 for the rest of its life even
+    after the problem clears. That is not hypothetical -- eleven pods restarting at
+    once saturated DNS on a single-node cluster, several failed to resolve
+    huggingface.co, and they stayed not-ready long after resolution recovered.
+
+    Kubernetes will not rescue it either, by design: liveness points at `/health`,
+    which answers 200 because the process is fine. Nothing is wrong with the process.
+    What is missing is a retry.
+
+    So `/ready` performs one. Rate-limited, because a readiness probe runs every ten
+    seconds and re-attempting a multi-gigabyte download that often would be worse than
+    the problem.
+
+    A service with genuinely nothing to load -- no trained checkpoint yet -- simply
+    keeps returning False, which is the honest answer and costs one cheap call per
+    interval.
+
+    Args:
+        load: Attempts to load, returning whether the service can now serve. Must be
+            safe to call repeatedly, and must not raise.
+        min_interval_seconds: Shortest gap between attempts.
+
+    Returns:
+        A `ready` callable for `add_health_routes`.
+    """
+    # `None`, not 0.0. `time.monotonic()` counts from an arbitrary origin -- on a
+    # freshly booted machine it is a small number, so `now - 0.0` can be less than the
+    # interval and the *first* attempt gets rate-limited away before it ever happens.
+    # That is invisible on a host with days of uptime and silently costs an hour on a
+    # new node, which is exactly when a service is starting for the first time.
+    ready_now = False
+    last_attempt: float | None = None
+
+    def check() -> bool:
+        nonlocal ready_now, last_attempt
+        if ready_now:
+            return True
+        now = time.monotonic()
+        if last_attempt is not None and now - last_attempt < min_interval_seconds:
+            return False
+        last_attempt = now
+        try:
+            ready_now = bool(load())
+        except Exception as error:
+            logger.warning("Readiness retry failed, will try again: %s", error)
+            ready_now = False
+        return ready_now
+
+    return check
 
 
 def add_health_routes(

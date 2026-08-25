@@ -27,6 +27,7 @@ from ai_residency_common.serving import (
     decode_image,
     load_model,
     resolve_required,
+    retrying,
     run_app,
 )
 from ai_residency_common.sse import format_sse, stream_sse
@@ -58,6 +59,7 @@ __all__ = [
     "push_checkpoint",
     "resolve_checkpoint",
     "resolve_required",
+    "retrying",
     "run_app",
     "save_checkpoint",
     "set_seed",
