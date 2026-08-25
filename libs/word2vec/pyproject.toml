@@ -1,0 +1,33 @@
+[project]
+name = "ai-residency-word2vec"
+version = "0.1.0"
+description = "word2vec written from scratch: CBOW and skip-gram, with negative-sampling or full-softmax objectives"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "torch>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Both blocks are required. `packages.find` alone silently builds an empty wheel.
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["word2vec*"]
+
+[tool.setuptools.package-data]
+word2vec = ["py.typed"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
