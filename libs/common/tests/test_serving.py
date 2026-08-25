@@ -233,9 +233,16 @@ def test_retrying_recovers_from_a_transient_failure() -> None:
     assert attempts["n"] == 3
 
 
-def test_retrying_rate_limits_attempts() -> None:
+def test_retrying_rate_limits_attempts_after_the_first() -> None:
     """A readiness probe runs every ten seconds; re-downloading a multi-gigabyte
-    checkpoint that often would be worse than staying down."""
+    checkpoint that often would be worse than staying down.
+
+    The *first* call must still attempt. An earlier version tracked the last attempt
+    as 0.0 and compared against `time.monotonic()`, which counts from an arbitrary
+    origin -- so on a freshly booted machine the first attempt was rate-limited away
+    before it happened. It passed on a laptop with days of uptime and failed on a CI
+    runner, which is the wrong way round for a bug that only bites new nodes.
+    """
     calls = []
 
     def load() -> bool:
