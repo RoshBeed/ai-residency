@@ -47,6 +47,16 @@ previous team's code. Those are `libs/word2vec` and `libs/speech` now. When you 
 copy of something, the answer is a library, not a tidy-up of one copy — the git history keeps
 the provenance either way.
 
+**Vocabulary building is deliberately not shared, and that was checked rather than assumed.**
+`word-embeddings/etl.py` (947 lines) and `vector-search-retrieval/cbow/train_tokenizer.py`
+(117) both end in a word→id mapping, which looks like the same duplication word2vec was. It
+is not. The first normalises real-world Unicode, pulls from a Hacker News Postgres mirror and
+a Wikipedia dump, merges corpora and lemmatises; the second lowercases text8, which is already
+ASCII, and counts. The genuinely common part is about twenty lines — a `Counter`, a sort, and
+a reserved `<PAD>` at id 0 — and extracting that would buy less than the indirection costs.
+Two implementations of *the same algorithm* is a library; two pipelines that happen to end in
+a dict is not.
+
 **Two registries, two usernames.** Docker Hub is **`roshb`** (image names only); Hugging Face is
 **`roshbeed`** (`hf_repo_id`, `hf_dataset_repo_id`, hub URLs). They are not interchangeable, and a
 blanket find-and-replace across `roshbeed/` will silently repoint every checkpoint at a Hugging
