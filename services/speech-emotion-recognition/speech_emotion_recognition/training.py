@@ -17,7 +17,6 @@ curve looks.
 import collections
 
 import torch
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 
 from ai_residency_common import (
@@ -30,32 +29,13 @@ from ai_residency_common import (
     set_seed,
 )
 from config import Config
+from speech import IGNORE_INDEX, collate
 from speech_emotion_recognition.data import EmotionClip, EmotionDataset
 from speech_emotion_recognition.models import load_model_and_processor
 
 __all__ = ["compute_baseline", "evaluate", "main", "train"]
 
 logger = get_logger(__name__)
-
-# Whisper ignores -100 when computing the decoder's loss, so padded label positions
-# contribute nothing rather than teaching the model to predict padding.
-IGNORE_INDEX = -100
-
-
-def collate(batch: list[EmotionClip]) -> tuple[torch.Tensor, torch.Tensor]:
-    """Stack features and pad labels to the longest in the batch.
-
-    Args:
-        batch: `(input_features, labels)` pairs.
-
-    Returns:
-        Batched features and labels, labels padded with `IGNORE_INDEX`.
-    """
-    features = torch.stack([features for features, _ in batch])
-    labels = pad_sequence(
-        [labels for _, labels in batch], batch_first=True, padding_value=IGNORE_INDEX
-    )
-    return features, labels
 
 
 def compute_baseline(dataset: EmotionDataset) -> tuple[str, float]:

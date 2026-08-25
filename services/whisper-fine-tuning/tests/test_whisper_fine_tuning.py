@@ -6,53 +6,52 @@ learns to echo its input instead of continuing it -- which trains cleanly and fa
 only at inference.
 """
 
-import shutil
 from pathlib import Path
 
 import pytest
-import torch
 from fastapi.testclient import TestClient
 
 from config import Config
 from serving.api import app
+from speech import encode_target
 from whisper_fine_tuning.demo import run_demo
-from whisper_fine_tuning.models import create_tokens, get_tokenizer
-from whisper_fine_tuning.training import shift_for_teacher_forcing, train
+from whisper_fine_tuning.models import load_whisper_model
+from whisper_fine_tuning.training import train
 
-# openai-whisper shells out to the ffmpeg *binary* to decode audio, and the pip
-# package of the same name does not provide it. The clip itself is not checked --
-# it comes from the Hub at run time, like every other artifact.
+# The demo needs its clip, which is gitignored and resolved from the Hub at run time
+# like every other artifact here. This used to gate on a system ffmpeg binary instead,
+# because openai-whisper shelled out to it; audio now goes through libsndfile, so the
+# only thing that can actually be missing is the clip.
 needs_audio = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None,
-    reason="needs a system ffmpeg binary",
+    not Config().audio_path.exists(),
+    reason="demo clip not present; run `make demo` or let the Hub resolve it",
 )
 
 
-def test_create_tokens_has_whisper_prefix_and_terminator() -> None:
-    tokenizer = get_tokenizer()
-    ids = create_tokens(tokenizer, "hello")
-    assert ids[:3] == [tokenizer.sot, tokenizer.language_token, tokenizer.transcribe]
-    assert ids[-1] == tokenizer.eot
+def test_labels_omit_the_token_the_model_prepends() -> None:
+    """The shift this service used to do by hand is now the model's own.
 
+    `WhisperForConditionalGeneration` builds its decoder input by shifting labels
+    right and prepending `decoder_start_token_id`, which is `<|startoftranscript|>`.
+    Leaving the tokenizer's copy in makes the decoder input `[SOT, SOT, ...]`, so the
+    model trains one position out of step with what it is asked at inference -- an
+    off-by-one that is invisible in the loss curve.
 
-def test_teacher_forcing_shift_predicts_the_next_token() -> None:
-    """Position t of the predictions must line up with token t+1 of the input.
-
-    Written against explicit values rather than a trained model, because an off-by-one
-    here is invisible in the loss curve — it only shows up as a model that echoes its
-    input at inference time.
+    The prefix itself is no longer assembled from special-token ids either: the
+    tokenizer emits it, including the `<|notimestamps|>` the hand-built version
+    omitted.
     """
-    tokens = torch.tensor([[3, 5, 7, 9]])
-    logits = torch.nn.functional.one_hot(tokens, num_classes=16).float()
+    # Deliberately not through prepare_training_data: that needs the demo clip, which
+    # is gitignored and resolved from the Hub at run time, and this rule is about the
+    # label sequence rather than about any particular audio.
+    whisper = load_whisper_model(Config())
+    labels = encode_target(whisper.processor, "hello")
 
-    predictions, targets = shift_for_teacher_forcing(logits, tokens)
-
-    assert targets.tolist() == [[5, 7, 9]]
-    assert predictions.shape == (1, 3, 16)
-    # Prediction slot 0 still carries token 3 while its target is now token 5, which
-    # is what "predict the next one" means. Without the shift they would match.
-    assert int(predictions[0, 0].argmax()) == 3
-    assert int(targets[0, 0]) == 5
+    tokens = whisper.processor.tokenizer.convert_ids_to_tokens(labels.tolist())
+    assert tokens[0] != "<|startoftranscript|>"
+    assert tokens[-1] == "<|endoftext|>"
+    # And the prefix the old hand-built version omitted is present.
+    assert "<|notimestamps|>" in tokens
 
 
 @needs_audio

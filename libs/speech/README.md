@@ -53,6 +53,25 @@ past the end of the embedding table — a crash if you are lucky, and silently w
 they happen to land inside it. `load_whisper` does both or neither, and refuses a
 checkpoint whose vocabulary does not match the tokenizer it is being loaded against.
 
+## The trap it removes
+
+`WhisperForConditionalGeneration` builds its decoder input by shifting the labels right
+and prepending `decoder_start_token_id` — which **is** `<|startoftranscript|>`. The
+tokenizer emits that token too. Pass tokenizer output straight through as `labels` and
+the decoder input begins `[SOT, SOT, …]`.
+
+Nothing errors. The loss goes down. The model just learns to emit
+`<|startoftranscript|>` at the position you will later read its answer from.
+
+```
+whisper-tiny, one clip, same audio and text:
+  labels as the tokenizer emits them   loss 7.4856
+  leading SOT removed                  loss 3.9923
+  openai-whisper, same pair            loss 3.9923   <- agrees exactly
+```
+
+`encode_target` drops it, and a test pins both halves so this cannot come back.
+
 ## What is not here
 
 Training loops. They genuinely differ: one takes five gradient steps on a single clip

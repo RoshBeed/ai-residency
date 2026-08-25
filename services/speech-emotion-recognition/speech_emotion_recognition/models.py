@@ -1,11 +1,9 @@
 """Loading Whisper with the emotion vocabulary attached.
 
-The one thing that has to stay true here: the tokenizer and the model's embedding table
-must agree about how many tokens exist. `add_emotion_tokens` extends the vocabulary by
-one token per emotion, so a model loaded against the base vocabulary has no rows for
-them -- and indexing an embedding table out of range is a crash at best and, if the ids
-happen to land inside the table, silently wrong at worst. `resize_token_embeddings` is
-what keeps the two in step, so it happens in the same function that loads either one.
+Thin over `speech.load_whisper`, which holds the invariant this used to hold on its
+own: the tokenizer and the model's embedding table must agree about how many tokens
+exist. `whisper-fine-tuning` needs the same thing, so it lives in the library both
+services share rather than in one of them.
 """
 
 from pathlib import Path
@@ -13,63 +11,67 @@ from pathlib import Path
 import torch
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
-from ai_residency_common import get_device, get_logger
+from ai_residency_common import get_logger
 from config import Config
+from speech import Whisper, load_whisper
 
-__all__ = ["load_model_and_processor", "load_processor"]
+__all__ = ["load_emotion_whisper", "load_model_and_processor", "load_processor"]
 
 logger = get_logger(__name__)
 
 
-def load_processor(config: Config) -> WhisperProcessor:
-    """Load the processor, preferring the emotion-extended tokenizer.
+def load_emotion_whisper(config: Config, checkpoint_path: Path | None = None) -> Whisper:
+    """Load Whisper with one added token per emotion, ready to fine-tune or serve.
 
     Args:
-        config: Supplies `tokenizer_dir` and `model_name`.
+        config: Supplies `model_name` and `emotion_tokens`.
+        checkpoint_path: Fine-tuned weights to restore. None starts from the
+            pretrained model, which is what training does.
 
     Returns:
-        A processor whose tokenizer knows the emotion tokens, if the extended tokenizer
-        has been written; otherwise the base one, which is enough for feature
-        extraction but will not encode an emotion label.
+        The model, its processor and the device, with the embedding table already
+        resized to cover the emotion tokens.
+    """
+    return load_whisper(
+        config.model_name,
+        extra_tokens=config.emotion_tokens,
+        checkpoint=checkpoint_path,
+    )
+
+
+def load_processor(config: Config) -> WhisperProcessor:
+    """Return just the processor, with the emotion tokens attached.
+
+    Kept for the data pipeline, which needs to tokenize labels without paying to load
+    a model.
+
+    Args:
+        config: Supplies `model_name` and `emotion_tokens`.
+
+    Returns:
+        A processor whose tokenizer knows the emotion tokens.
     """
     processor: WhisperProcessor = WhisperProcessor.from_pretrained(config.model_name)
-    if config.tokenizer_dir.exists():
-        processor.tokenizer.add_special_tokens(
-            {"additional_special_tokens": list(config.emotion_tokens)}
-        )
-        logger.info("Extended the tokenizer with %d emotion tokens", len(config.emotion_tokens))
-    else:
-        logger.warning(
-            "No extended tokenizer at %s; run `python -m speech_emotion_recognition."
-            "add_emotion_tokens` first",
-            config.tokenizer_dir,
-        )
+    processor.tokenizer.add_special_tokens(
+        {"additional_special_tokens": list(config.emotion_tokens)}
+    )
     return processor
 
 
 def load_model_and_processor(
     config: Config, checkpoint_path: Path | None = None
 ) -> tuple[WhisperForConditionalGeneration, WhisperProcessor, torch.device]:
-    """Load Whisper, resize it to the extended vocabulary, and optionally restore weights.
+    """Load model, processor and device, in eval mode.
+
+    The older three-tuple shape, kept because the serving path unpacks it that way.
 
     Args:
         config: Run configuration.
-        checkpoint_path: Fine-tuned weights to load. None starts from the pretrained
-            model, which is what training does.
+        checkpoint_path: Fine-tuned weights to restore.
 
     Returns:
-        The model in eval mode on the selected device, the processor, and the device.
+        The model in eval mode, the processor, and the device.
     """
-    processor = load_processor(config)
-    model = WhisperForConditionalGeneration.from_pretrained(config.model_name)
-    model.resize_token_embeddings(len(processor.tokenizer))
-
-    if checkpoint_path is not None:
-        state = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(state.get("model_state_dict", state))
-        logger.info("Loaded fine-tuned weights from %s", checkpoint_path)
-
-    device = get_device()
-    model = model.to(device)
-    model.eval()
-    return model, processor, device
+    whisper = load_emotion_whisper(config, checkpoint_path)
+    whisper.model.eval()
+    return whisper.model, whisper.processor, whisper.device

@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from ai_residency_common import save_checkpoint
-from cbow.model import CBOW
+from cbow.model import build_cbow
 from config import Config
 
 VOCABULARY = ["<PAD>", "reagan", "democrat", "was", "a", "party", "rust", "nails", "shower"]
@@ -59,7 +59,16 @@ def vocabulary(config: Config) -> dict[str, int]:
 def cbow_checkpoint(config: Config, vocabulary: dict[str, int]) -> Path:
     """Write a CBOW checkpoint in the shared format, as `train_word2vec` would."""
     torch.manual_seed(0)
-    model = CBOW(len(vocabulary), config.embedding_dim)
+    model = build_cbow(len(vocabulary), config.embedding_dim)
+
+    # Stand in for *trained* vectors, not freshly initialised ones. word2vec starts
+    # in_embed uniform in +/- 0.5/embed_size -- deliberately tiny, so the first updates
+    # are not fighting noise -- and a frozen matrix of near-zero vectors gives the
+    # towers downstream almost nothing to separate. Real CBOW output has spread, so the
+    # fixture gives it spread.
+    with torch.no_grad():
+        model.in_embed.weight.normal_(0.0, 1.0)
+
     path = config.cbow_checkpoint_dir / "2026_01_01__00_00_00.1.cbow.pth"
     save_checkpoint(path, model, epoch=1, metrics={"cbow_loss": 1.0})
     return path

@@ -33,7 +33,7 @@ from word_embeddings.data import (
     sample_vocabulary,
 )
 from word_embeddings.evaluate import evaluate_embeddings
-from word_embeddings.model import CBOWNS, CBOWConfig
+from word_embeddings.model import build_cbow
 
 __all__ = ["build_dataset", "main", "train_cbow"]
 
@@ -70,13 +70,12 @@ def train_cbow(config: Config, *, sample: bool = False) -> float:
     loader: DataLoader[Batch] = DataLoader(dataset, batch_size=config.cbow_batch_size, shuffle=True)
 
     vocab_size = len(word_to_lemma_index)
-    model_config = CBOWConfig(
-        vocab_size=vocab_size,
-        embed_size=config.cbow_embed_size,
+    model = build_cbow(
+        vocab_size,
+        config.cbow_embed_size,
         window_size=config.cbow_window_size,
         num_negatives=config.cbow_num_negatives,
-    )
-    model = CBOWNS(model_config).to(device)
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.cbow_learning_rate)
     logger.info("Training CBOW on %s over a %d-word vocabulary", device, vocab_size)
 
@@ -95,7 +94,9 @@ def train_cbow(config: Config, *, sample: bool = False) -> float:
                 target.to(device),
                 negatives.to(device),
             )
-            loss = model(context, target, negatives)
+            # (centre, context, negatives) -- the library names the target 'centre',
+            # which is what CBOW predicts from the averaged context.
+            loss = model(target, context, negatives)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -127,7 +128,7 @@ def train_cbow(config: Config, *, sample: bool = False) -> float:
                 extra={
                     "word_to_index": word_to_index,
                     "word_to_lemma_index": word_to_lemma_index,
-                    "config": model_config.to_dict(),
+                    "config": vars(model.config),
                 },
             )
             if config.hf_repo_id is not None and not sample:

@@ -448,9 +448,9 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "title": "Whisper Fine-Tuning",
         "subtitle": "Whisper‑tiny, real gradient updates per request, transcript convergence",
         "description": (
-            "Extends a speech model with emotion tokens while preserving its "
-            "transcription ability. Real gradient updates run per request with "
-            "live loss tracking and transcript convergence."
+            "Fine-tunes Whisper on a single clip, live, per request. Five real "
+            "gradient steps run while you watch, each one streamed with its loss and "
+            "the transcript the updated weights now produce."
         ),
         "techniques": ["ASR", "Speech Recognition", "Fine-tuning", "Transfer Learning"],
         "papers": [
@@ -492,7 +492,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "shift a pre-trained model's output for a specific target. The emotion-token "
             "extension explores the practical reality of modifying a pre-trained "
             "tokenizer and the tradeoff between task specialization and preserving "
-            "original capabilities. The system `ffmpeg` binary is a hard prerequisite "
+            "original capabilities. "
             "(Whisper shells out to it for audio decoding)."
         ),
         "docs_path": "services/whisper-fine-tuning/README.md",

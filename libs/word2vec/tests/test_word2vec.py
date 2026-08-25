@@ -159,6 +159,25 @@ def test_negative_sampling_separates_targets_from_negatives() -> None:
     assert target_score.item() > negative_score.item()
 
 
+@pytest.mark.parametrize(("architecture", "objective"), VARIANTS)
+def test_a_batch_of_one_works(architecture: str, objective: str) -> None:
+    """A regression test for the implementation this replaced.
+
+    That one scored negatives with `torch.bmm(...).squeeze()` -- no dim -- which
+    collapses *every* size-1 axis, the batch included. With four examples it was fine;
+    with one it raised IndexError from the sum that followed. Passing the axis
+    explicitly is the fix, and a single-example batch is not exotic: it is what a
+    per-request path or the last batch of an epoch hands you.
+    """
+    model = build(architecture=architecture, objective=objective)
+    centre, context = batch(size=1)
+
+    loss = model(centre, context, torch.randint(0, 50, (1, 5)))
+
+    assert loss.shape == ()
+    assert torch.isfinite(loss)
+
+
 def test_negative_sampling_without_negatives_is_a_clear_error() -> None:
     model = build(objective="negative_sampling")
     centre, context = batch()

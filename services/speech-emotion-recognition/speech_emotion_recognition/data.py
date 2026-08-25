@@ -14,14 +14,13 @@ target is the emotion token alone, not a transcript with an emotion token attach
 import csv
 from pathlib import Path
 
-import librosa
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import WhisperProcessor
 
 from ai_residency_common import get_logger
 from config import Config
+from speech import encode_target, features_from_file
 
 __all__ = ["EmotionClip", "EmotionDataset", "load_manifest_rows"]
 
@@ -101,16 +100,25 @@ class EmotionDataset(Dataset[EmotionClip]):
             ids the decoder is trained to produce.
         """
         audio_path, emotion = self.rows[index]
-        waveform, _ = librosa.load(
-            str(audio_path),
-            sr=self._config.sample_rate,
-            duration=self._config.max_duration_seconds,
+        features = features_from_file(
+            self._processor,
+            audio_path,
+            sample_rate=self._config.sample_rate,
+            max_duration=self._config.max_duration_seconds,
         )
-        features = self._processor.feature_extractor(
-            np.asarray(waveform), sampling_rate=self._config.sample_rate, return_tensors="pt"
-        ).input_features[0]
 
-        labels = self._processor.tokenizer(
-            self._config.token_for(emotion), add_special_tokens=True, return_tensors="pt"
-        ).input_ids[0]
+        # prefix=False is the correctness-critical part, not a tidy-up.
+        #
+        # This used to pass the tokenizer's full output through as labels, which meant
+        # two things at once. Whisper's model prepends <|startoftranscript|> itself
+        # when it shifts labels right, so the tokenizer's own copy made the decoder
+        # input begin [SOT, SOT, ...]; and the language/task prefix pushed the emotion
+        # token four steps in. Serving reads the *first* decoder step
+        # (`serving/api.py` feeds [SOT] and takes logits[0, -1]), so it was reading the
+        # position training had taught to emit <|startoftranscript|>.
+        #
+        # Nothing errored. It trained, the loss fell, and the answer came from the
+        # wrong slot. The service has never had a trained checkpoint, which is the only
+        # reason nobody saw it.
+        labels = encode_target(self._processor, self._config.token_for(emotion), prefix=False)
         return features, labels

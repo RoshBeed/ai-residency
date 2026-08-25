@@ -9,7 +9,10 @@ dependencies = [
     "ai-residency-common",
     "torch",
     "torchaudio",
+    "ai-residency-speech",
     "transformers",
+    # librosa is still used directly by data_prep/explore_data.py for its corpus
+    # plots; the model path goes through ai-residency-speech now.
     "librosa",
     "matplotlib",
     "seaborn",
@@ -30,6 +33,7 @@ pythonpath = ["."]
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }
+ai-residency-speech = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 torchaudio = [{ index = "pytorch-cpu" }]
 

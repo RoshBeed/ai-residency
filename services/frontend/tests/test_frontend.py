@@ -59,6 +59,33 @@ def test_project_entries_are_complete() -> None:
             assert project.get(field), f"{name} is missing {field}"
 
 
+def test_no_project_describes_a_different_project() -> None:
+    """A copy-pasted description is invisible until a reader notices it on the page.
+
+    `whisper-fine-tuning` carried `speech-emotion-recognition`'s description for some
+    time -- "extends a speech model with emotion tokens" on the fine-tuning page. Both
+    are Whisper services, which is exactly why nobody spotted it.
+
+    Checks the obvious giveaway: a description must not name another service's
+    distinguishing subject.
+    """
+    giveaways = {
+        "speech-emotion-recognition": ("emotion",),
+        "rlhf-ppo": ("ppo", "reward model"),
+        "vector-search-retrieval": ("retriev", "nearest-neighbour lookup"),
+        "multimodal-captioning": ("caption",),
+    }
+    for name, project in PROJECTS.items():
+        description = project["description"].lower()
+        for other, words in giveaways.items():
+            if other == name:
+                continue
+            for word in words:
+                assert word not in description, (
+                    f"{name}'s description mentions {word!r}, which belongs to {other}"
+                )
+
+
 def test_tag_link_links_known_tags_and_plainly_renders_unknown_ones() -> None:
     assert "<a href=" in tag_link("Embeddings")
     assert tag_link("Not A Real Tag") == '<span class="tag-chip">Not A Real Tag</span>'

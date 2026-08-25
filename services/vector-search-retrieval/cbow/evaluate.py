@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from ai_residency_common import get_logger
-from cbow.model import CBOW
+from word2vec import Word2Vec
 
 __all__ = ["nearest_words"]
 
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 
 def nearest_words(
-    model: CBOW,
+    model: Word2Vec,
     word: str,
     words_to_ids: dict[str, int],
     ids_to_words: dict[int, str],
@@ -42,7 +42,7 @@ def nearest_words(
         return []
 
     with torch.no_grad():
-        weights = model.emb.weight.detach()
+        weights = model.embeddings.detach()
         normalized = F.normalize(weights, p=2, dim=1)
         target = normalized[words_to_ids[word]]
         similarities = normalized @ target
