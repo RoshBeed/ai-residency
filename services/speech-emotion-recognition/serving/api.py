@@ -26,6 +26,7 @@ from ai_residency_common import (
     decode_audio,
     get_logger,
     resolve_checkpoint,
+    retrying,
     run_app,
 )
 from config import Config
@@ -73,10 +74,27 @@ def load_model() -> None:
     logger.info("Serving on %s (checkpoint from %s)", _device, _checkpoint_source)
 
 
+def ensure_loaded() -> bool:
+    """Load the checkpoint if it is not loaded, and report whether it is.
+
+    Idempotent and safe to call from a readiness probe. This service legitimately has
+    no trained checkpoint yet, so returning False repeatedly is the expected steady
+    state rather than a failure -- it costs one resolve attempt per retry interval.
+    """
+    if _model is not None:
+        return True
+    try:
+        load_model()
+    except (FileNotFoundError, KeyError, RuntimeError) as error:
+        logger.error("Could not load the checkpoint, /ready stays 503: %s", error)
+        return False
+    return _model is not None
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Load the checkpoint once, when the service starts."""
-    load_model()
+    """Load the checkpoint when the service starts. /ready retries if this fails."""
+    ensure_loaded()
     yield
 
 
@@ -89,7 +107,12 @@ app = FastAPI(
 
 add_health_routes(
     app,
-    ready=lambda: _model is not None,
+    # Retried rather than decided once. A checkpoint that could not be resolved at
+    # startup -- a DNS blip during a mass restart, say -- would otherwise leave this
+    # pod not-ready for the rest of its life, with liveness unable to help because the
+    # process itself is perfectly healthy. `retrying` re-attempts, at most once a
+    # minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "model_loaded": _model is not None,
         "checkpoint_loaded": _model is not None,

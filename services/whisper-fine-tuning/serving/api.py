@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import add_health_routes, get_logger, run_app, stream_sse
+from ai_residency_common import add_health_routes, get_logger, retrying, run_app, stream_sse
 from ai_residency_common import decode_audio as decode_base64_audio
 from config import Config
 from whisper_fine_tuning.models import (
@@ -63,14 +63,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     populates the on-disk cache every later request reads from, so the first caller
     no longer pays the download.
     """
+    ensure_loaded()
+    yield
+
+
+def ensure_loaded() -> bool:
+    """Resolve the weights if they are not resolved, and report whether they are."""
     global _weights_ready
+    if _weights_ready:
+        return True
     try:
         load_whisper_model(config)
         _weights_ready = True
         logger.info("Whisper weights resolved; ready to transcribe")
     except Exception as error:
         logger.error("Could not resolve the Whisper weights, /ready will report 503: %s", error)
-    yield
+        return False
+    return _weights_ready
 
 
 app = FastAPI(
@@ -111,7 +120,11 @@ class TranscribeResponse(BaseModel):
 
 add_health_routes(
     app,
-    ready=lambda: _weights_ready,
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "device": str(config.device),
         "checkpoint_loaded": _weights_ready,

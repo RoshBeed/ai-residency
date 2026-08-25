@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import add_health_routes, format_sse, get_logger, run_app
+from ai_residency_common import add_health_routes, format_sse, get_logger, retrying, run_app
 from config import Config
 from retrieval import query_engine
 from retrieval.query_engine import (
@@ -80,13 +80,26 @@ async def lifespan(_: FastAPI) -> Any:
     exceptions, so if the model is not trained yet the process still starts, `/` still
     reports healthy, and the first `/query` retries the load and gets a clean 503.
     """
+    ensure_loaded()
+    yield
+
+
+def ensure_loaded() -> bool:
+    """Warm the tower and vocabulary if they are not warm, and report readiness.
+
+    `load_query_tower` is lru_cached and does not cache exceptions, so re-attempting
+    after a failure genuinely retries rather than replaying the same error.
+    """
+    if query_engine.query_tower_source != "none":
+        return True
     try:
         load_vocabulary()
         load_query_tower()
         logger.info("Query tower and vocabulary loaded")
     except FileNotFoundError as error:
-        logger.warning("Model not ready at startup, will retry per request: %s", error)
-    yield
+        logger.warning("Model not ready, will retry: %s", error)
+        return False
+    return query_engine.query_tower_source != "none"
 
 
 app = FastAPI(
@@ -99,7 +112,11 @@ app = FastAPI(
 
 add_health_routes(
     app,
-    ready=lambda: query_engine.query_tower_source != "none",
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "checkpoint_loaded": query_engine.query_tower_source != "none",
         "checkpoint_source": query_engine.query_tower_source,

@@ -21,6 +21,7 @@ from ai_residency_common import (
     get_logger,
     load_checkpoint,
     resolve_checkpoint,
+    retrying,
 )
 from config import Config
 from template.models import Predictor
@@ -73,11 +74,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else that only wants to inspect the app. A failure here is logged and left for
     `/ready` to report as 503, rather than killing the process.
     """
+    ensure_loaded()
+    yield
+
+
+def ensure_loaded() -> bool:
+    """Load the checkpoint if it is not loaded, and report whether it is.
+
+    Wired into `/ready` through `retrying`, so a resolve that failed at startup is
+    attempted again instead of leaving the pod not-ready for good. Copy this shape
+    into a new service.
+    """
+    if _checkpoint_source != "none":
+        return True
     try:
         _get_model()
     except Exception as error:
         logger.error("Could not load the model, /ready will report 503: %s", error)
-    yield
+        return False
+    return _checkpoint_source != "none"
 
 
 app = FastAPI(title="AI Residency template service", lifespan=lifespan)
@@ -89,7 +104,11 @@ app = FastAPI(title="AI Residency template service", lifespan=lifespan)
 # Copy this shape into a new service rather than writing a bespoke health endpoint.
 add_health_routes(
     app,
-    ready=lambda: _checkpoint_source != "none",
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "device": str(_device),
         "checkpoint_loaded": _checkpoint_source != "none",

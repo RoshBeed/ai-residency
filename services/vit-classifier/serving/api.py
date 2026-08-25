@@ -28,6 +28,7 @@ from ai_residency_common import (
     get_logger,
     load_checkpoint,
     resolve_checkpoint,
+    retrying,
     run_app,
 )
 from config import Config
@@ -47,8 +48,8 @@ MNIST_STD = 0.3081
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Load the checkpoints once, when the service starts."""
-    load_models()
+    """Load the checkpoints when the service starts. /ready retries if this fails."""
+    ensure_loaded()
     yield
 
 
@@ -116,6 +117,22 @@ def load_models() -> None:
         _classifier = classifier.to(_device).eval()
     else:
         logger.warning("No classifier checkpoint locally or on the Hub")
+
+
+def ensure_loaded() -> bool:
+    """Load the checkpoint if it is not already loaded, and report whether it is.
+
+    Idempotent, and safe to call from a readiness probe: it returns immediately once
+    the model is in memory, and re-attempts the resolve otherwise.
+    """
+    if _classifier is not None:
+        return True
+    try:
+        load_models()
+    except (FileNotFoundError, KeyError, RuntimeError) as error:
+        logger.error("Could not load the checkpoint, /ready stays 503: %s", error)
+        return False
+    return _classifier is not None
 
 
 def preprocess_image(image_data: str, img_size: int) -> torch.Tensor:
@@ -188,7 +205,12 @@ def predict_vit(image_tensor: torch.Tensor) -> tuple[str, float, dict[str, float
 
 add_health_routes(
     app,
-    ready=lambda: _classifier is not None,
+    # Retried rather than decided once. A checkpoint that could not be resolved at
+    # startup -- a DNS blip during a mass restart, say -- would otherwise leave this
+    # pod not-ready for the rest of its life, with liveness unable to help because the
+    # process itself is perfectly healthy. `retrying` re-attempts, at most once a
+    # minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "message": "Vision Transformer classifier API",
         "model_loaded": _classifier is not None,
