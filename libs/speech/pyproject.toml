@@ -1,0 +1,49 @@
+[project]
+name = "ai-residency-speech"
+version = "0.1.0"
+description = "Loading, feature extraction and fine-tuning for Whisper, shared by the speech services"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RoshBeed" }]
+dependencies = [
+    "ai-residency-common",
+    "torch>=2.0",
+    "transformers",
+    "librosa",
+    "numpy",
+]
+
+# Its own dev group, like every other member. Without one, `uv sync --package
+# ai-residency-<name>` installs the package and no tooling, and the CI job for this
+# member fails with "Failed to spawn: mypy". That went unnoticed for as long as the
+# check matrix covered services only.
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Both blocks are required. `packages.find` alone silently builds an empty wheel.
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["speech*"]
+
+[tool.setuptools.package-data]
+speech = ["py.typed"]
+
+[tool.uv.sources]
+ai-residency-common = { workspace = true }
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
