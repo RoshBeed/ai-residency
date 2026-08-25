@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import torch
-import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -24,6 +23,7 @@ from ai_residency_common import (
     run_app,
 )
 from config import Config
+from word2vec import nearest_words, valid_row_mask
 
 __all__ = ["app"]
 
@@ -37,6 +37,7 @@ class EmbeddingState:
         self.embeddings: torch.Tensor | None = None
         self.word_to_index: dict[str, int] = {}
         self.index_to_word: dict[int, str] = {}
+        self.valid_rows: torch.Tensor | None = None
         self.source: str = "none"
 
     def load(self, embeddings: torch.Tensor, word_to_index: dict[str, int], source: str) -> None:
@@ -49,6 +50,10 @@ class EmbeddingState:
         self.embeddings = embeddings
         self.word_to_index = word_to_index
         self.index_to_word = {index: word for word, index in word_to_index.items()}
+        # Which rows can be named at all. The checkpoint in production has 258,196
+        # rows and 230,701 of them map to a word, so this is not hypothetical --
+        # searching the other 27,495 raised KeyError on `/nearest`.
+        self.valid_rows = valid_row_mask(embeddings.shape[0], self.index_to_word)
         self.source = source
 
     @property
@@ -58,18 +63,6 @@ class EmbeddingState:
 
 
 state = EmbeddingState()
-
-
-def _nearest_words(
-    embeddings: torch.Tensor, vector: torch.Tensor, index_to_word: dict[int, str], k: int
-) -> list[tuple[str, float]]:
-    """Return the `k` vocabulary words closest to `vector` by cosine similarity."""
-    similarities = F.cosine_similarity(embeddings, vector.unsqueeze(0)).cpu()
-    top = similarities.topk(k)
-    return [
-        (index_to_word[int(index)], float(similarity))
-        for index, similarity in zip(top.indices, top.values, strict=True)
-    ]
 
 
 def load_embeddings() -> bool:
@@ -175,14 +168,17 @@ async def nearest(request: NearestRequest) -> NearestResponse:
     if index is None:
         raise HTTPException(status_code=404, detail=f"word {request.word!r} not in vocabulary")
 
-    vector = embeddings[index]
-    nearest = _nearest_words(
-        embeddings, vector, state.index_to_word, k=min(request.k + 1, embeddings.shape[0])
+    neighbours = nearest_words(
+        embeddings,
+        embeddings[index],
+        state.index_to_word,
+        k=request.k,
+        # The closest word is always the query itself.
+        exclude=request.word,
+        mask=state.valid_rows,
     )
-    # The closest word is always the query itself; drop it.
-    nearest = [pair for pair in nearest if pair[0] != request.word][: request.k]
-    logger.info("Nearest to %r: %s", request.word, [word for word, _ in nearest])
-    return NearestResponse(query=request.word, nearest=nearest, checkpoint_source=state.source)
+    logger.info("Nearest to %r: %s", request.word, [word for word, _ in neighbours])
+    return NearestResponse(query=request.word, nearest=neighbours, checkpoint_source=state.source)
 
 
 @app.post("/analogy", response_model=NearestResponse)
@@ -200,11 +196,13 @@ async def analogy(request: AnalogyRequest) -> NearestResponse:
         - embeddings[state.word_to_index[request.b]]
         + embeddings[state.word_to_index[request.c]]
     )
-    nearest = _nearest_words(embeddings, vector, state.index_to_word, k=request.k)
-    logger.info("Analogy %r - %r + %r -> %s", request.a, request.b, request.c, nearest)
+    neighbours = nearest_words(
+        embeddings, vector, state.index_to_word, k=request.k, mask=state.valid_rows
+    )
+    logger.info("Analogy %r - %r + %r -> %s", request.a, request.b, request.c, neighbours)
     return NearestResponse(
         query=f"{request.a} - {request.b} + {request.c}",
-        nearest=nearest,
+        nearest=neighbours,
         checkpoint_source=state.source,
     )
 

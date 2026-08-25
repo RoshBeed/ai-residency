@@ -265,3 +265,33 @@ def test_retrying_treats_a_raising_loader_as_not_ready() -> None:
     ready = retrying(load, min_interval_seconds=0)
     assert ready() is False
     assert ready() is False
+
+
+def test_ready_flips_from_503_to_200_when_the_load_recovers() -> None:
+    """The whole point, through the endpoint a probe actually calls.
+
+    The unit tests above cover `retrying` directly. This covers the wiring: a service
+    whose checkpoint was unreachable at startup answers 503, and starts answering 200
+    once the load succeeds -- without the pod being restarted, which is what would
+    otherwise be required.
+    """
+    attempts = {"n": 0}
+    reachable = {"yes": False}
+
+    def load() -> bool:
+        attempts["n"] += 1
+        return reachable["yes"]
+
+    app = FastAPI()
+    add_health_routes(app, ready=retrying(load, min_interval_seconds=0))
+    client = TestClient(app)
+
+    assert client.get("/ready").status_code == 503
+    assert client.get("/health").status_code == 200, "liveness must not depend on the load"
+
+    reachable["yes"] = True
+
+    assert client.get("/ready").status_code == 200
+    assert client.get("/ready").status_code == 200
+    # Three probes, but only the two before success called the loader.
+    assert attempts["n"] == 2

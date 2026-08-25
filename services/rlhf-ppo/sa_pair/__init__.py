@@ -5,14 +5,19 @@ them is a list of these dictionaries. Each stage adds its own key rather than
 returning a new structure, so by the end of `PPOTrainer.ppo_step` a single pair
 carries the whole trace for one generated token:
 
-    generation      -> state_text, action_token, action_token_id, logprob,
-                       ref_logprob, prompt_idx, step
+    generation      -> state_text, state_token_ids, action_token, action_token_id,
+                       logprob, ref_logprob, prompt_idx, step
     KL divergence   -> kl_div
     reward adjust   -> adjusted_reward
     value model     -> value
     TD error        -> td_error
     GAE             -> advantage
     returns         -> reward_to_go
+
+`state_text` and `state_token_ids` are the same state in two forms, and which one a
+stage reads is not arbitrary. The value model scores text. The PPO ratio scores the
+ids, because it has to measure the same tokens the generator did, and
+decode-then-encode is not always the identity.
 
 The values are deliberately heterogeneous (strings, ints, floats), so the alias is
 `dict[str, Any]` rather than a `TypedDict`: stages run in sequence and each one

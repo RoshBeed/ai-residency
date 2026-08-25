@@ -16,6 +16,10 @@ __pycache__/
 # what it trains, so nothing here should ever depend on a local copy.
 services/*/checkpoints/
 services/*/data/
+# Also at the repo root: pytest run from the root resolves a service's `data_dir`
+# relative to the cwd, so MNIST lands here rather than under the service. 63MB of it
+# got committed once that way.
+/data/
 wandb/
 
 # Intermediates from synthesizing demo audio, which land in whatever directory

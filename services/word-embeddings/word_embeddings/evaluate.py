@@ -30,6 +30,7 @@ from sklearn.manifold import TSNE
 
 from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from config import Config
+from word2vec import nearest_words
 
 __all__ = ["evaluate_embeddings", "main", "visualise_embeddings"]
 
@@ -46,9 +47,13 @@ _ANALOGY = ("king", "man", "woman", "queen")
 def _nearest_word(
     embeddings: torch.Tensor, vector: torch.Tensor, index_to_word: dict[int, str]
 ) -> str:
-    """Return the vocabulary word whose vector is closest to `vector`."""
-    similarities = F.cosine_similarity(embeddings, vector.unsqueeze(0)).cpu()
-    return index_to_word[int(similarities.argmax())]
+    """Return the vocabulary word whose vector is closest to `vector`.
+
+    Empty when the vocabulary names none of the matrix's rows, which only happens
+    if the checkpoint and its vocabulary do not belong together.
+    """
+    found = nearest_words(embeddings, vector, index_to_word, k=1)
+    return found[0][0] if found else ""
 
 
 def evaluate_embeddings(

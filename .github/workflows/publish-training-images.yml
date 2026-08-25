@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     if: vars.PUBLISH_IMAGES == 'true'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Free disk space
         run: |
@@ -42,8 +42,8 @@ jobs:
           sudo docker image prune -af || true
           df -h / | tail -1
 
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -51,7 +51,7 @@ jobs:
       # The runner is x86-64, which is what the GPU instances are, so this is a
       # native build rather than the slow emulated one a Mac would do.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.base
@@ -82,7 +82,7 @@ jobs:
           - speech-emotion-recognition
           - rlhf-ppo
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         if: >-
           github.event.inputs.services == 'all'
           || contains(github.event.inputs.services, matrix.service)
@@ -97,11 +97,11 @@ jobs:
           sudo docker image prune -af || true
           df -h / | tail -1
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
         if: >-
           github.event.inputs.services == 'all'
           || contains(github.event.inputs.services, matrix.service)
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: >-
           github.event.inputs.services == 'all'
           || contains(github.event.inputs.services, matrix.service)
@@ -113,7 +113,7 @@ jobs:
         if: >-
           github.event.inputs.services == 'all'
           || contains(github.event.inputs.services, matrix.service)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/${{ matrix.service }}/Dockerfile.train

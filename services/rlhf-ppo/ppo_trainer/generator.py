@@ -134,6 +134,11 @@ class SequenceGenerator:
                 state_ids = sequences[prompt_idx, : prompt_len + step]
                 state_mask = full_mask[prompt_idx, : prompt_len + step]
                 state_text: str = self.tokenizer.decode(state_ids, skip_special_tokens=True)
+                # The ids the forward pass below actually scores, with the prompt's
+                # left padding dropped. `state_text` stays for display and for the
+                # value model; the PPO ratio uses these, so that both sides of it
+                # score the same tokens rather than the same string.
+                real_state_ids: list[int] = state_ids[state_mask.bool()].tolist()
 
                 # Action: the token that was actually sampled at this step.
                 action_id = int(sequences[prompt_idx, prompt_len + step].item())
@@ -168,6 +173,7 @@ class SequenceGenerator:
                 all_sa_pairs.append(
                     {
                         "state_text": state_text,
+                        "state_token_ids": real_state_ids,
                         "action_token": action_token,
                         "action_token_id": action_id,
                         "logprob": logprob,

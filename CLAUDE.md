@@ -9,8 +9,8 @@ repo. Private, at `github.com/RoshBeed/ai-residency`.
 ```
 libs/common/                 device, logging, checkpoints, config, seeding, Hub, W&B, health/ready
 libs/vision-transformer/     attention, encoder, decoder, patch embedding — the two ViTs
-libs/word2vec/               CBOW and skip-gram, negative sampling or softmax — word-embeddings,
-                             vector-search-retrieval
+libs/word2vec/               CBOW and skip-gram, negative sampling or softmax, nearest
+                             neighbours — word-embeddings, vector-search-retrieval
 libs/speech/                 Whisper loading, features, labels, decoding — the two audio services
 services/<name>/             one per system: package, config/, serving/, tests/, Dockerfiles, README
 services/_template/          the shape a new service starts from; a working one, not a skeleton
@@ -139,9 +139,29 @@ those builds are native rather than the slow emulation a Mac would do.
 - **Training images must target the GPU host's architecture.** `make build` passes
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.
+- **`helm upgrade --wait` cannot succeed while a service is deliberately unready.**
+  `--wait` blocks until every Deployment reports available, and
+  `speech-emotion-recognition` has no checkpoint, so its `/ready` is an honest
+  permanent 503 and the rollout hits the progress deadline. Helm then marks the
+  release `failed` even though all ten pods rolled out on the new tag. That is why
+  `make helm-upgrade` does not pass `--wait`; don't add it back until every service
+  has a checkpoint.
 - **`helm uninstall` returns before deletion finishes.** An install started right after can have
   its objects deleted by the tail of the previous release — a reinstall once came up with all
   eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
+- **An embedding matrix can have more rows than the vocabulary has words.** The
+  word-embeddings checkpoint is 258,196 rows against 230,701 words, so 27,495 rows
+  cannot be named. `topk` searches all of them, a nameless row wins, and the lookup
+  after it raises `KeyError` -- `/nearest` returned 500 for any `k` above about 9
+  while the schema advertised up to 100. Never index a vocabulary with a raw `topk`
+  result; go through `word2vec.nearest_words`, which masks the unnamable rows out of
+  the search.
+- **The PPO ratio scores token ids, never re-tokenized text.** A generated state is
+  carried as `state_token_ids` as well as `state_text`, and `PolicyRatio` reads the ids.
+  Re-encoding the text looks equivalent and is not: about one in twenty states does not
+  survive decode-then-encode, sometimes coming back with a *different number* of tokens,
+  so the two sides of the ratio scored different sequences and the ratio was not 1 before
+  any gradient step. The value model still reads `state_text` — that one is genuinely text.
 - **Whisper labels must not start with `<|startoftranscript|>`.** The model prepends
   `decoder_start_token_id` itself when it shifts labels right, and that token *is* SOT, so
   passing the tokenizer's output through unchanged trains the decoder one position out of
@@ -177,7 +197,8 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 
 CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
 publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
-then a Trivy scan of the published base whose results go to the Security tab. 182 tests.
+then a Trivy scan of the published base whose results go to the job summary (SARIF upload
+needs Advanced Security, which a private repo does not have). 258 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
@@ -190,8 +211,5 @@ ok / not_ready / failed). None of the four imports Streamlit, which is what make
 Open:
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
   pipeline, trainer and API are wired and verified.
-- `rlhf-ppo` has one `xfail`: the PPO ratio can differ for one element because the generator
-  records the state as decoded text and the ratio re-tokenizes it, and detokenize/retokenize is not
-  always a round-trip. Carrying token ids through is the fix — PPO internals, so it waits.
 - The eleven predecessor repos are archived on GitHub. `backup/pre-squash-2026-08-23` tags the
   pre-history-rewrite tip; delete it once the current history is settled.

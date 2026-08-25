@@ -97,7 +97,7 @@ class ModelTrainer:
         """Take one PPO-clip gradient step on the policy.
 
         Args:
-            sa_pairs: Pairs carrying `state_text`, `action_token_id`, `logprob` and
+            sa_pairs: Pairs carrying `state_token_ids`, `action_token_id`, `logprob` and
                 `advantage`.
 
         Returns:
@@ -105,7 +105,7 @@ class ModelTrainer:
         """
         self.policy_model.train()
 
-        state_texts = [pair["state_text"] for pair in sa_pairs]
+        state_token_ids = [list(pair["state_token_ids"]) for pair in sa_pairs]
         action_token_ids = [int(pair["action_token_id"]) for pair in sa_pairs]
         old_logprobs = torch.tensor(
             [
@@ -121,7 +121,7 @@ class ModelTrainer:
         new_logprobs = PolicyRatio.get_new_logprobs(
             self.policy_model,
             self.tokenizer,
-            state_texts,
+            state_token_ids,
             action_token_ids,
             self.device,
             self.config.batch_size,
@@ -150,13 +150,13 @@ class ModelTrainer:
         constrained.
 
         Args:
-            sa_pairs: Pairs carrying ``state_text``, ``action_token_id`` and ``logprob``
+            sa_pairs: Pairs carrying ``state_token_ids``, ``action_token_id`` and ``logprob``
                 (the pre-update logprob).
 
         Returns:
             The same pairs, now with ``policy_ratio`` populated.
         """
-        state_texts = [pair["state_text"] for pair in sa_pairs]
+        state_token_ids = [list(pair["state_token_ids"]) for pair in sa_pairs]
         action_token_ids = [int(pair["action_token_id"]) for pair in sa_pairs]
         old_logprobs = torch.tensor([pair["logprob"] for pair in sa_pairs], dtype=torch.float32).to(
             self.device
@@ -165,7 +165,7 @@ class ModelTrainer:
         new_logprobs = PolicyRatio.get_new_logprobs(
             self.policy_model,
             self.tokenizer,
-            state_texts,
+            state_token_ids,
             action_token_ids,
             self.device,
             self.config.batch_size,
@@ -191,12 +191,12 @@ class ModelTrainer:
         ratio drifts as earlier gradient steps accumulate.
 
         Args:
-            sa_pairs: Pairs carrying ``state_text``, ``action_token_id`` and ``logprob``.
+            sa_pairs: Pairs carrying ``state_token_ids``, ``action_token_id`` and ``logprob``.
 
         Returns:
             The same pairs, now with ``clipped_ratio`` populated.
         """
-        state_texts = [pair["state_text"] for pair in sa_pairs]
+        state_token_ids = [list(pair["state_token_ids"]) for pair in sa_pairs]
         action_token_ids = [int(pair["action_token_id"]) for pair in sa_pairs]
         old_logprobs = torch.tensor([pair["logprob"] for pair in sa_pairs], dtype=torch.float32).to(
             self.device
@@ -205,7 +205,7 @@ class ModelTrainer:
         new_logprobs = PolicyRatio.get_new_logprobs(
             self.policy_model,
             self.tokenizer,
-            state_texts,
+            state_token_ids,
             action_token_ids,
             self.device,
             self.config.batch_size,

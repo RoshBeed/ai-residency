@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ai_residency_common import add_health_routes, format_sse, get_logger, run_app
+from ai_residency_common import add_health_routes, format_sse, get_logger, retrying, run_app
 from config import Config
 from content_scoring.predict import ModelState, create_title_embedding, load_models, predict_score
 
@@ -24,9 +24,14 @@ logger = get_logger(__name__)
 state = ModelState()
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Load models on startup, leaving the service degraded if they are missing."""
+def ensure_loaded() -> bool:
+    """Load the models if they are not loaded, and report whether they are.
+
+    Idempotent and safe to call from a readiness probe: it returns immediately once
+    the models are in memory, and re-attempts the resolve otherwise.
+    """
+    if state.is_loaded:
+        return True
     try:
         loaded = load_models(Config())
         state.predictor = loaded.predictor
@@ -37,6 +42,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         state.predictor_source = loaded.predictor_source
     except (FileNotFoundError, KeyError, RuntimeError) as error:
         logger.error("Could not load models, /predict will return 503: %s", error)
+        return False
+    return state.is_loaded
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Load models on startup. /ready retries if that fails."""
+    ensure_loaded()
     yield
 
 
@@ -85,7 +98,11 @@ async def root() -> dict[str, str]:
 
 add_health_routes(
     app,
-    ready=lambda: state.is_loaded,
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "model_loaded": state.is_loaded,
         "checkpoint_loaded": state.is_loaded,

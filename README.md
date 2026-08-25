@@ -2,31 +2,69 @@
 
 Nine machine-learning systems, each taken from scratch to a containerized service, plus the
 frontend and the deployment that run all of them. The point isn't only the models — it's the
-engineering around them: real architectures implemented from the ground up, one shared library,
-one lockfile, and the same images running on three runtimes (a laptop, docker-compose,
+engineering around them: real architectures implemented from the ground up, four shared
+libraries, one lockfile, and the same images running on three runtimes (a laptop, docker-compose,
 Kubernetes).
 
 Every image is public and every checkpoint resolves from the Hugging Face Hub at startup, so
 none of this needs credentials, a GPU, or a build.
 
-## Run it
+## Run one, right now
 
-One command. It pulls ten published images and serves all nine systems behind one UI at
-**http://localhost:8500**.
+No clone, no build, no credentials. This pulls a published image, waits for it to report ready,
+asks it a question, and cleans up after itself:
+
+```bash
+docker run --rm -d --name word-embeddings -p 8000:8000 \
+  roshb/ai-residency-word-embeddings-serve
+
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
+  http://localhost:8000/ready >/dev/null
+
+curl -sS -X POST http://localhost:8000/nearest \
+  -H 'Content-Type: application/json' \
+  -d '{"word":"king","k":3}'
+
+docker stop word-embeddings >/dev/null
+```
+
+```json
+{"query":"king","nearest":[["kings",1.0],["tetrachord",0.42],["voci",0.42]],
+ "checkpoint_source":"hub"}
+```
+
+The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub,
+which is why the `--retry` loop is there rather than a fixed sleep: `/ready` answers **503** until
+the weights are loaded, so curl retries until the service can genuinely serve.
+
+Swap the image name for any other system — every one is independently deployable and answers plain
+HTTP on `:8000`:
+
+```
+roshb/ai-residency-content-scoring-serve            roshb/ai-residency-vit-classifier-serve
+roshb/ai-residency-vector-search-retrieval-serve    roshb/ai-residency-vit-seq2seq-serve
+roshb/ai-residency-whisper-fine-tuning-serve        roshb/ai-residency-multimodal-captioning-serve
+roshb/ai-residency-speech-emotion-recognition-serve roshb/ai-residency-rlhf-ppo-serve
+```
+
+`GET /openapi.json` on any of them lists its endpoints and request shapes.
+`vector-search-retrieval` is the one exception to running solo — it queries a Redis index, so it
+wants `make up SERVICES="vector-search-retrieval"` below, which starts Redis alongside it.
+
+## Run all of them, behind the UI
+
+The frontend needs the compose file, so this one does want a clone. It still builds nothing —
+compose pulls the same published images.
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy
-make up
+make up          # all nine systems + the UI on http://localhost:8500
+make status      # which backends are up (/health) and which can serve (/ready)
+make down        # stop everything
 ```
 
-Nothing is built locally — compose pulls `roshb/ai-residency-*` straight from Docker Hub, and
-each container fetches its own weights on first start. Expect a few minutes on a cold run while
-those downloads happen; each page works as its backend finishes.
-
-```bash
-make status     # which backends are up (/health) and which can serve (/ready)
-make down       # stop everything
-```
+Expect a few minutes on a cold run while each container fetches its weights; each page starts
+working as its backend finishes.
 
 If `make up` reports `Bind for 0.0.0.0:8500 failed`, something else already holds that port —
 most likely a Helm release of this same chart, whose `LoadBalancer` Service claims it even with
@@ -57,55 +95,58 @@ make up SERVICES="word-embeddings vit-classifier"
 Those are cgroup peaks read after each service had loaded its models and answered a real request,
 not estimates.
 
-### A single backend, no UI
-
-Each service is independently deployable and answers plain HTTP:
-
-```bash
-docker run -p 8000:8000 roshb/ai-residency-word-embeddings-serve
-curl -s localhost:8000/ready
-curl -s -X POST localhost:8000/nearest \
-  -H 'content-type: application/json' -d '{"word": "king", "k": 3}'
-```
-
-That container starts with an empty disk, pulls its own checkpoint, and answers.
-
 ## How it fits together
 
 ```mermaid
-flowchart LR
-    UI["Streamlit frontend<br/>localhost:8500"]
+flowchart TB
+    subgraph runtime["runs on your laptop — Docker Compose or Kubernetes"]
+        direction TB
 
-    subgraph text["Text"]
-        WE["word-embeddings"]
-        CS["content-scoring"]
-        VSR["vector-search-retrieval"]
-    end
-    subgraph vision["Vision"]
-        VC["vit-classifier"]
-        VS["vit-seq2seq"]
-        MC["multimodal-captioning"]
-    end
-    subgraph audio["Audio"]
-        WF["whisper-fine-tuning"]
-        SER["speech-emotion-recognition"]
-    end
-    PPO["rlhf-ppo<br/>(RL)"]
+        UI["<b>Streamlit frontend</b><br/>localhost:8500"]
 
-    R[("Redis<br/>HNSW index")]
+        TEXT["<b>Text</b><br/>word-embeddings<br/>content-scoring<br/>vector-search-retrieval"]
+        VIS["<b>Vision</b><br/>vit-classifier<br/>vit-seq2seq<br/>multimodal-captioning"]
+        AUD["<b>Audio</b><br/>whisper-fine-tuning<br/>speech-emotion-recognition"]
+        RL["<b>RL</b><br/>rlhf-ppo"]
+
+        R[("Redis<br/>HNSW index")]
+
+        subgraph libs["libs/ — one implementation each, built into every image"]
+            direction LR
+            LC["common"]
+            LW["word2vec"]
+            LV["vision-transformer"]
+            LS["speech"]
+        end
+
+        GPU["<b>training image</b><br/>GPU, run on demand"]
+    end
+
     HUB[("Hugging Face Hub<br/>weights + datasets")]
-    GPU["training image<br/>on a rented GPU"]
+    WB[("Weights &amp; Biases<br/>loss curves, run config")]
 
-    UI --> text & vision & audio & PPO
-    VSR --> R
-    text & vision & audio & PPO -.->|"weights at startup"| HUB
-    GPU ==>|"trains, pushes"| HUB
+    UI --> TEXT & VIS & AUD & RL
+    TEXT --> R
+    libs -.->|"compiled in"| TEXT
+    libs -.-> VIS & AUD & RL
+    TEXT -.->|"weights at startup"| HUB
+    VIS & AUD & RL -.-> HUB
+    GPU ==>|"push checkpoints"| HUB
+    GPU ==>|"stream metrics"| WB
+
+    classDef ext fill:#fff4e6,stroke:#d9822b,stroke-width:1px
+    class HUB,WB ext
 ```
 
-A GPU box trains and pushes weights to the Hub; cheap CPU containers pull them and serve. No
-service calls another at request time, and nothing depends on a file that happens to sit on one
-machine — which is what lets the same images run unchanged on a laptop, under compose, and on a
-cluster.
+Everything inside the box is yours and disposable; the two stores outside it are the only state
+that survives. A GPU box trains, pushes weights to the Hub and streams metrics to Weights &
+Biases; cheap CPU containers pull those weights and serve. No service calls another at request
+time, and nothing depends on a file that happens to sit on one machine — which is what lets the
+same images run unchanged on a laptop, under compose, and on a cluster.
+
+The four libraries under `libs/` are the other half of that shape. Each holds one implementation
+of something more than one service needs, so a fix lands once rather than in three places — the
+argument that produced them, and the bugs it surfaced, are in [Working on it](#working-on-it).
 
 Each backend exposes two endpoints a deployment cares about, from one shared helper in
 `libs/common`:

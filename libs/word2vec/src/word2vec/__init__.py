@@ -23,6 +23,7 @@ from word2vec.compat import LEGACY_KEY_MAPS, state_dict_from_legacy
 from word2vec.config import Word2VecConfig
 from word2vec.model import Word2Vec
 from word2vec.model_types import Architecture, Objective
+from word2vec.neighbours import nearest_words, valid_row_mask
 from word2vec.sampling import NegativeSampler, unigram_distribution
 
 __all__ = [
@@ -32,6 +33,8 @@ __all__ = [
     "Objective",
     "Word2Vec",
     "Word2VecConfig",
+    "nearest_words",
     "state_dict_from_legacy",
     "unigram_distribution",
+    "valid_row_mask",
 ]
