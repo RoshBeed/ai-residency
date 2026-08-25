@@ -9,8 +9,8 @@ repo. Private, at `github.com/RoshBeed/ai-residency`.
 ```
 libs/common/                 device, logging, checkpoints, config, seeding, Hub, W&B, health/ready
 libs/vision-transformer/     attention, encoder, decoder, patch embedding — the two ViTs
-libs/word2vec/               CBOW and skip-gram, negative sampling or softmax — word-embeddings,
-                             vector-search-retrieval
+libs/word2vec/               CBOW and skip-gram, negative sampling or softmax, nearest
+                             neighbours — word-embeddings, vector-search-retrieval
 libs/speech/                 Whisper loading, features, labels, decoding — the two audio services
 services/<name>/             one per system: package, config/, serving/, tests/, Dockerfiles, README
 services/_template/          the shape a new service starts from; a working one, not a skeleton
@@ -139,9 +139,23 @@ those builds are native rather than the slow emulation a Mac would do.
 - **Training images must target the GPU host's architecture.** `make build` passes
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.
+- **`helm upgrade --wait` cannot succeed while a service is deliberately unready.**
+  `--wait` blocks until every Deployment reports available, and
+  `speech-emotion-recognition` has no checkpoint, so its `/ready` is an honest
+  permanent 503 and the rollout hits the progress deadline. Helm then marks the
+  release `failed` even though all ten pods rolled out on the new tag. That is why
+  `make helm-upgrade` does not pass `--wait`; don't add it back until every service
+  has a checkpoint.
 - **`helm uninstall` returns before deletion finishes.** An install started right after can have
   its objects deleted by the tail of the previous release — a reinstall once came up with all
   eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
+- **An embedding matrix can have more rows than the vocabulary has words.** The
+  word-embeddings checkpoint is 258,196 rows against 230,701 words, so 27,495 rows
+  cannot be named. `topk` searches all of them, a nameless row wins, and the lookup
+  after it raises `KeyError` -- `/nearest` returned 500 for any `k` above about 9
+  while the schema advertised up to 100. Never index a vocabulary with a raw `topk`
+  result; go through `word2vec.nearest_words`, which masks the unnamable rows out of
+  the search.
 - **Whisper labels must not start with `<|startoftranscript|>`.** The model prepends
   `decoder_start_token_id` itself when it shifts labels right, and that token *is* SOT, so
   passing the tokenizer's output through unchanged trains the decoder one position out of

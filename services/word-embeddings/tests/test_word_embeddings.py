@@ -5,6 +5,7 @@ dead code, the CBOW model being constructed with the wrong arguments, and the
 embeddings carrying their vocabulary with them.
 """
 
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -58,6 +59,33 @@ class TestCbowModel:
         assert loss.shape == ()
 
 
+@pytest.fixture
+def loaded_state() -> Iterator[Callable[[torch.Tensor, dict[str, int]], None]]:
+    """Load a vocabulary into the module-level state, and put it back afterwards.
+
+    `serving.api.state` is a module global the app reads on every request, so a test
+    that loads into it has to restore it or the next test sees the leftovers.
+    """
+    from serving.api import state
+
+    saved = (
+        state.embeddings,
+        state.word_to_index,
+        state.index_to_word,
+        state.valid_rows,
+        state.source,
+    )
+
+    def load(embeddings: torch.Tensor, vocabulary: dict[str, int]) -> None:
+        state.load(embeddings, vocabulary, "test")
+
+    yield load
+
+    (state.embeddings, state.word_to_index, state.index_to_word, state.valid_rows, state.source) = (
+        saved
+    )
+
+
 class TestApi:
     def test_health_reports_whether_the_model_loaded(self) -> None:
         response = TestClient(app).get("/health")
@@ -68,6 +96,35 @@ class TestApi:
         response = TestClient(app).get("/")
         assert response.status_code == 200
         assert "/nearest" in response.json()["endpoint"]
+
+    def test_nearest_never_names_a_row_the_vocabulary_lacks(
+        self, loaded_state: Callable[[torch.Tensor, dict[str, int]], None]
+    ) -> None:
+        """`/nearest` returned 500 in production on a vocabulary with holes.
+
+        The deployed checkpoint has 258,196 embedding rows and 230,701 of them map
+        to a word. `topk` searched all of them, so a nameless row could win and the
+        lookup that followed raised `KeyError`. Row 1 below stands in for that: it
+        ties with the query for closest, and has no word.
+        """
+        loaded_state(torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]), {"king": 0, "apple": 2})
+
+        response = TestClient(app).post("/nearest", json={"word": "king", "k": 2})
+
+        assert response.status_code == 200, response.text
+        assert [word for word, _ in response.json()["nearest"]] == ["apple"]
+
+    def test_analogy_returns_words_rather_than_the_route_function(
+        self, loaded_state: Callable[[torch.Tensor, dict[str, int]], None]
+    ) -> None:
+        """The response field and the route handler share the name `nearest`."""
+        loaded_state(torch.eye(3), {"a": 0, "b": 1, "c": 2})
+
+        response = TestClient(app).post("/analogy", json={"a": "a", "b": "b", "c": "c", "k": 2})
+
+        assert response.status_code == 200, response.text
+        for word, score in response.json()["nearest"]:
+            assert isinstance(word, str) and isinstance(score, float)
 
 
 class TestConfig:

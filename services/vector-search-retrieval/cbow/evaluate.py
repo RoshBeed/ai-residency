@@ -7,10 +7,10 @@ something more informative than a falling loss.
 """
 
 import torch
-import torch.nn.functional as F
 
 from ai_residency_common import get_logger
 from word2vec import Word2Vec
+from word2vec import nearest_words as nearest_in_matrix
 
 __all__ = ["nearest_words"]
 
@@ -43,14 +43,6 @@ def nearest_words(
 
     with torch.no_grad():
         weights = model.embeddings.detach()
-        normalized = F.normalize(weights, p=2, dim=1)
-        target = normalized[words_to_ids[word]]
-        similarities = normalized @ target
-        values, indices = torch.topk(similarities, top_k + 1)
-
-    neighbours = [
-        (ids_to_words[int(index)], float(value))
-        for value, index in zip(values, indices, strict=True)
-        if ids_to_words[int(index)] != word
-    ]
-    return neighbours[:top_k]
+        return nearest_in_matrix(
+            weights, weights[words_to_ids[word]], ids_to_words, k=top_k, exclude=word
+        )
