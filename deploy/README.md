@@ -135,31 +135,38 @@ image is rebuilt, so `helm upgrade` alone wouldn't actually roll already-running
 pulled image. `make helm-uninstall` tears the release down (the namespace is left in place);
 `make helm-status` shows pod/service state.
 
-**`hostPath` volumes — local-node convenience, not portable:** every volume mount in `values.yaml`
-points at an absolute path on the *node's* filesystem (`hostRoot: /Users/rosh/mlx` by default). This
-only works because Docker Desktop's Kubernetes node's filesystem **is** the Mac's filesystem. It
-reproduces docker-compose.yml's own mounts. The gitignored-artifact mounts (trained checkpoints,
-which may legitimately be absent on a host that never trained/downloaded them) use
-`DirectoryOrCreate`/`FileOrCreate` hostPath types instead of stricter `Directory`/`File` — a strict
-type fails the pod's volume mount outright when the path doesn't exist yet (`FailedMount`, stuck
-`ContainerCreating`), which would prevent the app's own graceful missing-checkpoint handling from
-ever running. A real multi-node cluster would need actual artifact hosting (git-lfs, release
-assets, DVC) in place of these hostPath mounts, or — better — would drop them entirely and let the
-The Hugging Face model cache is a **separate** value (`hfCachePath`), not derived from `hostRoot`:
-it lives under the user's home directory, outside the portfolio checkout. Deriving it from
-`hostRoot` mounts a path that does not exist, and because these volumes use `DirectoryOrCreate`,
-Kubernetes silently creates an empty one — every pod then re-downloads several GB of weights on
-each cold start, with no error to notice. Compose expresses the same path as
-`${HOME}/.cache/huggingface`.
+**No hostPath mounts, and no checkpoint volumes.** Every service resolves its weights and
+datasets from the Hugging Face Hub at startup, so there is nothing on the node for a pod to depend
+on. That is what lets the same release install on a cluster that has never trained anything.
 
-If this repo ever moves to a different path, update `hostRoot` in
-`values.yaml` (or pass `--set hostRoot=...` at install time) rather than editing each mount.
+The one volume left is the Hugging Face cache, and it is a convenience rather than a dependency —
+an empty cache only means a slower cold start. It defaults to an `emptyDir`, per pod, discarded on
+restart:
 
-**Health probes gate traffic.** Every backend exposes `/health`, and the chart wires all three
-probe types to it (`probes` in `values.yaml`). This matters more than it looks: without a
-readiness probe Kubernetes adds a pod to its Service's endpoints the moment the container process
-exists — minutes before the model has finished loading — so the frontend's first requests get
-routed to a backend that cannot answer them. The startup probe carries a deliberately generous
+```yaml
+hfCache:
+  mode: none        # or "hostPath" (single-node) or "pvc" (anywhere)
+```
+
+`hostPath` is faster on a single-node cluster but carries a constraint found by deploying rather
+than by reading: the pods run as UID 1000, `fsGroup` does not apply ownership to hostPath volumes,
+and a cache directory owned by root is then readable but **not** writable. That fails only when
+the cache misses — so it appears to work on a machine whose cache is already warm and breaks on a
+fresh one. Use it only with a directory the pod's UID owns:
+
+```bash
+mkdir -p /srv/hf-cache && sudo chown -R 1000:1000 /srv/hf-cache
+helm upgrade ... --set hfCache.mode=hostPath --set hfCache.hostPath=/srv/hf-cache
+```
+
+A PersistentVolumeClaim is the multi-node answer, and does honour `fsGroup`.
+
+**Health probes gate traffic, and the two paths are different on purpose.** `/health` is liveness
+and always answers 200, so a model that is slow to load — or absent — never gets a pod restarted.
+`/ready` answers 503 until the service can actually serve, which is what takes an unusable pod out
+of its Service's endpoints instead of routing traffic it can only reject. Pointing both at
+`/health`, which this chart used to do, gives a readiness probe that cannot fail — the same as
+having none. The startup probe carries a deliberately generous
 budget (up to 10 minutes) because a cold start may pull weights from the Hub, and Kubernetes
 suppresses the liveness probe while it runs, so a slow-but-healthy load is never mistaken for a
 hang and restarted in a loop.
