@@ -13,8 +13,9 @@ from fastapi.testclient import TestClient
 
 from config import Config
 from serving.api import app
+from speech import encode_target
 from whisper_fine_tuning.demo import run_demo
-from whisper_fine_tuning.models import load_whisper_model, prepare_training_data
+from whisper_fine_tuning.models import load_whisper_model
 from whisper_fine_tuning.training import train
 
 # The demo needs its clip, which is gitignored and resolved from the Hub at run time
@@ -40,13 +41,17 @@ def test_labels_omit_the_token_the_model_prepends() -> None:
     tokenizer emits it, including the `<|notimestamps|>` the hand-built version
     omitted.
     """
-    config = Config()
-    whisper = load_whisper_model(config)
-    _, labels = prepare_training_data(whisper, str(config.audio_path), "hello")
+    # Deliberately not through prepare_training_data: that needs the demo clip, which
+    # is gitignored and resolved from the Hub at run time, and this rule is about the
+    # label sequence rather than about any particular audio.
+    whisper = load_whisper_model(Config())
+    labels = encode_target(whisper.processor, "hello")
 
-    tokens = whisper.processor.tokenizer.convert_ids_to_tokens(labels[0].tolist())
+    tokens = whisper.processor.tokenizer.convert_ids_to_tokens(labels.tolist())
     assert tokens[0] != "<|startoftranscript|>"
     assert tokens[-1] == "<|endoftext|>"
+    # And the prefix the old hand-built version omitted is present.
+    assert "<|notimestamps|>" in tokens
 
 
 @needs_audio
