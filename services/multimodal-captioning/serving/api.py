@@ -25,6 +25,7 @@ from ai_residency_common import (
     decode_image,
     get_device,
     get_logger,
+    retrying,
     run_app,
     stream_sse,
 )
@@ -51,16 +52,28 @@ _config = Config()
 _backbones_ready = False
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Warm CLIP and Qwen3 so the first caption request does not pay for the load."""
+def ensure_loaded() -> bool:
+    """Warm CLIP and Qwen3 if they are not warm, and report whether they are.
+
+    `load_backbones` is itself cached, so this is cheap once it has succeeded.
+    """
     global _backbones_ready
+    if _backbones_ready:
+        return True
     try:
         load_backbones(_config)
         _backbones_ready = True
         logger.info("Backbones warm; ready to caption")
     except Exception as error:
         logger.error("Could not load the backbones, /ready will report 503: %s", error)
+        return False
+    return _backbones_ready
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Warm CLIP and Qwen3 so the first caption request does not pay for the load."""
+    ensure_loaded()
     yield
 
 
@@ -101,7 +114,11 @@ class CaptionResponse(BaseModel):
 # or the Hub.
 add_health_routes(
     app,
-    ready=lambda: _backbones_ready,
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "device": str(get_device()),
         "checkpoints": {name: info.description for name, info in CHECKPOINTS.items()},

@@ -34,6 +34,7 @@ from ai_residency_common import (
     get_logger,
     load_checkpoint,
     resolve_checkpoint,
+    retrying,
     run_app,
     stream_sse,
 )
@@ -54,8 +55,8 @@ MNIST_STD = 0.3081
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Load the checkpoints once, when the service starts."""
-    load_models()
+    """Load the checkpoints when the service starts. /ready retries if this fails."""
+    ensure_loaded()
     yield
 
 
@@ -131,6 +132,22 @@ def load_models() -> None:
         _seq2seq = seq2seq.to(_device).eval()
     else:
         logger.warning("No seq2seq checkpoint locally or on the Hub")
+
+
+def ensure_loaded() -> bool:
+    """Load the checkpoint if it is not already loaded, and report whether it is.
+
+    Idempotent, and safe to call from a readiness probe: it returns immediately once
+    the model is in memory, and re-attempts the resolve otherwise.
+    """
+    if _seq2seq is not None:
+        return True
+    try:
+        load_models()
+    except (FileNotFoundError, KeyError, RuntimeError) as error:
+        logger.error("Could not load the checkpoint, /ready stays 503: %s", error)
+        return False
+    return _seq2seq is not None
 
 
 def preprocess_image(image_data: str, img_size: int) -> torch.Tensor:
@@ -235,7 +252,12 @@ def predict_seq2seq(image_tensor: torch.Tensor) -> tuple[str, float, list[DigitT
 
 add_health_routes(
     app,
-    ready=lambda: _seq2seq is not None,
+    # Retried rather than decided once. A checkpoint that could not be resolved at
+    # startup -- a DNS blip during a mass restart, say -- would otherwise leave this
+    # pod not-ready for the rest of its life, with liveness unable to help because the
+    # process itself is perfectly healthy. `retrying` re-attempts, at most once a
+    # minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "message": "Vision Transformer seq2seq API",
         "model_loaded": _seq2seq is not None,

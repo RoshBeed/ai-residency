@@ -35,6 +35,7 @@ from ai_residency_common import (
     format_sse,
     get_device,
     get_logger,
+    retrying,
     run_app,
 )
 from base_setup import BaseModelSetup
@@ -79,7 +80,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     killing the process: the pod stays inspectable, and the Service simply does not
     route to it.
     """
+    ensure_loaded()
+    yield
+
+
+def ensure_loaded() -> bool:
+    """Build the PPO models if they are not built, and report whether they are."""
     global _models_ready
+    if _models_ready:
+        return True
     try:
         PPOConfig().checkpoint_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Pre-loading PPOTrainer at startup")
@@ -87,7 +96,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         _models_ready = True
     except Exception as error:
         logger.error("Could not pre-load the PPO models, /ready will report 503: %s", error)
-    yield
+        return False
+    return _models_ready
 
 
 app = FastAPI(
@@ -302,7 +312,11 @@ def _generate(
 # determines whether it can answer.
 add_health_routes(
     app,
-    ready=lambda: _models_ready,
+    # Retried rather than decided once. A resolve that failed at startup -- a DNS blip
+    # during a mass restart, say -- would otherwise leave this pod not-ready for the
+    # rest of its life, with liveness unable to help because the process itself is
+    # perfectly healthy. `retrying` re-attempts, at most once a minute, from /ready.
+    ready=retrying(ensure_loaded),
     detail=lambda: {
         "device": str(get_device()),
         "models_loaded": _models_ready,
