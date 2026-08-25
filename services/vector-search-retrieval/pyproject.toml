@@ -10,6 +10,7 @@ dependencies = [
     "fastapi",
     "huggingface_hub>=0.23.4",
     "ai-residency-common",
+    "ai-residency-word2vec",
     "numpy",
     "python-dotenv",
     "pyyaml>=6.0",
@@ -45,6 +46,7 @@ pythonpath = ["."]
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }
+ai-residency-word2vec = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]

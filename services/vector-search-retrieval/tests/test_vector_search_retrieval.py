@@ -357,10 +357,10 @@ def test_nearest_words_skips_a_word_outside_the_vocabulary(
 ) -> None:
     """Runs inside a training loop, so an unknown probe word must not raise."""
     from cbow.evaluate import nearest_words
-    from cbow.model import CBOW
+    from cbow.model import build_cbow
 
     ids_to_words = {index: word for word, index in vocabulary.items()}
-    model = CBOW(len(vocabulary), config.embedding_dim)
+    model = build_cbow(len(vocabulary), config.embedding_dim)
     assert nearest_words(model, "quokka", vocabulary, ids_to_words) == []
 
     neighbours = nearest_words(model, "reagan", vocabulary, ids_to_words, top_k=3)

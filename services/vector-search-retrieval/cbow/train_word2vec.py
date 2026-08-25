@@ -10,7 +10,6 @@ there.
 import datetime
 
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -26,7 +25,7 @@ from ai_residency_common import (
 )
 from cbow.dataset import Example, Wiki
 from cbow.evaluate import nearest_words
-from cbow.model import CBOW
+from cbow.model import build_cbow
 from cbow.vocabulary import CANONICAL_CBOW_CHECKPOINT
 from config import Config
 
@@ -54,9 +53,8 @@ def train_word2vec(config: Config) -> float:
     dataset = Wiki(config)
     loader: DataLoader[Example] = DataLoader(dataset, batch_size=config.cbow_batch_size)
 
-    model = CBOW(len(dataset.ids_to_words), config.embedding_dim).to(device)
+    model = build_cbow(len(dataset.ids_to_words), config.embedding_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.cbow_learning_rate)
-    criterion = nn.CrossEntropyLoss()
     logger.info("Parameters: %d", sum(p.numel() for p in model.parameters()))
 
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
@@ -76,7 +74,11 @@ def train_word2vec(config: Config) -> float:
         for index, (context, target) in enumerate(progress):
             context, target = context.to(device), target.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(context), target.squeeze(1))
+            # The model returns the loss rather than logits, so the cross-entropy that
+            # used to be applied here lives with the objective it belongs to. Argument
+            # order is (centre, context): CBOW predicts the centre word from the
+            # averaged context, and `target` is that centre word.
+            loss = model(target.squeeze(1), context)
             loss.backward()
             optimizer.step()
 

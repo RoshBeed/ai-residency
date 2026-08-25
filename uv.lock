@@ -425,6 +425,7 @@ version = "0.1.0"
 source = { virtual = "services/vector-search-retrieval" }
 dependencies = [
     { name = "ai-residency-common" },
+    { name = "ai-residency-word2vec" },
     { name = "datasets" },
     { name = "fastapi" },
     { name = "huggingface-hub" },
@@ -455,6 +456,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ai-residency-common", editable = "libs/common" },
+    { name = "ai-residency-word2vec", editable = "libs/word2vec" },
     { name = "datasets", specifier = ">=2.19.0" },
     { name = "fastapi" },
     { name = "huggingface-hub", specifier = ">=0.23.4" },
