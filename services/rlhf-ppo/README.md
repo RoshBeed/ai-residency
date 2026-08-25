@@ -229,9 +229,7 @@ rather than being reimplemented here. `PPOConfig` inherits from its `BaseConfig`
 ├── serving/api.py         FastAPI generation service (`make serve SERVICE=rlhf-ppo`), what the portfolio frontend calls
 └── sa_pair.py             The (state, action) dict every pipeline stage reads from and writes to
 examples/basic_usage.py  Three consecutive PPO steps, for watching the losses move
-notebooks/
-├── rosh.ipynb             The original exploratory notebook this modular package was refactored from
-└── walkthrough.ipynb      Narrated, cell-by-cell run of the real ppo_step() call sequence
+notebooks/walkthrough.ipynb    Narrated, cell-by-cell run of the real ppo_step() call sequence
 tests/test_ppo_components.py   Unit tests for every module above
 ```
 
