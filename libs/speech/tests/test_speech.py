@@ -168,6 +168,35 @@ def test_an_added_token_encodes_as_exactly_one_id(processor: WhisperProcessor) -
     assert len(ids) == 1
 
 
+@needs_model
+def test_prefix_false_makes_the_first_decoder_step_the_answer(
+    processor: WhisperProcessor,
+) -> None:
+    """For classification, the decoder's first emission is the whole prediction.
+
+    With the prefix the model is trained to emit <|en|> at step one and the label
+    several steps later, so a caller reading step one gets the language token. That
+    mismatch trains and serves without erroring, which is exactly why it is worth a
+    test rather than a comment.
+    """
+    processor.tokenizer.add_special_tokens({"additional_special_tokens": ["<|angry|>"]})
+
+    labels = encode_target(processor, "<|angry|>", prefix=False)
+
+    tokens = processor.tokenizer.convert_ids_to_tokens(labels.tolist())
+    assert tokens == ["<|angry|>", "<|endoftext|>"]
+
+
+@needs_model
+def test_prefix_true_keeps_the_multitask_sequence(processor: WhisperProcessor) -> None:
+    """The other half: transcription still gets language and task tokens."""
+    labels = encode_target(processor, "hello", prefix=True)
+
+    tokens = processor.tokenizer.convert_ids_to_tokens(labels.tolist())
+    assert "<|startoftranscript|>" not in tokens  # the model prepends it
+    assert any(token.startswith("<|") and token.endswith("|>") for token in tokens[:-1])
+
+
 def test_collate_pads_labels_with_the_ignored_index() -> None:
     """Padding with anything else trains the decoder to emit padding."""
     batch = [
