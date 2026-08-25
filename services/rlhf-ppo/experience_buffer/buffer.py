@@ -35,6 +35,9 @@ class ExperienceBuffer:
             self.buffer.append(
                 {
                     "state_text": pair["state_text"],
+                    # The ids, not just the text: a replayed experience is scored by
+                    # PolicyRatio, which needs the exact tokens the generator scored.
+                    "state_token_ids": list(pair["state_token_ids"]),
                     "action_token_id": pair["action_token_id"],
                     "old_logprob": pair["logprob"],
                     "advantage": pair["advantage"],

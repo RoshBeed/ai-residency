@@ -45,6 +45,10 @@ def sa_pairs() -> list[SAPair]:
     return [
         {
             "state_text": "SUBREDDIT: r/test\nTITLE: Test prompt\nPOST: This is a test.\nTL;DR:",
+            # Generation records the ids it scored alongside the decoded text; the
+            # PPO ratio reads these, so a fixture standing in for generation carries
+            # both. The exact ids do not matter here, only that they travel.
+            "state_token_ids": [101, 202, 303],
             "action_token": " Test",
             "action_token_id": 1234,
             "logprob": -2.5,
@@ -56,6 +60,7 @@ def sa_pairs() -> list[SAPair]:
             "state_text": (
                 "SUBREDDIT: r/test\nTITLE: Test prompt\nPOST: This is a test.\nTL;DR: Test"
             ),
+            "state_token_ids": [101, 202, 303, 1234],
             "action_token": " response",
             "action_token_id": 5678,
             "logprob": -1.8,
@@ -188,6 +193,78 @@ def test_value_loss() -> None:
     assert loss.item() == pytest.approx(0.01, abs=1e-6)
 
 
+def test_generated_pairs_carry_the_ids_that_were_scored(
+    base_setup: BaseModelSetup,
+) -> None:
+    """`state_token_ids` must be the tokens themselves, not a re-encoded string.
+
+    This is the invariant behind the PPO ratio. If the ids were reconstructed by
+    encoding `state_text`, they would silently be whatever the tokenizer produced on
+    the way back, and the ratio would compare two different sequences. So the check
+    is that the ids decode to the text and grow by exactly one token per step --
+    never that re-encoding the text reproduces the ids, which is the assumption the
+    old implementation made and the thing that was not true.
+    """
+    from ppo_trainer.generator import SequenceGenerator
+
+    model = base_setup.create_base_model()
+    generator = SequenceGenerator(
+        model, model, base_setup.tokenizer, PPOConfig(max_new_tokens=3), torch.device("cpu")
+    )
+
+    pairs, _ = generator.generate_sequences(["TL;DR:"])
+
+    assert pairs, "generation produced no pairs"
+    for pair in pairs:
+        assert isinstance(pair["state_token_ids"], list)
+        assert all(isinstance(token_id, int) for token_id in pair["state_token_ids"])
+        assert pair["state_token_ids"], "a state must have at least the prompt in it"
+
+    lengths = [len(pair["state_token_ids"]) for pair in pairs]
+    assert lengths == sorted(lengths), "the state only ever grows"
+    assert lengths[-1] - lengths[0] == len(pairs) - 1, "one token per step, no gaps"
+
+
+def test_re_encoding_a_state_is_not_the_same_as_carrying_its_ids(
+    base_setup: BaseModelSetup,
+) -> None:
+    """Why the PPO ratio takes ids: decode-then-encode is not the identity.
+
+    `PolicyRatio` used to re-tokenize `state_text`. That is only correct if encoding
+    a decoded state returns the ids it came from, and it does not -- for a
+    meaningful share of sequences the round trip comes back with different ids, and
+    sometimes a different *number* of them. The two sides of the ratio then scored
+    different states, which is why the ratio was not 1 before any gradient step.
+
+    The generated tokens that trigger it are low-probability ones, so sampling finds
+    the case only occasionally; that is exactly what made the old failure an
+    intermittent xfail rather than a visible bug. Searching for it directly makes the
+    property deterministic.
+    """
+    tokenizer = base_setup.tokenizer
+    prompt_ids = list(tokenizer("TL;DR:").input_ids)
+
+    generator = torch.Generator().manual_seed(0)
+    mismatch: tuple[list[int], list[int]] | None = None
+    for _ in range(2000):
+        candidate = (
+            prompt_ids + torch.randint(0, tokenizer.vocab_size, (3,), generator=generator).tolist()
+        )
+        re_encoded = list(
+            tokenizer(tokenizer.decode(candidate, skip_special_tokens=True)).input_ids
+        )
+        if re_encoded != candidate:
+            mismatch = (candidate, re_encoded)
+            break
+
+    assert mismatch is not None, "expected at least one state that does not round-trip"
+    original, re_encoded = mismatch
+    assert original != re_encoded, (
+        "the round trip changed the state -- re-tokenizing `state_text` would have "
+        "scored these ids instead of the ones the generator scored"
+    )
+
+
 def test_token_attribution_grows_the_state_one_token_at_a_time(
     base_setup: BaseModelSetup,
 ) -> None:
@@ -271,18 +348,6 @@ class TestTrainedPipeline:
             assert math.isfinite(pair["logprob"]), pair
             assert math.isfinite(pair["ref_logprob"]), pair
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "The recorded and recomputed log-probabilities can disagree for one "
-            "element in a batch. SequenceGenerator records `state_text`, a decoded "
-            "string, and PolicyRatio re-tokenizes it -- but detokenize/retokenize is "
-            "not always a round-trip, so the 'same' state is occasionally a different "
-            "token sequence and the ratio is not 1. Carrying the state's token ids "
-            "through instead of its text is the fix; it is a change to the PPO "
-            "internals, not to plumbing, so it waits for that work."
-        ),
-    )
     def test_ppo_ratio_is_one_before_any_update(self, trainer: PPOTrainer) -> None:
         """Regression test for the missing attention mask during generation.
 
@@ -300,14 +365,14 @@ class TestTrainedPipeline:
         The two prompts here are deliberately different lengths, which is what makes
         the shorter one padded.
 
-        Generation samples on MPS (`do_sample=True`, top_k/top_p), and that RNG
-        stream isn't reset between tests, so which token gets sampled -- and
-        therefore this test's own inputs -- depended on how much randomness earlier
-        tests in the same run had already consumed. Almost always harmless, but a
-        low-probability token occasionally gets sampled whose re-tokenized state
-        text doesn't round-trip through the tokenizer byte-for-byte, which is enough
-        to move the ratio outside `atol=1e-3`. Seeding immediately before generation
-        makes the test's own inputs deterministic regardless of suite order.
+        This used to be an xfail. Generation samples, so which tokens it produces
+        varies between runs, and `PolicyRatio` re-tokenized the *decoded* state --
+        which meant a low-probability token could produce a state string that did not
+        round-trip back to the same ids. The two sides of the ratio then scored
+        different token sequences and the ratio was not 1. Carrying `state_token_ids`
+        through removes the round trip rather than working around it, so this test
+        needs no seeding: the ratio is 1 whatever gets sampled, which is the property
+        actually worth pinning.
         """
         generator = SequenceGenerator(
             trainer.policy_model,
@@ -316,9 +381,6 @@ class TestTrainedPipeline:
             PPOConfig(max_new_tokens=3),
             trainer.device,
         )
-        torch.manual_seed(0)
-        if torch.backends.mps.is_available():
-            torch.mps.manual_seed(0)
         pairs, _ = generator.generate_sequences(
             ["TL;DR:", "SUBREDDIT: r/test\nTITLE: a much longer prompt than the other\nTL;DR:"]
         )
@@ -327,7 +389,7 @@ class TestTrainedPipeline:
             new_logprobs = PolicyRatio.get_new_logprobs(
                 trainer.policy_model,
                 trainer.base_setup.tokenizer,
-                [pair["state_text"] for pair in pairs],
+                [list(pair["state_token_ids"]) for pair in pairs],
                 [pair["action_token_id"] for pair in pairs],
                 trainer.device,
                 trainer.config.batch_size,

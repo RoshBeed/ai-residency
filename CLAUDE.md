@@ -156,6 +156,12 @@ those builds are native rather than the slow emulation a Mac would do.
   while the schema advertised up to 100. Never index a vocabulary with a raw `topk`
   result; go through `word2vec.nearest_words`, which masks the unnamable rows out of
   the search.
+- **The PPO ratio scores token ids, never re-tokenized text.** A generated state is
+  carried as `state_token_ids` as well as `state_text`, and `PolicyRatio` reads the ids.
+  Re-encoding the text looks equivalent and is not: about one in twenty states does not
+  survive decode-then-encode, sometimes coming back with a *different number* of tokens,
+  so the two sides of the ratio scored different sequences and the ratio was not 1 before
+  any gradient step. The value model still reads `state_text` — that one is genuinely text.
 - **Whisper labels must not start with `<|startoftranscript|>`.** The model prepends
   `decoder_start_token_id` itself when it shifts labels right, and that token *is* SOT, so
   passing the tokenizer's output through unchanged trains the decoder one position out of
@@ -205,8 +211,5 @@ ok / not_ready / failed). None of the four imports Streamlit, which is what make
 Open:
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
   pipeline, trainer and API are wired and verified.
-- `rlhf-ppo` has one `xfail`: the PPO ratio can differ for one element because the generator
-  records the state as decoded text and the ratio re-tokenizes it, and detokenize/retokenize is not
-  always a round-trip. Carrying token ids through is the fix — PPO internals, so it waits.
 - The eleven predecessor repos are archived on GitHub. `backup/pre-squash-2026-08-23` tags the
   pre-history-rewrite tip; delete it once the current history is settled.
