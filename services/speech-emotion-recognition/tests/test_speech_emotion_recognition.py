@@ -16,8 +16,10 @@ from fastapi.testclient import TestClient
 from config import DATASET_SPECS, Config
 from data_prep.prepare_dataset import emotion_for_file
 from serving.api import app
+from speech import IGNORE_INDEX, collate, encode_target
 from speech_emotion_recognition.data import EmotionDataset
-from speech_emotion_recognition.training import IGNORE_INDEX, collate, compute_baseline
+from speech_emotion_recognition.models import load_processor
+from speech_emotion_recognition.training import compute_baseline
 
 
 def test_config_resolves_dataset_paths() -> None:
@@ -135,3 +137,32 @@ def test_predict_answers_503_without_a_checkpoint() -> None:
             pytest.skip("a checkpoint is present, so /predict should answer normally")
         response = client.post("/predict", json={"audio_data": "AAAA"})
     assert response.status_code == 503
+
+
+def test_the_label_is_what_the_first_decoder_step_predicts() -> None:
+    """Training and serving have to agree about which position holds the answer.
+
+    `serving/api.py` feeds the decoder a single [SOT] and reads `logits[0, -1]`, so
+    the emotion must be what the model emits at step one. Whisper builds its decoder
+    input by shifting labels right and prepending SOT, so labels of
+    `[<|emotion|>, <|endoftext|>]` give a decoder input of `[SOT, <|emotion|>]` --
+    step one predicts the emotion, which is exactly what serving reads.
+
+    This used to be the tokenizer's full output: [SOT, <|en|>, <|transcribe|>,
+    <|notimestamps|>, <|emotion|>, EOT]. That put a duplicate SOT at the front after
+    the shift and pushed the emotion four steps in, so serving read a position trained
+    to emit <|startoftranscript|>. Nothing errored -- it simply answered from the
+    wrong slot.
+    """
+    config = Config()
+    processor = load_processor(config)
+
+    labels = encode_target(processor, config.token_for(config.emotions[0]), prefix=False)
+    tokens = processor.tokenizer.convert_ids_to_tokens(labels.tolist())
+
+    assert tokens[0] == config.token_for(config.emotions[0])
+    assert tokens[-1] == "<|endoftext|>"
+    assert len(tokens) == 2
+
+    start = processor.tokenizer.convert_tokens_to_ids("<|startoftranscript|>")
+    assert int(labels[0]) != start, "a leading SOT would be doubled by the model's own shift"
