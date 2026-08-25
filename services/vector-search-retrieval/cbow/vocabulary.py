@@ -14,6 +14,7 @@ from torch import nn
 
 from ai_residency_common import get_logger, load_checkpoint, resolve_required
 from config import Config
+from word2vec import state_dict_from_legacy
 
 __all__ = [
     "CANONICAL_CBOW_CHECKPOINT",
@@ -160,9 +161,20 @@ def build_embedding_layer(config: Config) -> nn.Embedding:
     payload = load_checkpoint(checkpoint_path)
     state_dict = payload["model_state_dict"]
 
+    # `in_embed.weight` is what libs/word2vec writes. `emb.weight` is what this
+    # service's own CBOW wrote before the two implementations were merged -- the same
+    # matrix under the old name, so a checkpoint from either loads. The legacy branch
+    # goes away once the embeddings have been retrained.
+    if "in_embed.weight" in state_dict:
+        weights = state_dict["in_embed.weight"]
+    else:
+        weights = state_dict_from_legacy(state_dict, "vector-search-retrieval", strict=False)[
+            "in_embed.weight"
+        ]
+
     embedding_layer = nn.Embedding(len(words_to_ids), config.embedding_dim)
     with torch.no_grad():
-        embedding_layer.weight.copy_(state_dict["emb.weight"])
+        embedding_layer.weight.copy_(weights)
     embedding_layer.weight.requires_grad = False
     logger.info("Loaded CBOW embeddings from %s", checkpoint_path)
     return embedding_layer
