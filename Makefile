@@ -14,6 +14,15 @@ CHECKABLE := $(SERVICES)
 SERVICE ?=
 TARGETS := $(if $(SERVICE),$(SERVICE),$(SERVICES))
 
+# Libraries are checked alongside services, and derived rather than listed. The check
+# loops used to name libs/common and nothing else, so libs/vision-transformer was never
+# type-checked on its own and a new library would have been silently skipped.
+#
+# Defined after TARGETS on purpose: `:=` expands immediately, so referring to TARGETS
+# above this line silently yields an empty list and every check loop does nothing.
+LIBS := $(patsubst %/,%,$(dir $(wildcard libs/*/pyproject.toml)))
+MEMBERS := $(LIBS) $(addprefix services/,$(TARGETS))
+
 REGISTRY ?= roshb
 IMAGE_TAG ?= latest
 
@@ -36,17 +45,22 @@ lint: ## Check formatting and lint rules without changing anything
 	uv run ruff check .
 
 typecheck: ## Run mypy in strict mode, per member
-	@cd libs/common && uv run --project . mypy --config-file ../../pyproject.toml .
-	@for s in $(TARGETS); do \
-		echo "--- mypy services/$$s"; \
-		(cd services/$$s && uv run --project . mypy --config-file ../../pyproject.toml .) || exit 1; \
+	@for m in $(MEMBERS); do \
+		echo "--- mypy $$m"; \
+		(cd $$m && uv run --project . mypy --config-file ../../pyproject.toml .) || exit 1; \
 	done
 
+# pytest exits 5 on "no tests collected", which is a fact about a member rather than a
+# failure -- libs/vision-transformer has no suite of its own, being covered through the
+# two ViT services that use it.
 test: ## Run pytest, per member
-	@cd libs/common && uv run --project . pytest -q
-	@for s in $(filter $(CHECKABLE),$(TARGETS)); do \
-		echo "--- pytest services/$$s"; \
-		(cd services/$$s && uv run --project . pytest -q) || exit 1; \
+	@for m in $(MEMBERS); do \
+		if [ -d $$m/tests ]; then \
+			echo "--- pytest $$m"; \
+			(cd $$m && uv run --project . pytest -q) || exit 1; \
+		else \
+			echo "--- $$m has no tests/"; \
+		fi; \
 	done
 
 check: lint typecheck test ## Everything CI runs
