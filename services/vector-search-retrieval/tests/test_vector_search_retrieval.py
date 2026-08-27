@@ -366,3 +366,19 @@ def test_nearest_words_skips_a_word_outside_the_vocabulary(
     neighbours = nearest_words(model, "reagan", vocabulary, ids_to_words, top_k=3)
     assert len(neighbours) == 3
     assert all(word != "reagan" for word, _ in neighbours)
+
+
+def test_top_k_is_bounded() -> None:
+    """A bad `top_k` must not be reported as the datastore being down.
+
+    `top_k` goes straight into the Redis query. A negative value made Redis reject
+    the query, and the handler turned every `RedisError` into
+    `503 "Redis unreachable"` -- blaming the datastore for the caller's input, on a
+    Redis that was perfectly reachable. Validation catches it first.
+    """
+    from serving.api import MAX_TOP_K, app
+
+    client = TestClient(app)
+    assert client.post("/query", json={"text": "x", "top_k": MAX_TOP_K + 1}).status_code == 422
+    for bad in (0, -1):
+        assert client.post("/query", json={"text": "x", "top_k": bad}).status_code == 422

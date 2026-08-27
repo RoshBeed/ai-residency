@@ -21,7 +21,7 @@ import numpy as np
 import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ai_residency_common import add_health_routes, format_sse, get_logger, retrying, run_app
 from config import Config
@@ -40,11 +40,18 @@ logger = get_logger(__name__)
 _config = Config()
 
 
+# Bounded, not free. `top_k` goes straight into the Redis query, and a negative
+# value made Redis reject the *query* -- which this then reported as
+# "Redis unreachable: Syntax error", a 503 blaming the datastore for the caller's
+# input. Validation catches it first and answers 422.
+MAX_TOP_K = 100
+
+
 class QueryRequest(BaseModel):
     """Input for `/query`."""
 
     text: str
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=MAX_TOP_K)
 
 
 class QueryResult(BaseModel):
