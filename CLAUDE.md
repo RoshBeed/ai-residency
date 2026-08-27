@@ -208,7 +208,7 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
 publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
 then a Trivy scan of the published base whose results go to the job summary (SARIF upload
-needs Advanced Security, which a private repo does not have). 258 tests.
+needs Advanced Security, which a private repo does not have). 267 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
