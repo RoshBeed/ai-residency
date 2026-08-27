@@ -112,3 +112,23 @@ def test_caption_endpoint_rejects_data_that_is_not_an_image() -> None:
     client = TestClient(app)
     response = client.post("/caption", json={"image_data": "not-base64-image-data"})
     assert response.status_code == 422
+
+
+def test_max_new_tokens_is_bounded() -> None:
+    """An unbounded generation cap is an unbounded request.
+
+    `max_new_tokens` feeds the generation loop directly. Measured against the
+    deployed service, 100000 was still generating after 60 seconds and holding the
+    worker, where the default of 30 answered in about two. The bound rejects it at
+    validation time instead, before it reaches the model.
+    """
+    from serving.api import MAX_NEW_TOKENS
+
+    client = TestClient(app)
+    over = client.post("/caption", json={"image_data": "", "max_new_tokens": MAX_NEW_TOKENS + 1})
+    assert over.status_code == 422
+    for bad in (0, -1):
+        assert (
+            client.post("/caption", json={"image_data": "", "max_new_tokens": bad}).status_code
+            == 422
+        )
