@@ -90,6 +90,18 @@ Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.
 hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
 probe that cannot fail, which is the same as having none.
 
+**Every numeric request field is bounded.** A field that reaches a model or a
+datastore is an unbounded request unless `Field(ge=…, le=…)` says otherwise, and the
+bound belongs on the request model so validation rejects it before the work starts.
+Two measured examples of what "unbounded" costs: `max_new_tokens=100000` on
+`multimodal-captioning` was still generating after 60 seconds and holding a worker,
+where the default of 30 answers in about two; and `top_k=-1` on
+`vector-search-retrieval` made Redis reject the query, which the handler reported as
+`503 "Redis unreachable"` — blaming the datastore for the caller's input, on a Redis
+that was perfectly reachable. Both were reachable *only against a deployed cluster*:
+in-process the services 503 without loaded state, so the input never gets near the
+model or Redis. Probe the deployed thing, not just the imported app.
+
 **One status code for one class of failure: 422, never 400.** A request that is
 well-formed but whose content cannot be processed — undecodable base64, bytes that are
 not an image or audio, an empty prompt — answers 422 everywhere. This was settled once
