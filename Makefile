@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build push train serve clean help
+        base base-train build local push train serve clean help
 
 # Every member of the workspace. Derived from the directory listing, so a new
 # service is picked up the moment its directory exists.
@@ -104,6 +104,20 @@ base-train: ## Build the CUDA base image every training image builds FROM
 #   make build SERVICE=x BASE_IMAGE=roshb/ai-residency-base-serve:sha-abc123
 BASE_IMAGE ?= $(LOCAL_BASE)
 BASE_TRAIN_IMAGE ?= $(LOCAL_BASE_TRAIN)
+
+local: ## Build one service natively for this machine: make local SERVICE=word-embeddings
+	@test -n "$(SERVICE)" || (echo "Usage: make local SERVICE=<name>   ($(SERVICES))" && exit 1)
+	@# Published images are linux/amd64: the cluster, the GPU host and CI runners are
+	@# all x86-64, and building arm64 for them meant QEMU emulation costing 47% of CI
+	@# build time for an architecture nothing in the deployment path runs. On Apple
+	@# Silicon the published image therefore runs emulated. This builds it natively
+	@# instead -- base first, because a service image is only as native as what it
+	@# builds FROM.
+	$(MAKE) base
+	$(MAKE) build SERVICE=$(SERVICE)
+	@echo ""
+	@echo "Built natively for $$(docker version --format '{{.Server.Arch}}')."
+	@echo "Run it:  docker run --rm -p 8000:8000 $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG)"
 
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)

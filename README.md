@@ -48,6 +48,14 @@ roshb/ai-residency-speech-emotion-recognition-serve roshb/ai-residency-rlhf-ppo-
 ```
 
 `GET /openapi.json` on any of them lists its endpoints and request shapes.
+
+Published images are **`linux/amd64`** — the cluster, the GPU host and CI are all x86-64.
+On Apple Silicon they run under emulation, which works but is slow for inference. Build one
+natively instead:
+
+```bash
+make local SERVICE=word-embeddings
+```
 `vector-search-retrieval` is the one exception to running solo — it queries a Redis index, so it
 wants `make up SERVICES="vector-search-retrieval"` below, which starts Redis alongside it.
 

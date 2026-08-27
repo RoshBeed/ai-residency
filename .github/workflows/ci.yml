@@ -239,7 +239,13 @@ jobs:
           context: .
           file: Dockerfile.base
           push: true
-          platforms: linux/amd64,linux/arm64
+          # amd64 only. arm64 has to be emulated through QEMU on an x86 runner, and
+          # measured across a full publish that cost 8.4 minutes -- 47% of all build
+          # time -- to produce images nothing in the deployment path runs: the cluster,
+          # the GPU host and these runners are all x86-64. It existed so the images ran
+          # natively on an Apple Silicon laptop, and `make base && make build
+          # SERVICE=<name>` builds natively there in less time than CI was spending.
+          platforms: linux/amd64
           cache-from: type=gha,scope=base-serve
           cache-to: type=gha,scope=base-serve,mode=max
           tags: |
@@ -415,7 +421,8 @@ jobs:
           context: .
           file: services/${{ matrix.service }}/Dockerfile.serve
           push: true
-          platforms: linux/amd64,linux/arm64
+          # amd64 only -- see the note on the base image.
+          platforms: linux/amd64
           # The frontend builds FROM python:3.11-slim directly -- it has no ML
           # dependencies -- so it takes no base image.
           build-args: |

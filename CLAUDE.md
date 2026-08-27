@@ -139,6 +139,13 @@ that turns every readiness probe into a permanent 404. It deliberately does not 
 — several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
 imports the app and reads its route table instead.
 
+**Published images are `linux/amd64` only.** arm64 has to be emulated through QEMU on
+an x86 runner, and measured across a full publish it cost **8.4 minutes — 47% of all
+build time** — for an architecture nothing in the deployment path runs: the cluster, the
+GPU host and the runners are all x86-64. It existed so images ran natively on an Apple
+Silicon laptop; `make local SERVICE=<name>` builds natively there instead, base included,
+because a service image is only as native as what it builds `FROM`.
+
 **Unchanged images are retagged, not rebuilt.** The invariant is that one `sha-` tag
 names a *complete* set so `deploy/` can pin it — that needs a complete set of tags, not
 of builds. `docker buildx imagetools create -t img:sha-NEW img:latest` copies the
