@@ -86,6 +86,29 @@ def test_transcribe_rejects_invalid_base64() -> None:
 
 
 def test_transcribe_rejects_empty_audio() -> None:
+    """422, not 400: the repo settled on 422 for an undecodable payload."""
     client = TestClient(app)
     response = client.post("/transcribe", json={"audio_data": ""})
-    assert response.status_code == 400
+    assert response.status_code == 422
+
+
+def test_undecodable_audio_is_422_not_500() -> None:
+    """Valid base64 that is not audio is a malformed request, not a server error.
+
+    The guard used to catch `RuntimeError`. The decoder actually raises
+    `audioread.exceptions.NoBackendError`, which is a `DecodeError` and unrelated to
+    `RuntimeError`, so it escaped as a 500 -- and the streaming handler had no guard
+    on that call at all. Both now answer 422, matching what `decode_image` does at
+    the same boundary in `libs/common`.
+    """
+    import base64
+
+    payloads = {
+        "not base64": "not base64!!",
+        "empty": "",
+        "valid base64, not audio": base64.b64encode(b"\x00\x01\x02 not media").decode(),
+    }
+    client = TestClient(app)
+    for name, payload in payloads.items():
+        response = client.post("/transcribe", json={"audio_data": payload})
+        assert response.status_code == 422, f"{name} gave {response.status_code}"

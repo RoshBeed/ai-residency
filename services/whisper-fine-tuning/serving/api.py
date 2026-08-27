@@ -148,7 +148,7 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     audio_bytes = decode_base64_audio(request.audio_data)
 
     if not audio_bytes:
-        raise HTTPException(status_code=400, detail="audio_data decoded to empty bytes")
+        raise HTTPException(status_code=422, detail="audio_data decoded to empty bytes")
 
     tmp_path = None
     try:
@@ -160,7 +160,13 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
 
         try:
             base_output = decode_audio(whisper, tmp_path)
-        except RuntimeError as error:
+        except Exception as error:
+            # `Exception`, not `RuntimeError`. Valid base64 that is not audio reaches
+            # the decoder and comes back as `audioread.exceptions.NoBackendError` --
+            # a `DecodeError`, unrelated to `RuntimeError` -- so the narrower catch
+            # let it escape as a 500 for what is a malformed request. This matches
+            # what `decode_image` in libs/common does at the same boundary: any
+            # failure to decode caller-supplied bytes is the caller's error.
             raise HTTPException(
                 status_code=422, detail=f"Failed to transcribe audio: {error}"
             ) from error
@@ -220,7 +226,7 @@ def transcribe_stream(request: TranscribeRequest) -> StreamingResponse:
     """
     audio_bytes = decode_base64_audio(request.audio_data)
     if not audio_bytes:
-        raise HTTPException(status_code=400, detail="audio_data decoded to empty bytes")
+        raise HTTPException(status_code=422, detail="audio_data decoded to empty bytes")
 
     def _stream_worker(events: queue.Queue[dict[str, Any] | None]) -> None:
         tmp_path = None
@@ -231,7 +237,12 @@ def transcribe_stream(request: TranscribeRequest) -> StreamingResponse:
 
             whisper = load_whisper_model(config)
 
-            base_output = decode_audio(whisper, tmp_path)
+            try:
+                base_output = decode_audio(whisper, tmp_path)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=422, detail=f"Failed to transcribe audio: {error}"
+                ) from error
             events.put({"stage": "base_transcript", "text": base_output})
 
             features, labels = prepare_training_data(whisper, tmp_path, request.target_text)

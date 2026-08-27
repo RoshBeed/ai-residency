@@ -18,7 +18,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ai_residency_common import (
     add_health_routes,
@@ -84,13 +84,20 @@ app = FastAPI(
 )
 
 
+# Bounded, not free. `max_new_tokens` feeds a generation loop directly, so an
+# unbounded value is an unbounded request: 100000 was still generating after 60
+# seconds, holding a worker, where the default of 30 answers in about two. The cap
+# turns that into a 422 at validation time, before it reaches the model.
+MAX_NEW_TOKENS = 512
+
+
 class CaptionRequest(BaseModel):
     """Input for `/caption`."""
 
     image_data: str
     checkpoint_name: str = _config.checkpoint_name
     prompt: str = _config.prompt
-    max_new_tokens: int = _config.max_new_tokens
+    max_new_tokens: int = Field(default=_config.max_new_tokens, ge=1, le=MAX_NEW_TOKENS)
 
 
 class TokenTrace(BaseModel):

@@ -438,3 +438,19 @@ class TestTrainedPipeline:
         for pair in results["sa_pairs"]:
             for key in ("kl_div", "adjusted_reward", "value", "td_error", "advantage"):
                 assert math.isfinite(pair[key]), (key, pair)
+
+
+def test_empty_prompts_are_422_not_400() -> None:
+    """One status code for one class of failure, across every service in the repo.
+
+    A well-formed request whose content cannot be processed is 422. `rlhf-ppo` was
+    the last place still answering 400 for that, after the same alignment in the
+    image and audio services.
+    """
+    from fastapi.testclient import TestClient
+
+    from serving.api import app
+
+    with TestClient(app) as client:
+        assert client.post("/generate", json={"prompt": "   "}).status_code == 422
+        assert client.post("/ppo_step", json={"prompts": ["  "]}).status_code == 422
