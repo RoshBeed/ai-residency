@@ -90,6 +90,16 @@ Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.
 hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
 probe that cannot fail, which is the same as having none.
 
+**One status code for one class of failure: 422, never 400.** A request that is
+well-formed but whose content cannot be processed — undecodable base64, bytes that are
+not an image or audio, an empty prompt — answers 422 everywhere. This was settled once
+and then drifted three separate times, so it is written down: `decode_image` and
+`decode_audio` in `libs/common` are the reference, and a service that catches their
+failure must not downgrade it. Guard the *content*, not the envelope — every 500 found
+by probing this API surface was a guard that checked the wrapper and trusted what was
+inside it. `Image.open` had not read the pixels; the audio decoder raised a
+`DecodeError` rather than the `RuntimeError` that was caught.
+
 **Containers run as UID 1000, not root.** `Dockerfile.base` creates the `app` user; every service
 Dockerfile chowns its own directory and ends with `USER app`. The chart's
 `securityContext.runAsUser` is the same 1000, and it has to be — Kubernetes overrides the image's

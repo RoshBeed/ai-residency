@@ -339,7 +339,7 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         HTTPException: 400 if the prompt is empty.
     """
     if not request.prompt.strip():
-        raise HTTPException(status_code=400, detail="prompt must not be empty")
+        raise HTTPException(status_code=422, detail="prompt must not be empty")
 
     policy_model, tokenizer, device, _ = _load_policy_model()
     result = _generate(policy_model, tokenizer, device, request.prompt, request.max_new_tokens)
@@ -365,7 +365,7 @@ def ppo_step(request: PPOStepRequest) -> PPOStepResponse:
     """
     prompts = request.prompts if request.prompts else EXAMPLE_PROMPTS
     if not prompts or any(not prompt.strip() for prompt in prompts):
-        raise HTTPException(status_code=400, detail="prompts must be non-empty")
+        raise HTTPException(status_code=422, detail="prompts must be non-empty")
 
     trainer = _load_ppo_trainer()
     result: PPOStepResult | None = None
@@ -412,7 +412,7 @@ def ppo_step_stream(request: PPOStepRequest) -> StreamingResponse:
     """
     prompts = request.prompts if request.prompts else EXAMPLE_PROMPTS
     if not prompts or any(not prompt.strip() for prompt in prompts):
-        raise HTTPException(status_code=400, detail="prompts must be non-empty")
+        raise HTTPException(status_code=422, detail="prompts must be non-empty")
 
     events: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
