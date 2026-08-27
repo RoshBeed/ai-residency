@@ -151,6 +151,10 @@ securityContext:
 
 frontend:
   image: roshb/ai-residency-frontend
+  # Which pages the UI shows. Unset means every backend this release deploys, which
+  # is what you want almost always -- deploy one backend and the UI is that one
+  # system. Set it only to show fewer pages than there are backends running.
+  pages: []
   containerPort: 8501
   servicePort: 8500
   # Streamlit's own health endpoint -- the frontend is not a FastAPI backend and has
