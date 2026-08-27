@@ -43,6 +43,7 @@ jobs:
       members: ${{ steps.detect.outputs.members }}
       all: ${{ steps.detect.outputs.all }}
       any: ${{ steps.detect.outputs.any }}
+      shared: ${{ steps.detect.outputs.shared }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -74,10 +75,17 @@ jobs:
           # list as the loop's last command makes the whole substitution exit 1,
           # which killed this step whenever the *last* service was unchanged --
           # and on any push whose diff is empty.
+          # A shared input -- the libraries, the lockfile, pyproject, CI itself or any
+          # Dockerfile -- is in every image, so it invalidates all of them including
+          # the base. Recorded as its own output because publishing now uses it to
+          # decide whether an image can be retagged instead of rebuilt.
+          shared=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            shared=true
             selected="$all"
             selected_members="$members"
-          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/)'; then
+          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/|Dockerfile)'; then
+            shared=true
             selected="$all"
             selected_members="$members"
           else
@@ -104,6 +112,7 @@ jobs:
           echo "services=$json" >> "$GITHUB_OUTPUT"
           echo "members=$members_json" >> "$GITHUB_OUTPUT"
           echo "any=$([ -n "$selected_members" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "shared=$shared" >> "$GITHUB_OUTPUT"
 
           # Checks are narrowed by the path filter; publishing is not. Every push to
           # main publishes all ten images under one sha- tag, so that tag names a
@@ -206,7 +215,26 @@ jobs:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Same rebuild-or-retag question as the service images, and the base is the
+      # single most expensive one -- everything else caches from it. It changes only
+      # when its Dockerfile or the dependency set does, which is exactly what the
+      # `all` selection already means.
+      - name: Rebuild or retag
+        id: plan
+        run: |
+          set -euo pipefail
+          image='${{ env.REGISTRY }}/ai-residency-base-serve'
+          if [ '${{ needs.changes.outputs.shared }}' = 'true' ] \
+             || ! docker manifest inspect "$image:latest" >/dev/null 2>&1; then
+            echo "retag=false" >> "$GITHUB_OUTPUT"
+            echo "rebuilding the base"
+          else
+            echo "retag=true" >> "$GITHUB_OUTPUT"
+            echo "base unchanged: retagging"
+          fi
+
       - uses: docker/build-push-action@v7
+        if: steps.plan.outputs.retag != 'true'
         with:
           context: .
           file: Dockerfile.base
@@ -217,6 +245,14 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
             ${{ env.REGISTRY }}/ai-residency-base-serve:latest
+
+      - name: Retag the unchanged base
+        if: steps.plan.outputs.retag == 'true'
+        run: |
+          set -euo pipefail
+          image='${{ env.REGISTRY }}/ai-residency-base-serve'
+          docker buildx imagetools create -t "$image:sha-${{ github.sha }}" "$image:latest"
+          echo "::notice::base unchanged -- retagged rather than rebuilt"
 
   images:
     name: Publish ${{ matrix.service }}
@@ -254,6 +290,43 @@ jobs:
             echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
           fi
 
+      # Rebuild, or just point a new tag at the manifest we already have?
+      #
+      # The invariant is that one sha- tag names a *complete* set, so `deploy/` can pin
+      # it. That needs a complete set of tags, not a complete set of builds -- and a
+      # registry can add a tag to an existing manifest server-side, in seconds, without
+      # rebuilding or re-pushing a byte.
+      #
+      # This used to rebuild all ten every push, on the assumption the layer cache made
+      # unchanged images "nearly free". Measured, it was not: publishing was 78% of this
+      # repo's Actions minutes at ~3 min per image, because a cache hit still pays for
+      # QEMU-emulated arm64, cache transfer and manifest assembly. A docs-only commit
+      # was costing half an hour to republish ten identical images.
+      #
+      # Rebuild when this service actually changed, or when it has no `latest` to copy
+      # (a service published for the first time). `changes` already treats libs/, the
+      # lockfile, pyproject, .github/ and any Dockerfile as touching everything, so the
+      # base image and shared code cannot go stale underneath a retag.
+      - name: Rebuild or retag
+        id: plan
+        run: |
+          set -euo pipefail
+          image='${{ steps.image.outputs.name }}'
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
+            reason='manual run'
+          elif echo '${{ needs.changes.outputs.services }}' \
+               | jq -e --arg s '${{ matrix.service }}' 'index($s)' >/dev/null; then
+            reason='source changed'
+          elif ! docker manifest inspect "$image:latest" >/dev/null 2>&1; then
+            reason='never published'
+          else
+            echo "retag=true" >> "$GITHUB_OUTPUT"
+            echo "unchanged: retagging $image:latest as sha-${{ github.sha }}"
+            exit 0
+          fi
+          echo "retag=false" >> "$GITHUB_OUTPUT"
+          echo "rebuilding ($reason)"
+
       # Both tags come off one commit, which is what makes a deployment
       # reproducible: deploy/ pins the SHA, not a moving `latest`. BASE_IMAGE is
       # pinned to this commit's base for the same reason.
@@ -262,6 +335,7 @@ jobs:
       # a `push: true` build produces no local image to test, which is how this
       # pipeline came to publish images nothing had ever executed.
       - name: Build for the smoke test
+        if: steps.plan.outputs.retag != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -288,7 +362,7 @@ jobs:
       # in their lifespan, which does not fit a runner. Importing the app and reading its
       # route table proves the contract is wired without paying for the weights.
       - name: Smoke-test the image
-        if: matrix.service != 'frontend'
+        if: steps.plan.outputs.retag != 'true' && matrix.service != 'frontend'
         run: |
           set -euo pipefail
           image=smoke:${{ matrix.service }}
@@ -319,7 +393,7 @@ jobs:
       # The frontend is a Streamlit app, not a FastAPI backend, so it gets the checks
       # that do apply to it: non-root, and a page flow that imports.
       - name: Smoke-test the frontend image
-        if: matrix.service == 'frontend'
+        if: steps.plan.outputs.retag != 'true' && matrix.service == 'frontend'
         run: |
           set -euo pipefail
           image=smoke:frontend
@@ -335,6 +409,7 @@ jobs:
           '
 
       - name: Build and push
+        if: steps.plan.outputs.retag != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -352,6 +427,17 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
             ${{ steps.image.outputs.name }}:latest
+
+      # Server-side manifest copy: no build, no layer upload, both architectures. The
+      # sha- tag ends up naming the identical image `latest` already pointed at, which
+      # is the whole claim -- this service did not change, so its image did not either.
+      - name: Retag the unchanged image
+        if: steps.plan.outputs.retag == 'true'
+        run: |
+          set -euo pipefail
+          image='${{ steps.image.outputs.name }}'
+          docker buildx imagetools create -t "$image:sha-${{ github.sha }}" "$image:latest"
+          echo "::notice::${{ matrix.service }} unchanged -- retagged rather than rebuilt"
 
   # A published image is the artifact people actually run, so it is the thing worth
   # scanning -- a lockfile audit misses everything the base OS contributes.

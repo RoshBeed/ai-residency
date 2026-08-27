@@ -139,6 +139,17 @@ that turns every readiness probe into a permanent 404. It deliberately does not 
 — several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
 imports the app and reads its route table instead.
 
+**Unchanged images are retagged, not rebuilt.** The invariant is that one `sha-` tag
+names a *complete* set so `deploy/` can pin it — that needs a complete set of tags, not
+of builds. `docker buildx imagetools create -t img:sha-NEW img:latest` copies the
+multi-arch manifest server-side: measured at **0.19s against 3 minutes for a rebuild**,
+same digest, both architectures. CI rebuilds an image only when that service changed,
+when a shared input moved (`changes.outputs.shared` — libs, `uv.lock`, `pyproject.toml`,
+`.github/`, any Dockerfile), or when it has never been published. The old comment
+claiming the layer cache made republishing "nearly free" was an assumption, and
+measurement disagreed: publishing was **78% of this repo's Actions minutes**, because a
+cache hit still pays for QEMU-emulated arm64, cache transfer and manifest assembly.
+
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
 there are twelve images). CI pushes the serving base and *all ten* service images on every push to
 `main`, gated behind the `PUBLISH_IMAGES` repository variable and the `DOCKERHUB_TOKEN` secret.
