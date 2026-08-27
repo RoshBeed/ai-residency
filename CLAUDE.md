@@ -90,6 +90,15 @@ Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.
 hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
 probe that cannot fail, which is the same as having none.
 
+**The UI lives in one container, never in a backend.** Backends are HTTP APIs and
+nothing else — no Streamlit, no templates, no static pages. The frontend image is the
+only place Streamlit runs, and `AI_RESIDENCY_PAGES` tells it which pages to show, so
+the same image is the nine-system hub or the UI for one system. `make up
+SERVICES="..."` sets it from what it started. Putting a page in a backend would mean
+either Streamlit in all nine images or a second UI codebase in HTML/JS, and the
+per-service `/docs` FastAPI already generates covers the "just poke this one service"
+case for free.
+
 **Every numeric request field is bounded.** A field that reaches a model or a
 datastore is an unbounded request unless `Field(ge=…, le=…)` says otherwise, and the
 bound belongs on the request model so validation rejects it before the work starts.

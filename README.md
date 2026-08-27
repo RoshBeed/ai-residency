@@ -70,14 +70,21 @@ If `make up` reports `Bind for 0.0.0.0:8500 failed`, something else already hold
 most likely a Helm release of this same chart, whose `LoadBalancer` Service claims it even with
 its pods scaled to zero. `make helm-uninstall` frees it.
 
-### If you don't have ~17GB of RAM
+### One system at a time, or if you don't have ~17GB of RAM
 
-Everything at once is heavy, so run the frontend against a subset instead. The pages you didn't
-start say so rather than erroring.
+Everything at once is heavy. Name the systems you want and you get a UI for those, not a hub
+with eight dead pages:
 
 ```bash
 make up SERVICES="word-embeddings vit-classifier"
 ```
+
+The frontend image is the same one the hub runs — it is told which pages to show through
+`AI_RESIDENCY_PAGES`, which `make up` sets from `SERVICES`. **No backend contains any UI.**
+Streamlit runs in exactly one container whether you start one system or all nine, and the
+backends stay pure HTTP APIs that anything can call. That is also why the single-service
+`docker run` further up needs no frontend at all to be useful: `/docs` on any backend is a
+working interface generated from its own OpenAPI schema.
 
 | Service | Resident once loaded | Notes |
 |---|--:|---|
