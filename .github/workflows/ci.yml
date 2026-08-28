@@ -472,18 +472,18 @@ jobs:
   # Reports rather than blocks (exit-code 0): a base-image CVE with no fix available
   # should be visible, not a merge gate. ignore-unfixed drops the ones nothing can be
   # done about.
-  # Not on the publish path. Riding every push meant re-scanning an image that had
-  # not changed, while a quiet week scanned nothing at all -- which is backwards,
-  # because the thing a scan catches is a CVE *disclosed* after the image was built.
-  # Weekly against `:latest` fixes both: it stops blocking merges, and it keeps
-  # looking at the image people are actually running.
+  # On every publish *and* weekly, which are answering different questions. A push
+  # scan asks "did this change introduce something"; the weekly one asks "has anything
+  # been disclosed against what we already shipped" -- and only the second catches a
+  # CVE published against an image that has not changed in months. Push-only leaves a
+  # dormant repo permanently unscanned; weekly-only leaves a new image unscanned until
+  # Monday. Together they cost about 55 job-minutes a year.
   scan:
     name: Scan the published base image
     needs: images-base
     if: >-
       always()
-      && (github.event_name == 'schedule'
-          || (needs.images-base.result == 'success' && github.event_name == 'workflow_dispatch'))
+      && (github.event_name == 'schedule' || needs.images-base.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
