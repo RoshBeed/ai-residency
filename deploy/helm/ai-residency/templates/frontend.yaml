@@ -28,7 +28,7 @@ spec:
       {{- include "ai-residency.podSecurityContext" . | nindent 6 }}
       containers:
         - name: frontend
-          image: "{{ .Values.frontend.image }}:{{ .Values.image.tag }}"
+          image: "{{ include "ai-residency.image" (dict "spec" .Values.frontend "ctx" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" . | nindent 10 }}
           ports:

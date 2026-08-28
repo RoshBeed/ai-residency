@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images pin-images \
+.PHONY: pull up down logs status index-retrieval load-images pin-images local-cluster \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -111,6 +111,24 @@ pin-images: ## Repoint compose and the chart at a published tag: make pin-images
 	@sed -i '' -E 's|(image: roshb/ai-residency-[a-z0-9-]+):\$$\{IMAGE_TAG:-[^}]*\}|\1:$$\{IMAGE_TAG:-$(TAG)\}|' compose/docker-compose.yml
 	@sed -i '' -E 's|^  tag: .*|  tag: $(TAG)|' helm/ai-residency/values.yaml
 	@echo "Pinned compose and the chart to $(TAG)"
+
+local-cluster: ## Build every image natively and run the cluster from them: make local-cluster [SERVICES="a b"]
+	@# Published images are linux/amd64, and Docker Desktop's Kubernetes node is arm64
+	@# on Apple Silicon -- it cannot pull them at all. So a local cluster runs images
+	@# built here. Three steps that are easy to get wrong separately: build natively,
+	@# push them into the node's *own* image store (a `docker build` on the host is
+	@# invisible to it), and install with useDigest=false so the chart asks for the
+	@# tag those images carry rather than a published digest they will never match.
+	$(MAKE) -C .. base
+	@for s in $(if $(SERVICES),$(SERVICES),$(TARGETS)); do \
+		echo "==> building $$s"; \
+		$(MAKE) -C .. build SERVICE=$$s || exit 1; \
+	done
+	$(MAKE) load-images
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) --create-namespace \
+		$(HELM_SECRETS) --set image.useDigest=false --set image.tag=$(IMAGE_TAG)
+	@echo ""
+	@echo "Cluster running locally-built images. Frontend: http://localhost:8500"
 
 load-images: ## Import locally-built images into the cluster node's own image store
 	@for img in $(IMAGES); do \

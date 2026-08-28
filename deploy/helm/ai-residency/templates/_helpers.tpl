@@ -77,3 +77,24 @@ hostPath:
   type: {{ $vol.type }}
 {{- end }}
 {{- end -}}
+
+{{/*
+An image reference, by digest when the manifest has one.
+
+`deploy/images.lock` names the exact image each service runs, and `pin_images.py`
+propagates it here as a per-service `digest`. A digest cannot be moved, and it is
+per-image -- which a single shared `image.tag` could not be. `image.useDigest=false` falls back to the tag, which is what a local cluster needs:
+images built on this machine have their own digests, and published amd64 images cannot
+run on Docker Desktop's Kubernetes node at all -- that node is arm64 on Apple Silicon.
+
+Takes a dict: `spec` (the service's own values) and `ctx` (the root context).
+*/}}
+{{- define "ai-residency.image" -}}
+{{- $spec := .spec -}}
+{{- $ctx := .ctx -}}
+{{- if and $spec.digest $ctx.Values.image.useDigest -}}
+{{ $spec.image }}@{{ $spec.digest }}
+{{- else -}}
+{{ $spec.image }}:{{ $ctx.Values.image.tag }}
+{{- end -}}
+{{- end -}}

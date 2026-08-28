@@ -146,6 +146,21 @@ GPU host and the runners are all x86-64. It existed so images ran natively on an
 Silicon laptop; `make local SERVICE=<name>` builds natively there instead, base included,
 because a service image is only as native as what it builds `FROM`.
 
+**`deploy/images.lock` is the manifest; digests, not a shared tag.** A tag describes
+*one image's* content. `deploy/` needed something describing *the whole set*, and
+overloading one `image.tag` across eleven images only holds while every image changes on
+every commit — the moment one service changes and eight do not, the tag either lies or
+has to be minted for images that did not earn it. The lock names each image by immutable
+digest; `python deploy/pin_images.py` propagates it into the chart and compose, and
+`--check` fails on drift. `git log deploy/images.lock` is the deployment history.
+
+**A local cluster runs locally-built images.** Published images are `linux/amd64` and
+Docker Desktop's Kubernetes node is **arm64** on Apple Silicon, so it cannot pull them at
+all — `make -C deploy local-cluster` builds natively, loads into the node's own image
+store, and installs with `image.useDigest=false` so the chart asks for the tag those
+images carry rather than a published digest they will never match. All three steps are
+needed and each is easy to forget separately.
+
 **Unchanged images are retagged, not rebuilt.** The invariant is that one `sha-` tag
 names a *complete* set so `deploy/` can pin it — that needs a complete set of tags, not
 of builds. `docker buildx imagetools create -t img:sha-NEW img:latest` copies the

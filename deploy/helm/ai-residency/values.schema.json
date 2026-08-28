@@ -55,6 +55,10 @@
             "IfNotPresent",
             "Never"
           ]
+        },
+        "useDigest": {
+          "type": "boolean",
+          "description": "Pin by digest from images.lock; false uses tag (local clusters)."
         }
       }
     },
@@ -216,6 +220,11 @@
             "type": "string"
           },
           "description": "Pages the UI shows; empty means every backend this release deploys."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
         }
       }
     },
@@ -341,6 +350,11 @@
                 }
               }
             }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
           }
         }
       }
