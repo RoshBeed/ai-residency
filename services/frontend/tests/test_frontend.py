@@ -16,7 +16,7 @@ from PIL import Image
 
 import client
 import components
-from projects import API_URLS, PAGES, PROJECTS, tag_link
+from projects import ALL_PAGES, API_URLS, PAGES, PROJECTS, tag_link
 
 # ---------------------------------------------------------------------------
 # Project metadata
@@ -240,3 +240,61 @@ def test_is_ready_is_true_for_200() -> None:
 def test_is_ready_is_false_when_the_backend_is_down() -> None:
     with patch("client.requests.get", side_effect=requests.exceptions.ConnectionError()):
         assert client.is_ready("word-embeddings") is False
+
+
+# ---------------------------------------------------------------------------
+# Page selection -- one image, hub or single system
+# ---------------------------------------------------------------------------
+
+
+def _pages_with(value: str | None) -> dict[str, str]:
+    """Reload `projects` with AI_RESIDENCY_PAGES set, and restore the environment."""
+    import importlib
+    import os
+
+    import projects
+
+    before = os.environ.get("AI_RESIDENCY_PAGES")
+    if value is None:
+        os.environ.pop("AI_RESIDENCY_PAGES", None)
+    else:
+        os.environ["AI_RESIDENCY_PAGES"] = value
+    try:
+        return dict(importlib.reload(projects).PAGES)
+    finally:
+        if before is None:
+            os.environ.pop("AI_RESIDENCY_PAGES", None)
+        else:
+            os.environ["AI_RESIDENCY_PAGES"] = before
+        importlib.reload(projects)
+
+
+def test_unset_shows_every_page() -> None:
+    """The hub is the default; nothing about it changes."""
+    assert _pages_with(None) == ALL_PAGES
+
+
+def test_one_name_shows_one_page() -> None:
+    """Running a single system gives a UI for that system, not a hub with dead pages."""
+    assert list(_pages_with("word-embeddings")) == ["word-embeddings"]
+
+
+def test_names_may_be_comma_or_space_separated_and_keep_a_stable_order() -> None:
+    """However the variable is written, the sidebar reads the same."""
+    expected = [name for name in ALL_PAGES if name in {"word-embeddings", "rlhf-ppo"}]
+    assert list(_pages_with("rlhf-ppo,word-embeddings")) == expected
+    assert list(_pages_with("word-embeddings rlhf-ppo")) == expected
+
+
+def test_an_unknown_name_refuses_to_start() -> None:
+    """A typo that silently shows the wrong set is worse to debug than a hard failure."""
+    with pytest.raises(ValueError, match="not services"):
+        _pages_with("word-embeddigns")
+
+
+def test_selected_pages_all_have_backends_and_metadata() -> None:
+    """Whatever subset is selected stays internally consistent."""
+    for value in (None, "vit-classifier", "rlhf-ppo,content-scoring"):
+        pages = _pages_with(value)
+        assert set(pages) <= set(API_URLS)
+        assert set(pages) <= set(PROJECTS)

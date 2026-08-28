@@ -60,6 +60,7 @@ SUBSET := $(if $(filter vector-search-retrieval,$(SERVICES)),redis) $(SERVICES)
 
 up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-classifier"
 	@if [ -n "$(SERVICES)" ]; then \
+		AI_RESIDENCY_PAGES="$(SERVICES)" \
 		docker compose -f compose/docker-compose.yml up -d --no-deps frontend $(SUBSET); \
 	else \
 		docker compose -f compose/docker-compose.yml up -d; \
@@ -68,7 +69,7 @@ up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-clas
 	@echo "Frontend: http://localhost:8500"
 	@if [ -n "$(SERVICES)" ]; then \
 		echo "Running:  $(SUBSET)"; \
-		echo "The other pages will say their backend is not running, which is correct."; \
+		echo "The UI shows only these pages."; \
 	else \
 		echo "Backends: $(BACKENDS)"; \
 	fi

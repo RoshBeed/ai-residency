@@ -90,6 +90,15 @@ Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.
 hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
 probe that cannot fail, which is the same as having none.
 
+**The UI lives in one container, never in a backend.** Backends are HTTP APIs and
+nothing else — no Streamlit, no templates, no static pages. The frontend image is the
+only place Streamlit runs, and `AI_RESIDENCY_PAGES` tells it which pages to show, so
+the same image is the nine-system hub or the UI for one system. `make up
+SERVICES="..."` sets it from what it started. Putting a page in a backend would mean
+either Streamlit in all nine images or a second UI codebase in HTML/JS, and the
+per-service `/docs` FastAPI already generates covers the "just poke this one service"
+case for free.
+
 **Every numeric request field is bounded.** A field that reaches a model or a
 datastore is an unbounded request unless `Field(ge=…, le=…)` says otherwise, and the
 bound belongs on the request model so validation rejects it before the work starts.
@@ -129,6 +138,24 @@ builds green and fails at runtime: a `USER` whose file ownership is wrong, and a
 that turns every readiness probe into a permanent 404. It deliberately does not start the server
 — several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
 imports the app and reads its route table instead.
+
+**Published images are `linux/amd64` only.** arm64 has to be emulated through QEMU on
+an x86 runner, and measured across a full publish it cost **8.4 minutes — 47% of all
+build time** — for an architecture nothing in the deployment path runs: the cluster, the
+GPU host and the runners are all x86-64. It existed so images ran natively on an Apple
+Silicon laptop; `make local SERVICE=<name>` builds natively there instead, base included,
+because a service image is only as native as what it builds `FROM`.
+
+**Unchanged images are retagged, not rebuilt.** The invariant is that one `sha-` tag
+names a *complete* set so `deploy/` can pin it — that needs a complete set of tags, not
+of builds. `docker buildx imagetools create -t img:sha-NEW img:latest` copies the
+multi-arch manifest server-side: measured at **0.19s against 3 minutes for a rebuild**,
+same digest, both architectures. CI rebuilds an image only when that service changed,
+when a shared input moved (`changes.outputs.shared` — libs, `uv.lock`, `pyproject.toml`,
+`.github/`, any Dockerfile), or when it has never been published. The old comment
+claiming the layer cache made republishing "nearly free" was an assumption, and
+measurement disagreed: publishing was **78% of this repo's Actions minutes**, because a
+cache hit still pays for QEMU-emulated arm64, cache transfer and manifest assembly.
 
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
 there are twelve images). CI pushes the serving base and *all ten* service images on every push to

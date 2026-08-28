@@ -237,6 +237,11 @@ services:
       WHISPER_FINE_TUNING_API_URL: http://whisper-fine-tuning:8000
       SPEECH_EMOTION_RECOGNITION_API_URL: http://speech-emotion-recognition:8000
       RLHF_PPO_API_URL: http://rlhf-ppo:8000
+      # Which pages this instance shows. Empty means all of them -- the portfolio
+      # hub. `make up SERVICES="word-embeddings"` sets it to what it started, so
+      # running one system gives a UI for that system rather than a hub with eight
+      # dead pages. The frontend image is the same either way; no backend grows a UI.
+      AI_RESIDENCY_PAGES: ${AI_RESIDENCY_PAGES:-}
     ports:
       - "8500:8501"
 
