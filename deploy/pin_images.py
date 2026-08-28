@@ -11,14 +11,16 @@ do not, the tag either lies or has to be minted for images that did not earn it.
 Digests also cannot be moved, which a tag can. `git log deploy/images.lock` is the
 deployment history and `git revert` is the rollback.
 
-    python deploy/pin_images.py           # regenerate values.yaml and compose
-    python deploy/pin_images.py --check    # fail if they have drifted
+    python deploy/pin_images.py                       # regenerate values.yaml and compose
+    python deploy/pin_images.py --check               # fail if they have drifted
+    python deploy/pin_images.py --update a b --sha X  # resolve digests for a and b
 """
 
 import argparse
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -31,6 +33,51 @@ def load() -> dict[str, str]:
     """The manifest: service name to `sha256:...`."""
     data = json.loads(LOCK.read_text())
     return dict(data["images"])
+
+
+def repo_for(name: str) -> str:
+    """The Docker Hub repository for a service name."""
+    if name in {"base-serve", "frontend"}:
+        return "roshb/ai-residency-%s" % name
+    return "roshb/ai-residency-%s-serve" % name
+
+
+def resolve(name: str, sha: str) -> str:
+    """The digest the registry currently has for `name` at `sha-<commit>`.
+
+    Only images CI actually rebuilt have that tag. Everything else keeps the digest
+    already in the lock, which is the point: an unchanged image needs no new tag, and
+    the manifest is what carries "the set", so nothing has to be minted for it.
+    """
+    ref = "%s:sha-%s" % (repo_for(name), sha)
+    out = subprocess.run(
+        ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{.Manifest.Digest}}"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    digest = out.stdout.strip()
+    if not digest.startswith("sha256:"):
+        raise SystemExit("could not resolve %s\n%s" % (ref, out.stderr.strip()[:400]))
+    return digest
+
+
+def update(names: list[str], sha: str) -> bool:
+    """Point `names` at whatever the registry has for them at `sha`. Returns True if changed."""
+    data = json.loads(LOCK.read_text())
+    images = data["images"]
+    changed = False
+    for name in names:
+        digest = resolve(name, sha)
+        if images.get(name) != digest:
+            print("%-30s %s -> %s" % (name, str(images.get(name))[:19], digest[:19]))
+            images[name] = digest
+            changed = True
+        else:
+            print("%-30s unchanged" % name)
+    if changed:
+        LOCK.write_text(json.dumps(data, indent=2) + "\n")
+    return changed
 
 
 def render_values(text: str, images: dict[str, str]) -> str:
@@ -73,7 +120,17 @@ def render_compose(text: str, images: dict[str, str]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail on drift instead of writing")
+    parser.add_argument("--update", nargs="*", metavar="NAME", help="images to re-resolve")
+    parser.add_argument("--sha", help="commit whose sha- tag holds the rebuilt images")
     args = parser.parse_args()
+
+    if args.update is not None:
+        if not args.sha:
+            parser.error("--update needs --sha")
+        if not args.update:
+            print("nothing was rebuilt; the manifest already describes this commit")
+        else:
+            update(args.update, args.sha)
 
     images = load()
     drifted = []

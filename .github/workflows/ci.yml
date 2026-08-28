@@ -83,7 +83,7 @@ jobs:
           # A shared input -- the libraries, the lockfile, pyproject, CI itself or any
           # Dockerfile -- is in every image, so it invalidates all of them including
           # the base. Recorded as its own output because publishing now uses it to
-          # decide whether an image can be retagged instead of rebuilt.
+          # decide which images to rebuild and which the manifest already describes.
           shared=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             shared=true
@@ -222,26 +222,9 @@ jobs:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Same rebuild-or-retag question as the service images, and the base is the
-      # single most expensive one -- everything else caches from it. It changes only
-      # when its Dockerfile or the dependency set does, which is exactly what the
-      # `all` selection already means.
-      - name: Rebuild or retag
-        id: plan
-        run: |
-          set -euo pipefail
-          image='${{ env.REGISTRY }}/ai-residency-base-serve'
-          if [ '${{ needs.changes.outputs.shared }}' = 'true' ] \
-             || ! docker manifest inspect "$image:latest" >/dev/null 2>&1; then
-            echo "retag=false" >> "$GITHUB_OUTPUT"
-            echo "rebuilding the base"
-          else
-            echo "retag=true" >> "$GITHUB_OUTPUT"
-            echo "base unchanged: retagging"
-          fi
-
+      # Only when a shared input moved -- the manifest keeps the digest otherwise.
       - uses: docker/build-push-action@v7
-        if: steps.plan.outputs.retag != 'true'
+        if: needs.changes.outputs.shared == 'true'
         with:
           context: .
           file: Dockerfile.base
@@ -259,13 +242,6 @@ jobs:
             ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
             ${{ env.REGISTRY }}/ai-residency-base-serve:latest
 
-      - name: Retag the unchanged base
-        if: steps.plan.outputs.retag == 'true'
-        run: |
-          set -euo pipefail
-          image='${{ env.REGISTRY }}/ai-residency-base-serve'
-          docker buildx imagetools create -t "$image:sha-${{ github.sha }}" "$image:latest"
-          echo "::notice::base unchanged -- retagged rather than rebuilt"
 
   images:
     name: Publish ${{ matrix.service }}
@@ -275,14 +251,14 @@ jobs:
     # unless the condition contains a status function. Without it, a docs-only commit
     # published the base image and none of the ten that depend on it -- a sha- tag
     # naming an incomplete set, which is exactly what publishing-all exists to avoid.
-    if: always() && needs.images-base.result == 'success'
+    if: always() && needs.images-base.result != 'failure' && needs.images-base.result != 'cancelled'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # `all`, not `services`: see the note in the detect step. One sha- tag has to
         # name every image, or pinning it in deploy/ does not describe a real set.
-        service: ${{ fromJSON(needs.changes.outputs.all) }}
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -294,6 +270,23 @@ jobs:
 
       # The frontend's image has no -serve suffix: it is the only service with one
       # image rather than a serving/training pair.
+      - name: Base image
+        id: base
+        run: |
+          set -euo pipefail
+          # By digest from the manifest, not by `sha-<commit>`: that tag exists only
+          # when this commit rebuilt the base. The digest is always correct, and the
+          # base a service was built against is then recorded rather than implied.
+          if [ '${{ needs.changes.outputs.shared }}' = 'true' ]; then
+            # The base was rebuilt in this run, and the manifest is not updated until
+            # after these builds finish -- so the lock still names the *previous* base.
+            # This commit's tag is the only correct reference here.
+            echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            digest=$(python -c "import json;print(json.load(open('deploy/images.lock'))['images']['base-serve'])")
+            echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve@$digest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Image name
         id: image
         run: |
@@ -303,52 +296,15 @@ jobs:
             echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
           fi
 
-      # Rebuild, or just point a new tag at the manifest we already have?
-      #
-      # The invariant is that one sha- tag names a *complete* set, so `deploy/` can pin
-      # it. That needs a complete set of tags, not a complete set of builds -- and a
-      # registry can add a tag to an existing manifest server-side, in seconds, without
-      # rebuilding or re-pushing a byte.
-      #
-      # This used to rebuild all ten every push, on the assumption the layer cache made
-      # unchanged images "nearly free". Measured, it was not: publishing was 78% of this
-      # repo's Actions minutes at ~3 min per image, because a cache hit still pays for
-      # QEMU-emulated arm64, cache transfer and manifest assembly. A docs-only commit
-      # was costing half an hour to republish ten identical images.
-      #
-      # Rebuild when this service actually changed, or when it has no `latest` to copy
-      # (a service published for the first time). `changes` already treats libs/, the
-      # lockfile, pyproject, .github/ and any Dockerfile as touching everything, so the
-      # base image and shared code cannot go stale underneath a retag.
-      - name: Rebuild or retag
-        id: plan
-        run: |
-          set -euo pipefail
-          image='${{ steps.image.outputs.name }}'
-          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
-            reason='manual run'
-          elif echo '${{ needs.changes.outputs.services }}' \
-               | jq -e --arg s '${{ matrix.service }}' 'index($s)' >/dev/null; then
-            reason='source changed'
-          elif ! docker manifest inspect "$image:latest" >/dev/null 2>&1; then
-            reason='never published'
-          else
-            echo "retag=true" >> "$GITHUB_OUTPUT"
-            echo "unchanged: retagging $image:latest as sha-${{ github.sha }}"
-            exit 0
-          fi
-          echo "retag=false" >> "$GITHUB_OUTPUT"
-          echo "rebuilding ($reason)"
-
-      # Both tags come off one commit, which is what makes a deployment
-      # reproducible: deploy/ pins the SHA, not a moving `latest`. BASE_IMAGE is
-      # pinned to this commit's base for the same reason.
+      # `sha-<commit>` exists only for images this commit actually rebuilt, and that
+      # is now fine: `deploy/images.lock` names the set by digest, so an unchanged
+      # image needs no tag minted for a commit it had nothing to do with. The tag is
+      # how the manifest step finds what was just built.
       # Built into the runner's own docker first, native amd64 only, so the next step
       # has something to actually run. The multi-arch push happens after it passes --
       # a `push: true` build produces no local image to test, which is how this
       # pipeline came to publish images nothing had ever executed.
       - name: Build for the smoke test
-        if: steps.plan.outputs.retag != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -357,7 +313,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             ${{ matrix.service != 'frontend'
-                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
@@ -375,7 +331,7 @@ jobs:
       # in their lifespan, which does not fit a runner. Importing the app and reading its
       # route table proves the contract is wired without paying for the weights.
       - name: Smoke-test the image
-        if: steps.plan.outputs.retag != 'true' && matrix.service != 'frontend'
+        if: matrix.service != 'frontend'
         run: |
           set -euo pipefail
           image=smoke:${{ matrix.service }}
@@ -406,7 +362,7 @@ jobs:
       # The frontend is a Streamlit app, not a FastAPI backend, so it gets the checks
       # that do apply to it: non-root, and a page flow that imports.
       - name: Smoke-test the frontend image
-        if: steps.plan.outputs.retag != 'true' && matrix.service == 'frontend'
+        if: matrix.service == 'frontend'
         run: |
           set -euo pipefail
           image=smoke:frontend
@@ -422,7 +378,6 @@ jobs:
           '
 
       - name: Build and push
-        if: steps.plan.outputs.retag != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -434,7 +389,7 @@ jobs:
           # dependencies -- so it takes no base image.
           build-args: |
             ${{ matrix.service != 'frontend'
-                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
@@ -442,16 +397,56 @@ jobs:
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
             ${{ steps.image.outputs.name }}:latest
 
-      # Server-side manifest copy: no build, no layer upload, both architectures. The
-      # sha- tag ends up naming the identical image `latest` already pointed at, which
-      # is the whole claim -- this service did not change, so its image did not either.
-      - name: Retag the unchanged image
-        if: steps.plan.outputs.retag == 'true'
+
+  # The manifest is the deployment artifact, so CI writes it rather than a human
+  # remembering to. Only images this commit rebuilt need resolving -- everything else
+  # keeps the digest it already has, which is exactly why nothing needs retagging.
+  #
+  # Pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot loop; the
+  # [skip ci] is belt-and-braces for anyone who swaps in a PAT later.
+  lock:
+    name: Update the image manifest
+    needs: [changes, images-base, images]
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
+      && github.event_name != 'schedule'
+      && needs.images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve digests and propagate
         run: |
           set -euo pipefail
-          image='${{ steps.image.outputs.name }}'
-          docker buildx imagetools create -t "$image:sha-${{ github.sha }}" "$image:latest"
-          echo "::notice::${{ matrix.service }} unchanged -- retagged rather than rebuilt"
+          rebuilt=$(echo '${{ needs.changes.outputs.services }}' | jq -r '.[]' | tr '\n' ' ')
+          if [ '${{ needs.changes.outputs.shared }}' = 'true' ]; then
+            rebuilt="base-serve $rebuilt"
+          fi
+          echo "rebuilt: ${rebuilt:-nothing}"
+          python deploy/pin_images.py --update $rebuilt --sha ${{ github.sha }}
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "manifest already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/images.lock deploy/helm/ai-residency/values.yaml deploy/compose/docker-compose.yml
+          git commit -m "Update the image manifest for ${GITHUB_SHA::7} [skip ci]"
+          git push
+          echo "::notice::deploy/images.lock updated"
 
   # A published image is the artifact people actually run, so it is the thing worth
   # scanning -- a lockfile audit misses everything the base OS contributes.
@@ -472,12 +467,16 @@ jobs:
   # Reports rather than blocks (exit-code 0): a base-image CVE with no fix available
   # should be visible, not a merge gate. ignore-unfixed drops the ones nothing can be
   # done about.
-  # On every publish *and* weekly, which are answering different questions. A push
-  # scan asks "did this change introduce something"; the weekly one asks "has anything
-  # been disclosed against what we already shipped" -- and only the second catches a
-  # CVE published against an image that has not changed in months. Push-only leaves a
-  # dormant repo permanently unscanned; weekly-only leaves a new image unscanned until
-  # Monday. Together they cost about 55 job-minutes a year.
+  # Whenever the base is actually rebuilt, *and* weekly. The two answer different
+  # questions: the first asks whether this change introduced something, the second
+  # whether anything has been disclosed against what was already shipped -- and only
+  # that one catches a CVE published against an image untouched for months, which is
+  # the normal state of this repo between bursts of work.
+  #
+  # The base is rebuilt only when a shared input moves, so the push arm no longer
+  # fires on every commit. That is the right shape: rescanning a byte-identical image
+  # on a docs commit told us nothing the weekly run does not. Together, roughly 55
+  # job-minutes a year.
   scan:
     name: Scan the published base image
     needs: images-base
