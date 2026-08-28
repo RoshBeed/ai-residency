@@ -49,13 +49,25 @@ roshb/ai-residency-speech-emotion-recognition-serve roshb/ai-residency-rlhf-ppo-
 
 `GET /openapi.json` on any of them lists its endpoints and request shapes.
 
-Published images are **`linux/amd64`** — the cluster, the GPU host and CI are all x86-64.
-On Apple Silicon they run under emulation, which works but is slow for inference. Build one
-natively instead:
+Images are published for **`linux/amd64` and `linux/arm64`**, so that runs natively on an Apple
+Silicon Mac as well as on a cloud box.
+
+### Or build it yourself
+
+Nothing above needs the source. If you want to read it, change it, or run a version that isn't
+published yet, this clones the repo and gives you one system plus its UI, built on your machine:
 
 ```bash
-make local SERVICE=word-embeddings
+git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy
+make local-up SERVICES="word-embeddings"     # builds natively, starts it + the UI
+open http://localhost:8500
+make down                                    # stop it
 ```
+
+`make local SERVICE=<name>` builds a single image without running anything, and
+`make -C deploy local-cluster` does the same for the Kubernetes path. Expect the first build to
+take a few minutes — the base image is a full torch install — which is exactly why the published
+images are the faster way in.
 `vector-search-retrieval` is the one exception to running solo — it queries a Redis index, so it
 wants `make up SERVICES="vector-search-retrieval"` below, which starts Redis alongside it.
 

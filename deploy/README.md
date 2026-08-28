@@ -44,9 +44,9 @@ and `--check` runs in CI so a hand edit that drifts from the manifest fails rath
 something the lock does not name. CI updates the lock for whatever it rebuilt, so
 `git log deploy/images.lock` is the deployment history and `git revert` is the rollback.
 
-Published images are **`linux/amd64`**: the cluster, the GPU host and CI runners are all x86-64.
-On Apple Silicon compose runs them under emulation, which works. **Kubernetes does not** —
-Docker Desktop's node is arm64 and cannot pull them at all:
+Images are published for `linux/amd64` and `linux/arm64`, so the cluster pulls them natively on
+either. To run it from images built here instead — for a change that is not published yet, or
+just to iterate:
 
 ```bash
 make local-cluster                              # everything, built natively
@@ -54,8 +54,9 @@ make local-cluster SERVICES="word-embeddings"   # or just one
 ```
 
 That builds the base first (every `Dockerfile.serve` builds `FROM` it), imports each image into
-the node's own store, and installs with `image.useDigest=false` — because locally-built images
-have their own digests and will never match the ones the manifest names.
+the node's own store — a `docker build` on the host is invisible to it — and installs with
+`image.useDigest=false`, because locally-built images have their own digests and will never
+match the ones the manifest names.
 
 That is enough for docker-compose, which reads the host's images directly. **Kubernetes does
 not.** Docker Desktop runs its node as a kind container with its own containerd image store, so

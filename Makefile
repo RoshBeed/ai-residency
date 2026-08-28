@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build local push train serve clean help
+        base base-train build local push train serve clean help \
+        up down status local-up local-cluster
 
 # Every member of the workspace. Derived from the directory listing, so a new
 # service is picked up the moment its directory exists.
@@ -109,6 +110,17 @@ base-train: ## Build the CUDA base image every training image builds FROM
 #   make build SERVICE=x BASE_IMAGE=roshb/ai-residency-base-serve:sha-abc123
 BASE_IMAGE ?= $(LOCAL_BASE)
 BASE_TRAIN_IMAGE ?= $(LOCAL_BASE_TRAIN)
+
+# Deploy targets live in deploy/Makefile. These pass through so `make local-up` works
+# from the repository root as well -- `make local` is here and `make local-up` is there,
+# which is a distinction nobody should have to know, and the error you get otherwise
+# ("No rule to make target") says nothing about the real problem.
+up down status local-up local-cluster: ## Deploy targets: see `make -C deploy help`
+	@# `origin`, not a bare `$(if $(SERVICES),...)`: this Makefile already defines
+	@# SERVICES as every service in the workspace, so a plain check is always true and
+	@# would forward the whole list -- _template included -- to a target expecting the
+	@# handful the caller asked for.
+	@$(MAKE) -C deploy $@ $(if $(filter command line,$(origin SERVICES)),SERVICES="$(SERVICES)")
 
 local: ## Build one service natively for this machine: make local SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make local SERVICE=<name>   ($(SERVICES))" && exit 1)

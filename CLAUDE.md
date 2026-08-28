@@ -139,33 +139,20 @@ that turns every readiness probe into a permanent 404. It deliberately does not 
 — several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
 imports the app and reads its route table instead.
 
-**Published images are `linux/amd64` only.** arm64 has to be emulated through QEMU on
-an x86 runner, and measured across a full publish it cost **8.4 minutes — 47% of all
-build time** — for an architecture nothing in the deployment path runs: the cluster, the
-GPU host and the runners are all x86-64. It existed so images ran natively on an Apple
-Silicon laptop; `make local SERVICE=<name>` builds natively there instead, base included,
-because a service image is only as native as what it builds `FROM`.
+**Images are published for amd64 *and* arm64, and dropping arm64 is a trap.** It is
+QEMU-emulated on an x86 runner and measurably expensive — 8.4 minutes across a full
+eleven-image publish — which is why it was dropped once. That number stopped applying
+the moment only changed images rebuilt: a typical commit builds one image, so arm64
+costs about fifty seconds. What amd64-only cost instead: `docker run` **fails** on Apple
+Silicon rather than falling back to emulation (`no matching manifest for
+linux/arm64/v8`), so the README's first command broke for most of its readers, and
+Docker Desktop's Kubernetes node — also arm64 — could not pull any image at all.
 
-**`deploy/` is tested, and not by the member matrix.** `make check` and CI's lint job
-run `deploy/` explicitly, because the per-member matrix covers `libs/*` and `services/*`
-only — so the tooling that decides what the cluster actually deploys was the one thing in
-the repo nothing ran. Bare `python` is not on PATH in every context either: use `uv run
-python` in the Makefiles and `python3` on a runner.
-
-**`deploy/images.lock` is the manifest; digests, not a shared tag.** A tag describes
-*one image's* content. `deploy/` needed something describing *the whole set*, and
-overloading one `image.tag` across eleven images only holds while every image changes on
-every commit — the moment one service changes and eight do not, the tag either lies or
-has to be minted for images that did not earn it. The lock names each image by immutable
-digest; `python deploy/pin_images.py` propagates it into the chart and compose, and
-`--check` fails on drift. `git log deploy/images.lock` is the deployment history.
-
-**A local cluster runs locally-built images.** Published images are `linux/amd64` and
-Docker Desktop's Kubernetes node is **arm64** on Apple Silicon, so it cannot pull them at
-all — `make -C deploy local-cluster` builds natively, loads into the node's own image
-store, and installs with `image.useDigest=false` so the chart asks for the tag those
-images carry rather than a published digest they will never match. All three steps are
-needed and each is easy to forget separately.
+**A local cluster can run locally-built images.** `make -C deploy local-cluster` builds
+natively, imports into the node's own store (a host `docker build` is invisible to it),
+and installs with `image.useDigest=false`, because a locally-built image has its own
+digest and will never match the manifest's. Not required now that published images are
+multi-arch — useful for iterating on something unpublished.
 
 **Only changed images are built, and nothing is retagged.** CI's publish matrix
 covers `changes.outputs.services`, so an unchanged image gets no build and no tag it

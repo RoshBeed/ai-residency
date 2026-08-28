@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images pin-images local-cluster \
+.PHONY: pull up down logs status index-retrieval load-images pin-images local-up local-cluster \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -114,6 +114,28 @@ pin-images: ## Regenerate compose and the chart from deploy/images.lock
 	@# regenerating after editing it by hand.
 	uv run python pin_images.py
 	@uv run python pin_images.py --check
+
+local-up: ## Build natively and run with the UI: make local-up SERVICES="word-embeddings"
+	@test -n "$(SERVICES)" || (echo 'Usage: make local-up SERVICES="word-embeddings"' && exit 1)
+	@# The main compose file pins digests, so it would pull published images and ignore
+	@# anything built here. The .local.yml override swaps them for the :latest tags
+	@# `make local` produces -- otherwise you build for a minute and then run someone
+	@# else's image without noticing.
+	$(MAKE) -C .. base
+	@for s in $(SERVICES) frontend; do \
+		echo "==> building $$s"; \
+		$(MAKE) -C .. build SERVICE=$$s || exit 1; \
+	done
+	@# --force-recreate because a container left behind by a failed run gets *started*
+	@# rather than recreated, and comes back with no network and no port mapping. The
+	@# usual cause is port 8500 being held by a Helm release of this same chart, whose
+	@# LoadBalancer Service claims it even with its pods scaled to zero --
+	@# `make helm-uninstall` frees it.
+	AI_RESIDENCY_PAGES="$(SERVICES)" docker compose \
+		-f compose/docker-compose.yml -f compose/docker-compose.local.yml \
+		up -d --no-deps --force-recreate frontend $(SUBSET)
+	@echo ""
+	@echo "Built here and running. UI: http://localhost:8500"
 
 local-cluster: ## Build every image natively and run the cluster from them: make local-cluster [SERVICES="a b"]
 	@# Published images are linux/amd64, and Docker Desktop's Kubernetes node is arm64
