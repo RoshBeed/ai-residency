@@ -23,6 +23,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Monday 04:00 UTC, for the vulnerability scan only -- every other job is gated
+  # off `schedule`. A CVE disclosed against an image that has not changed is
+  # invisible to a push-triggered scan.
+  schedule:
+    - cron: "0 4 * * 1"
   # Republish without inventing a commit. A dispatch selects every service,
   # since there is no diff to narrow it down.
   workflow_dispatch:
@@ -126,6 +131,7 @@ jobs:
 
   lint:
     name: Lint (whole workspace)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -146,7 +152,7 @@ jobs:
   check:
     name: ${{ matrix.member }}
     needs: changes
-    if: needs.changes.outputs.any == 'true'
+    if: needs.changes.outputs.any == 'true' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -204,6 +210,7 @@ jobs:
       && needs.lint.result == 'success'
       && (needs.check.result == 'success' || needs.check.result == 'skipped')
       && github.ref == 'refs/heads/main'
+      && github.event_name != 'schedule'
       && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -465,10 +472,18 @@ jobs:
   # Reports rather than blocks (exit-code 0): a base-image CVE with no fix available
   # should be visible, not a merge gate. ignore-unfixed drops the ones nothing can be
   # done about.
+  # On every publish *and* weekly, which are answering different questions. A push
+  # scan asks "did this change introduce something"; the weekly one asks "has anything
+  # been disclosed against what we already shipped" -- and only the second catches a
+  # CVE published against an image that has not changed in months. Push-only leaves a
+  # dormant repo permanently unscanned; weekly-only leaves a new image unscanned until
+  # Monday. Together they cost about 55 job-minutes a year.
   scan:
     name: Scan the published base image
     needs: images-base
-    if: always() && needs.images-base.result == 'success'
+    if: >-
+      always()
+      && (github.event_name == 'schedule' || needs.images-base.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -478,7 +493,7 @@ jobs:
       - name: Scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
+          image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:${{ github.event_name == 'schedule' && 'latest' || format('sha-{0}', github.sha) }}
           format: table
           output: trivy.txt
           severity: CRITICAL,HIGH
@@ -490,7 +505,7 @@ jobs:
           {
             echo "## Trivy — ai-residency-base-serve"
             echo
-            echo "\`sha-${{ github.sha }}\` · CRITICAL and HIGH, fixable only."
+            echo "\`${{ github.event_name == 'schedule' && 'latest' || format('sha-{0}', github.sha) }}\` · CRITICAL and HIGH, fixable only."
             echo
             if [ -s trivy.txt ]; then
               echo '```'
