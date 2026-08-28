@@ -54,6 +54,11 @@ typecheck: ## Run mypy in strict mode, per member
 # failure -- libs/vision-transformer has no suite of its own, being covered through the
 # two ViT services that use it.
 test: ## Run pytest, per member
+	@# deploy/ is not a workspace member, so the loop below never reaches it -- and
+	@# `deploy/images.lock` is what the cluster actually deploys, which makes it worth
+	@# more coverage than most packages here, not less.
+	@echo "--- pytest deploy"
+	@uv run pytest -q deploy/
 	@for m in $(MEMBERS); do \
 		if [ -d $$m/tests ]; then \
 			echo "--- pytest $$m"; \

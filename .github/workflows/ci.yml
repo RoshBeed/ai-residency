@@ -146,6 +146,17 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
 
+      # The chart and compose are generated from deploy/images.lock. Editing either by
+      # hand looks like it works and then deploys something the manifest does not
+      # name -- which is the whole failure mode the manifest exists to remove.
+      # Both here rather than in the check matrix: that matrix is per workspace
+      # member, and deploy/ is not one -- so a change to the manifest tooling would
+      # otherwise be the one thing in the repo nothing runs.
+      - name: The manifest and what it generates agree
+        run: uv run python deploy/pin_images.py --check
+      - name: Manifest tests
+        run: uv run pytest -q deploy/
+
   # One job per workspace member -- libraries as well as services. `matrix.member` is
   # a path (libs/common, services/rlhf-ppo), and the package name is always
   # ai-residency-<basename>, which is what lets one matrix cover both.
@@ -283,7 +294,7 @@ jobs:
             # This commit's tag is the only correct reference here.
             echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
           else
-            digest=$(python -c "import json;print(json.load(open('deploy/images.lock'))['images']['base-serve'])")
+            digest=$(python3 -c "import json;print(json.load(open('deploy/images.lock'))['images']['base-serve'])")
             echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve@$digest" >> "$GITHUB_OUTPUT"
           fi
 
@@ -432,7 +443,7 @@ jobs:
             rebuilt="base-serve $rebuilt"
           fi
           echo "rebuilt: ${rebuilt:-nothing}"
-          python deploy/pin_images.py --update $rebuilt --sha ${{ github.sha }}
+          python3 deploy/pin_images.py --update $rebuilt --sha ${{ github.sha }}
 
       - name: Commit
         run: |

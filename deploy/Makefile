@@ -106,11 +106,14 @@ K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 IMAGE_TAG ?= latest
 IMAGES := $(shell grep -oE 'roshb/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
 
-pin-images: ## Repoint compose and the chart at a published tag: make pin-images TAG=sha-abc123
-	@test -n "$(TAG)" || (echo "Usage: make pin-images TAG=sha-<commit>   (CI prints it, or check Docker Hub)" && exit 1)
-	@sed -i '' -E 's|(image: roshb/ai-residency-[a-z0-9-]+):\$$\{IMAGE_TAG:-[^}]*\}|\1:$$\{IMAGE_TAG:-$(TAG)\}|' compose/docker-compose.yml
-	@sed -i '' -E 's|^  tag: .*|  tag: $(TAG)|' helm/ai-residency/values.yaml
-	@echo "Pinned compose and the chart to $(TAG)"
+pin-images: ## Regenerate compose and the chart from deploy/images.lock
+	@# Was `make pin-images TAG=sha-abc123`, which wrote one tag into eleven image
+	@# references. The chart pins digests from the manifest now, so writing a tag over
+	@# them would quietly deploy something images.lock does not name -- the exact
+	@# failure the manifest exists to prevent. CI keeps the lock current; this is for
+	@# regenerating after editing it by hand.
+	uv run python pin_images.py
+	@uv run python pin_images.py --check
 
 local-cluster: ## Build every image natively and run the cluster from them: make local-cluster [SERVICES="a b"]
 	@# Published images are linux/amd64, and Docker Desktop's Kubernetes node is arm64

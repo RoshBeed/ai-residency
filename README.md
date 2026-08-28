@@ -204,13 +204,18 @@ The chart adds what compose has no equivalent for: liveness and readiness probes
 requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
 NetworkPolicies restricting the backends to the frontend.
 
-Every push to `main` builds all ten images, **smoke-tests each one before pushing it** — non-root,
-both probe endpoints registered, working directory writable — and publishes them under a single
-`sha-<commit>` tag. `deploy/` pins that tag, so one identifier names a set that was built and
-verified together.
+A push to `main` builds the images whose service actually changed, **smoke-tests each one before
+pushing it** — non-root, both probe endpoints registered, working directory writable — and
+publishes those. A change to a shared library, the lockfile or a Dockerfile rebuilds everything,
+because it is in everything.
+
+`deploy/images.lock` is what actually deploys: each image pinned by immutable digest, with the
+compose file and the chart's values generated from it. CI updates it for whatever it rebuilt, so
+`git log deploy/images.lock` is the deployment history.
 
 ```bash
-make pin-images TAG=sha-abc123    # repoint compose and the chart together
+make pin-images     # regenerate compose and the chart from the manifest
+make local-cluster  # build natively and run the cluster from those images
 ```
 
 See [`deploy/README.md`](deploy/README.md) for cluster details and the Terraform that provisions a

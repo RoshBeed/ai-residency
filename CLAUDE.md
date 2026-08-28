@@ -146,6 +146,12 @@ GPU host and the runners are all x86-64. It existed so images ran natively on an
 Silicon laptop; `make local SERVICE=<name>` builds natively there instead, base included,
 because a service image is only as native as what it builds `FROM`.
 
+**`deploy/` is tested, and not by the member matrix.** `make check` and CI's lint job
+run `deploy/` explicitly, because the per-member matrix covers `libs/*` and `services/*`
+only — so the tooling that decides what the cluster actually deploys was the one thing in
+the repo nothing ran. Bare `python` is not on PATH in every context either: use `uv run
+python` in the Makefiles and `python3` on a runner.
+
 **`deploy/images.lock` is the manifest; digests, not a shared tag.** A tag describes
 *one image's* content. `deploy/` needed something describing *the whole set*, and
 overloading one `image.tag` across eleven images only holds while every image changes on
@@ -161,16 +167,12 @@ store, and installs with `image.useDigest=false` so the chart asks for the tag t
 images carry rather than a published digest they will never match. All three steps are
 needed and each is easy to forget separately.
 
-**Unchanged images are retagged, not rebuilt.** The invariant is that one `sha-` tag
-names a *complete* set so `deploy/` can pin it — that needs a complete set of tags, not
-of builds. `docker buildx imagetools create -t img:sha-NEW img:latest` copies the
-multi-arch manifest server-side: measured at **0.19s against 3 minutes for a rebuild**,
-same digest, both architectures. CI rebuilds an image only when that service changed,
-when a shared input moved (`changes.outputs.shared` — libs, `uv.lock`, `pyproject.toml`,
-`.github/`, any Dockerfile), or when it has never been published. The old comment
-claiming the layer cache made republishing "nearly free" was an assumption, and
-measurement disagreed: publishing was **78% of this repo's Actions minutes**, because a
-cache hit still pays for QEMU-emulated arm64, cache transfer and manifest assembly.
+**Only changed images are built, and nothing is retagged.** CI's publish matrix
+covers `changes.outputs.services`, so an unchanged image gets no build and no tag it
+did not earn. This replaced a scheme that rebuilt all eleven every push -- 78% of this
+repo's Actions minutes -- and then, briefly, one that retagged the unchanged ones. Both
+existed only because `deploy/` pinned a single tag across every image; the manifest
+removed the reason for either.
 
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
 there are twelve images). CI pushes the serving base and *all ten* service images on every push to
@@ -262,7 +264,7 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
 publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
 then a Trivy scan of the published base whose results go to the job summary (SARIF upload
-needs Advanced Security, which a private repo does not have). 269 tests.
+needs Advanced Security, which a private repo does not have). 282 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.

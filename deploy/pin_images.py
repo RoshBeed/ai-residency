@@ -38,8 +38,8 @@ def load() -> dict[str, str]:
 def repo_for(name: str) -> str:
     """The Docker Hub repository for a service name."""
     if name in {"base-serve", "frontend"}:
-        return "roshb/ai-residency-%s" % name
-    return "roshb/ai-residency-%s-serve" % name
+        return f"roshb/ai-residency-{name}"
+    return f"roshb/ai-residency-{name}-serve"
 
 
 def resolve(name: str, sha: str) -> str:
@@ -49,7 +49,7 @@ def resolve(name: str, sha: str) -> str:
     already in the lock, which is the point: an unchanged image needs no new tag, and
     the manifest is what carries "the set", so nothing has to be minted for it.
     """
-    ref = "%s:sha-%s" % (repo_for(name), sha)
+    ref = f"{repo_for(name)}:sha-{sha}"
     out = subprocess.run(
         ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{.Manifest.Digest}}"],
         capture_output=True,
@@ -58,7 +58,7 @@ def resolve(name: str, sha: str) -> str:
     )
     digest = out.stdout.strip()
     if not digest.startswith("sha256:"):
-        raise SystemExit("could not resolve %s\n%s" % (ref, out.stderr.strip()[:400]))
+        raise SystemExit(f"could not resolve {ref}\n{out.stderr.strip()[:400]}")
     return digest
 
 
@@ -70,11 +70,11 @@ def update(names: list[str], sha: str) -> bool:
     for name in names:
         digest = resolve(name, sha)
         if images.get(name) != digest:
-            print("%-30s %s -> %s" % (name, str(images.get(name))[:19], digest[:19]))
+            print(f"{name:<30} {str(images.get(name))[:19]} -> {digest[:19]}")
             images[name] = digest
             changed = True
         else:
-            print("%-30s unchanged" % name)
+            print(f"{name:<30} unchanged")
     if changed:
         LOCK.write_text(json.dumps(data, indent=2) + "\n")
     return changed
@@ -87,14 +87,17 @@ def render_values(text: str, images: dict[str, str]) -> str:
             continue
         # `digest:` sits directly under the service's `image:` line, at the same indent.
         pattern = re.compile(
-            r"(^(?P<indent>\s+)image: roshb/ai-residency-%s(?:-serve)?\n)"
-            r"(?P<existing>(?P=indent)digest: .*\n)?" % re.escape(name),
+            rf"(^(?P<indent>\s+)image: roshb/ai-residency-{re.escape(name)}(?:-serve)?\n)"
+            rf"(?P<existing>(?P=indent)digest: .*\n)?",
             re.M,
         )
         if not pattern.search(text):
             continue
+        # `digest=digest` binds this iteration's value: a bare closure over the loop
+        # variable is only correct because re.sub happens to run it immediately.
         text = pattern.sub(
-            lambda m: "%s%sdigest: %s\n" % (m.group(1), m.group("indent"), digest), text
+            lambda m, digest=digest: f"{m.group(1)}{m.group('indent')}digest: {digest}\n",
+            text,
         )
     return text
 
@@ -104,13 +107,16 @@ def render_compose(text: str, images: dict[str, str]) -> str:
     for name, digest in images.items():
         if name == "base-serve":
             continue
-        repo = "roshb/ai-residency-%s" % name
+        repo = f"roshb/ai-residency-{name}"
         if name != "frontend":
             repo += "-serve"
+        pattern = (
+            rf"(^\s+image: {re.escape(repo)})"
+            rf"(?::\$\{{IMAGE_TAG:-[^}}]*\}}|@sha256:[0-9a-f]+|:[^\s@]+)"
+        )
         text = re.sub(
-            r"(^\s+image: %s)(?::\$\{IMAGE_TAG:-[^}]*\}|@sha256:[0-9a-f]+|:[^\s@]+)"
-            % re.escape(repo),
-            lambda m: "%s@%s" % (m.group(1), digest),
+            pattern,
+            lambda m, digest=digest: f"{m.group(1)}@{digest}",
             text,
             flags=re.M,
         )
@@ -143,10 +149,10 @@ def main() -> int:
             drifted.append(path.relative_to(ROOT.parent))
         else:
             path.write_text(after)
-            print("updated %s" % path.relative_to(ROOT.parent))
+            print(f"updated {path.relative_to(ROOT.parent)}")
 
     if drifted:
-        print("Out of sync with deploy/images.lock: %s" % ", ".join(str(p) for p in drifted))
+        print("Out of sync with deploy/images.lock: " + ", ".join(str(p) for p in drifted))
         print("Run: python deploy/pin_images.py")
         return 1
     if args.check:
