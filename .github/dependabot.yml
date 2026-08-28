@@ -9,7 +9,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
@@ -17,7 +17,7 @@ updates:
       - /
       - /services/frontend
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     # Digest bumps to python:3.11-slim are wanted -- they are the base-OS security
     # patches, and the reason the FROM is pinned by digest rather than by tag alone.

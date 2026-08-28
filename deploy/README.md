@@ -35,21 +35,28 @@ make build SERVICE=word-embeddings
 make push  SERVICE=word-embeddings
 ```
 
-Serving images are published by CI on every push to `main`, so `docker compose pull` fetches them.
-Training images are published on demand by the `Publish training images` workflow. To build locally
-instead — the same names compose and the chart already reference:
+Serving images are published by CI when the service they belong to changes; training images on
+demand, by the `Publish training images` workflow.
+
+**What deploys is `deploy/images.lock`.** It names each image by immutable digest, and both this
+compose file and the chart's values are generated from it — `make pin-images` regenerates them,
+and `--check` runs in CI so a hand edit that drifts from the manifest fails rather than deploying
+something the lock does not name. CI updates the lock for whatever it rebuilt, so
+`git log deploy/images.lock` is the deployment history and `git revert` is the rollback.
+
+Images are published for `linux/amd64` and `linux/arm64`, so the cluster pulls them natively on
+either. To run it from images built here instead — for a change that is not published yet, or
+just to iterate:
 
 ```bash
-cd ..
-make base        # roshb/ai-residency-base-serve (CPU)
-make base-train  # roshb/ai-residency-base-train (CUDA)
-for s in $(ls -d services/*/ | xargs -n1 basename | grep -v _template | grep -v frontend); do
-  make build SERVICE=$s
-done
-docker build -f services/frontend/Dockerfile.serve -t roshb/ai-residency-frontend:latest .
+make local-cluster                              # everything, built natively
+make local-cluster SERVICES="word-embeddings"   # or just one
 ```
 
-The base image comes first because every `Dockerfile.serve` builds `FROM` it.
+That builds the base first (every `Dockerfile.serve` builds `FROM` it), imports each image into
+the node's own store — a `docker build` on the host is invisible to it — and installs with
+`image.useDigest=false`, because locally-built images have their own digests and will never
+match the ones the manifest names.
 
 That is enough for docker-compose, which reads the host's images directly. **Kubernetes does
 not.** Docker Desktop runs its node as a kind container with its own containerd image store, so

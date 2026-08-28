@@ -3,59 +3,96 @@
   "title": "ai-residency chart values",
   "description": "Validated by Helm on every install, upgrade, template and lint. This exists because values.yaml drifted: it accumulated keys nothing read any more (hostRoot, hfCachePath) alongside a half-finished comment paragraph, and nothing failed. additionalProperties:false turns a stale or misspelled key into an error at install time instead of a setting that silently does nothing.",
   "type": "object",
-  "required": ["image", "probes", "backends", "frontend", "redis", "securityContext"],
+  "required": [
+    "image",
+    "probes",
+    "backends",
+    "frontend",
+    "redis",
+    "securityContext"
+  ],
   "additionalProperties": false,
-
   "properties": {
     "hfCache": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "properties": {
         "mode": {
-          "enum": ["hostPath", "pvc", "none"],
+          "enum": [
+            "hostPath",
+            "pvc",
+            "none"
+          ],
           "description": "hostPath ties the chart to a single node; pvc works on any cluster; none makes every pod download its own copy."
         },
-        "hostPath": { "type": "string" },
-        "claimName": { "type": "string" }
+        "hostPath": {
+          "type": "string"
+        },
+        "claimName": {
+          "type": "string"
+        }
       }
     },
-
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tag", "pullPolicy"],
+      "required": [
+        "tag",
+        "pullPolicy"
+      ],
       "properties": {
         "tag": {
           "type": "string",
           "minLength": 1,
           "description": "One tag names every image in the release. CI publishes all ten under sha-<commit>."
         },
-        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "useDigest": {
+          "type": "boolean",
+          "description": "Pin by digest from images.lock; false uses tag (local clusters)."
+        }
       }
     },
-
     "serviceAccount": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "create": { "type": "boolean" },
-        "name": { "type": "string" }
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
       }
     },
-
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
-
     "securityContext": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "pod": {
           "type": "object",
           "properties": {
@@ -64,42 +101,68 @@
               "minimum": 1,
               "description": "Must match the UID the images create (1000). Kubernetes overrides the image's USER, so a mismatch yields a container that starts and then cannot write."
             },
-            "runAsNonRoot": { "type": "boolean" },
-            "runAsGroup": { "type": "integer", "minimum": 1 },
-            "fsGroup": { "type": "integer", "minimum": 1 }
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fsGroup": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         },
-        "container": { "type": "object" }
+        "container": {
+          "type": "object"
+        }
       }
     },
-
     "secrets": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "hfToken": { "type": "string" },
-        "wandbApiKey": { "type": "string" }
+        "name": {
+          "type": "string"
+        },
+        "hfToken": {
+          "type": "string"
+        },
+        "wandbApiKey": {
+          "type": "string"
+        }
       }
     },
-
     "train": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "only": { "type": "string" },
-        "runName": { "type": "string" },
-        "env": { "type": "object" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "only": {
+          "type": "string"
+        },
+        "runName": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object"
+        }
       }
     },
-
     "probes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["healthPath", "readyPath"],
+      "required": [
+        "healthPath",
+        "readyPath"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "healthPath": {
           "type": "string",
           "description": "Liveness. Always 200, so a slow or missing checkpoint never restarts a pod."
@@ -108,82 +171,190 @@
           "type": "string",
           "description": "Readiness. 503 until the service can serve. Must NOT be the same path as healthPath -- that gives a readiness probe that cannot fail."
         },
-        "startup": { "type": "object" },
-        "readiness": { "type": "object" },
-        "liveness": { "type": "object" }
+        "startup": {
+          "type": "object"
+        },
+        "readiness": {
+          "type": "object"
+        },
+        "liveness": {
+          "type": "object"
+        }
       }
     },
-
     "frontend": {
       "type": "object",
-      "required": ["image", "containerPort", "servicePort"],
+      "required": [
+        "image",
+        "containerPort",
+        "servicePort"
+      ],
       "properties": {
-        "image": { "type": "string" },
-        "containerPort": { "type": "integer" },
-        "servicePort": { "type": "integer" },
-        "healthPath": { "type": "string" },
-        "cpuRequest": { "type": "string" },
-        "memoryRequest": { "type": "string" },
-        "memoryLimit": { "type": "string" },
-        "service": { "type": "object" }
+        "image": {
+          "type": "string"
+        },
+        "containerPort": {
+          "type": "integer"
+        },
+        "servicePort": {
+          "type": "integer"
+        },
+        "healthPath": {
+          "type": "string"
+        },
+        "cpuRequest": {
+          "type": "string"
+        },
+        "memoryRequest": {
+          "type": "string"
+        },
+        "memoryLimit": {
+          "type": "string"
+        },
+        "service": {
+          "type": "object"
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Pages the UI shows; empty means every backend this release deploys."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
+        }
       }
     },
-
     "redis": {
       "type": "object",
-      "required": ["image", "port", "serviceName"],
+      "required": [
+        "image",
+        "port",
+        "serviceName"
+      ],
       "properties": {
         "image": {
           "type": "string",
           "pattern": ":",
           "description": "Must carry an explicit tag. `latest` changes what a release brings up between two installs of the same chart version."
         },
-        "command": { "type": "array" },
-        "port": { "type": "integer" },
-        "serviceName": { "type": "string" },
-        "cpuRequest": { "type": "string" },
-        "memoryRequest": { "type": "string" },
-        "memoryLimit": { "type": "string" }
+        "command": {
+          "type": "array"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "serviceName": {
+          "type": "string"
+        },
+        "cpuRequest": {
+          "type": "string"
+        },
+        "memoryRequest": {
+          "type": "string"
+        },
+        "memoryLimit": {
+          "type": "string"
+        }
       }
     },
-
     "backends": {
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
-        "required": ["image", "containerPort"],
+        "required": [
+          "image",
+          "containerPort"
+        ],
         "properties": {
-          "image": { "type": "string" },
-          "trainImage": { "type": "string" },
-          "trainCommand": { "type": "array" },
-          "trainEnv": { "type": "object" },
-          "containerPort": { "type": "integer" },
-          "cpuRequest": { "type": "string" },
-          "memoryRequest": { "type": "string" },
-          "memoryLimit": { "type": "string" },
-          "trainMemoryRequest": { "type": "string" },
-          "trainMemoryLimit": { "type": "string" },
-          "healthPath": { "type": "string" },
-          "readyPath": { "type": "string" },
-          "env": { "type": "object" },
-          "waitForRedis": { "type": "boolean" },
-          "bootstrapCommand": { "type": "array" },
-          "bootstrapOptional": { "type": "boolean" },
+          "image": {
+            "type": "string"
+          },
+          "trainImage": {
+            "type": "string"
+          },
+          "trainCommand": {
+            "type": "array"
+          },
+          "trainEnv": {
+            "type": "object"
+          },
+          "containerPort": {
+            "type": "integer"
+          },
+          "cpuRequest": {
+            "type": "string"
+          },
+          "memoryRequest": {
+            "type": "string"
+          },
+          "memoryLimit": {
+            "type": "string"
+          },
+          "trainMemoryRequest": {
+            "type": "string"
+          },
+          "trainMemoryLimit": {
+            "type": "string"
+          },
+          "healthPath": {
+            "type": "string"
+          },
+          "readyPath": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object"
+          },
+          "waitForRedis": {
+            "type": "boolean"
+          },
+          "bootstrapCommand": {
+            "type": "array"
+          },
+          "bootstrapOptional": {
+            "type": "boolean"
+          },
           "volumes": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["name", "mountPath"],
+              "required": [
+                "name",
+                "mountPath"
+              ],
               "properties": {
-                "name": { "type": "string" },
-                "mountPath": { "type": "string" },
-                "kind": { "enum": ["hfCache"] },
-                "hostPath": { "type": "string" },
-                "type": { "type": "string" },
-                "readOnly": { "type": "boolean" }
+                "name": {
+                  "type": "string"
+                },
+                "mountPath": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "hfCache"
+                  ]
+                },
+                "hostPath": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "readOnly": {
+                  "type": "boolean"
+                }
               }
             }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
           }
         }
       }

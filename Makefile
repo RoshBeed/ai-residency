@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build push train serve clean help
+        base base-train build local push train serve clean help \
+        up down status local-up local-cluster
 
 # Every member of the workspace. Derived from the directory listing, so a new
 # service is picked up the moment its directory exists.
@@ -54,6 +55,11 @@ typecheck: ## Run mypy in strict mode, per member
 # failure -- libs/vision-transformer has no suite of its own, being covered through the
 # two ViT services that use it.
 test: ## Run pytest, per member
+	@# deploy/ is not a workspace member, so the loop below never reaches it -- and
+	@# `deploy/images.lock` is what the cluster actually deploys, which makes it worth
+	@# more coverage than most packages here, not less.
+	@echo "--- pytest deploy"
+	@uv run pytest -q deploy/
 	@for m in $(MEMBERS); do \
 		if [ -d $$m/tests ]; then \
 			echo "--- pytest $$m"; \
@@ -104,6 +110,31 @@ base-train: ## Build the CUDA base image every training image builds FROM
 #   make build SERVICE=x BASE_IMAGE=roshb/ai-residency-base-serve:sha-abc123
 BASE_IMAGE ?= $(LOCAL_BASE)
 BASE_TRAIN_IMAGE ?= $(LOCAL_BASE_TRAIN)
+
+# Deploy targets live in deploy/Makefile. These pass through so `make local-up` works
+# from the repository root as well -- `make local` is here and `make local-up` is there,
+# which is a distinction nobody should have to know, and the error you get otherwise
+# ("No rule to make target") says nothing about the real problem.
+up down status local-up local-cluster: ## Deploy targets: see `make -C deploy help`
+	@# `origin`, not a bare `$(if $(SERVICES),...)`: this Makefile already defines
+	@# SERVICES as every service in the workspace, so a plain check is always true and
+	@# would forward the whole list -- _template included -- to a target expecting the
+	@# handful the caller asked for.
+	@$(MAKE) -C deploy $@ $(if $(filter command line,$(origin SERVICES)),SERVICES="$(SERVICES)")
+
+local: ## Build one service natively for this machine: make local SERVICE=word-embeddings
+	@test -n "$(SERVICE)" || (echo "Usage: make local SERVICE=<name>   ($(SERVICES))" && exit 1)
+	@# Published images are linux/amd64: the cluster, the GPU host and CI runners are
+	@# all x86-64, and building arm64 for them meant QEMU emulation costing 47% of CI
+	@# build time for an architecture nothing in the deployment path runs. On Apple
+	@# Silicon the published image therefore runs emulated. This builds it natively
+	@# instead -- base first, because a service image is only as native as what it
+	@# builds FROM.
+	$(MAKE) base
+	$(MAKE) build SERVICE=$(SERVICE)
+	@echo ""
+	@echo "Built natively for $$(docker version --format '{{.Server.Arch}}')."
+	@echo "Run it:  docker run --rm -p 8000:8000 $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG)"
 
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)

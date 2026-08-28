@@ -28,7 +28,7 @@ spec:
       {{- include "ai-residency.podSecurityContext" . | nindent 6 }}
       containers:
         - name: frontend
-          image: "{{ .Values.frontend.image }}:{{ .Values.image.tag }}"
+          image: "{{ include "ai-residency.image" (dict "spec" .Values.frontend "ctx" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" . | nindent 10 }}
           ports:
@@ -64,6 +64,14 @@ spec:
             - name: {{ upper (replace "-" "_" $name) }}_API_URL
               value: "http://{{ $name }}:{{ (index $.Values.backends $name).containerPort }}"
             {{- end }}
+            # Which pages the UI shows. Derived from the backends this release
+            # actually deploys, so trimming .Values.backends to one service gives a UI
+            # for that service rather than a hub with eight dead pages -- the same
+            # thing `make up SERVICES=...` does for compose. `frontend.pages` overrides
+            # it for the case where every backend is deployed but the UI should show
+            # fewer. No backend contains any UI either way.
+            - name: AI_RESIDENCY_PAGES
+              value: "{{ join " " (default (keys .Values.backends | sortAlpha) .Values.frontend.pages) }}"
 ---
 apiVersion: v1
 kind: Service

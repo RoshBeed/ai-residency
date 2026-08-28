@@ -90,6 +90,15 @@ Service's endpoints. Both come from `add_health_routes` in `ai_residency_common.
 hand-write a health endpoint in a service. Pointing a readiness probe at `/health` gives you a
 probe that cannot fail, which is the same as having none.
 
+**The UI lives in one container, never in a backend.** Backends are HTTP APIs and
+nothing else — no Streamlit, no templates, no static pages. The frontend image is the
+only place Streamlit runs, and `AI_RESIDENCY_PAGES` tells it which pages to show, so
+the same image is the nine-system hub or the UI for one system. `make up
+SERVICES="..."` sets it from what it started. Putting a page in a backend would mean
+either Streamlit in all nine images or a second UI codebase in HTML/JS, and the
+per-service `/docs` FastAPI already generates covers the "just poke this one service"
+case for free.
+
 **Every numeric request field is bounded.** A field that reaches a model or a
 datastore is an unbounded request unless `Field(ge=…, le=…)` says otherwise, and the
 bound belongs on the request model so validation rejects it before the work starts.
@@ -129,6 +138,28 @@ builds green and fails at runtime: a `USER` whose file ownership is wrong, and a
 that turns every readiness probe into a permanent 404. It deliberately does not start the server
 — several services load multi-GB backbones in their lifespan, which does not fit a runner — so it
 imports the app and reads its route table instead.
+
+**Images are published for amd64 *and* arm64, and dropping arm64 is a trap.** It is
+QEMU-emulated on an x86 runner and measurably expensive — 8.4 minutes across a full
+eleven-image publish — which is why it was dropped once. That number stopped applying
+the moment only changed images rebuilt: a typical commit builds one image, so arm64
+costs about fifty seconds. What amd64-only cost instead: `docker run` **fails** on Apple
+Silicon rather than falling back to emulation (`no matching manifest for
+linux/arm64/v8`), so the README's first command broke for most of its readers, and
+Docker Desktop's Kubernetes node — also arm64 — could not pull any image at all.
+
+**A local cluster can run locally-built images.** `make -C deploy local-cluster` builds
+natively, imports into the node's own store (a host `docker build` is invisible to it),
+and installs with `image.useDigest=false`, because a locally-built image has its own
+digest and will never match the manifest's. Not required now that published images are
+multi-arch — useful for iterating on something unpublished.
+
+**Only changed images are built, and nothing is retagged.** CI's publish matrix
+covers `changes.outputs.services`, so an unchanged image gets no build and no tag it
+did not earn. This replaced a scheme that rebuilt all eleven every push -- 78% of this
+repo's Actions minutes -- and then, briefly, one that retagged the unchanged ones. Both
+existed only because `deploy/` pinned a single tag across every image; the manifest
+removed the reason for either.
 
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
 there are twelve images). CI pushes the serving base and *all ten* service images on every push to
@@ -220,7 +251,7 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
 publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
 then a Trivy scan of the published base whose results go to the job summary (SARIF upload
-needs Advanced Security, which a private repo does not have). 269 tests.
+needs Advanced Security, which a private repo does not have). 282 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.

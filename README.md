@@ -48,6 +48,26 @@ roshb/ai-residency-speech-emotion-recognition-serve roshb/ai-residency-rlhf-ppo-
 ```
 
 `GET /openapi.json` on any of them lists its endpoints and request shapes.
+
+Images are published for **`linux/amd64` and `linux/arm64`**, so that runs natively on an Apple
+Silicon Mac as well as on a cloud box.
+
+### Or build it yourself
+
+Nothing above needs the source. If you want to read it, change it, or run a version that isn't
+published yet, this clones the repo and gives you one system plus its UI, built on your machine:
+
+```bash
+git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy
+make local-up SERVICES="word-embeddings"     # builds natively, starts it + the UI
+open http://localhost:8500
+make down                                    # stop it
+```
+
+`make local SERVICE=<name>` builds a single image without running anything, and
+`make -C deploy local-cluster` does the same for the Kubernetes path. Expect the first build to
+take a few minutes — the base image is a full torch install — which is exactly why the published
+images are the faster way in.
 `vector-search-retrieval` is the one exception to running solo — it queries a Redis index, so it
 wants `make up SERVICES="vector-search-retrieval"` below, which starts Redis alongside it.
 
@@ -70,14 +90,21 @@ If `make up` reports `Bind for 0.0.0.0:8500 failed`, something else already hold
 most likely a Helm release of this same chart, whose `LoadBalancer` Service claims it even with
 its pods scaled to zero. `make helm-uninstall` frees it.
 
-### If you don't have ~17GB of RAM
+### One system at a time, or if you don't have ~17GB of RAM
 
-Everything at once is heavy, so run the frontend against a subset instead. The pages you didn't
-start say so rather than erroring.
+Everything at once is heavy. Name the systems you want and you get a UI for those, not a hub
+with eight dead pages:
 
 ```bash
 make up SERVICES="word-embeddings vit-classifier"
 ```
+
+The frontend image is the same one the hub runs — it is told which pages to show through
+`AI_RESIDENCY_PAGES`, which `make up` sets from `SERVICES`. **No backend contains any UI.**
+Streamlit runs in exactly one container whether you start one system or all nine, and the
+backends stay pure HTTP APIs that anything can call. That is also why the single-service
+`docker run` further up needs no frontend at all to be useful: `/docs` on any backend is a
+working interface generated from its own OpenAPI schema.
 
 | Service | Resident once loaded | Notes |
 |---|--:|---|
@@ -189,13 +216,18 @@ The chart adds what compose has no equivalent for: liveness and readiness probes
 requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
 NetworkPolicies restricting the backends to the frontend.
 
-Every push to `main` builds all ten images, **smoke-tests each one before pushing it** — non-root,
-both probe endpoints registered, working directory writable — and publishes them under a single
-`sha-<commit>` tag. `deploy/` pins that tag, so one identifier names a set that was built and
-verified together.
+A push to `main` builds the images whose service actually changed, **smoke-tests each one before
+pushing it** — non-root, both probe endpoints registered, working directory writable — and
+publishes those. A change to a shared library, the lockfile or a Dockerfile rebuilds everything,
+because it is in everything.
+
+`deploy/images.lock` is what actually deploys: each image pinned by immutable digest, with the
+compose file and the chart's values generated from it. CI updates it for whatever it rebuilt, so
+`git log deploy/images.lock` is the deployment history.
 
 ```bash
-make pin-images TAG=sha-abc123    # repoint compose and the chart together
+make pin-images     # regenerate compose and the chart from the manifest
+make local-cluster  # build natively and run the cluster from those images
 ```
 
 See [`deploy/README.md`](deploy/README.md) for cluster details and the Terraform that provisions a

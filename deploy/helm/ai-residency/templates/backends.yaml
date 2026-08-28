@@ -55,7 +55,7 @@ spec:
         {{- end }}
         {{- if $svc.bootstrapCommand }}
         - name: bootstrap-index
-          image: "{{ $svc.image }}:{{ $.Values.image.tag }}"
+          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $) }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           {{- if $svc.bootstrapOptional }}
@@ -102,7 +102,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
-          image: "{{ $svc.image }}:{{ $.Values.image.tag }}"
+          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $) }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           ports:

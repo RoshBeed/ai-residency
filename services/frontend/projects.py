@@ -14,7 +14,7 @@ per-service special case.
 import os
 from typing import Any
 
-__all__ = ["API_URLS", "PAGES", "PROJECTS", "TAG_URLS", "tag_link"]
+__all__ = ["ALL_PAGES", "API_URLS", "PAGES", "PROJECTS", "TAG_URLS", "tag_link"]
 
 API_URLS = {
     "word-embeddings": os.getenv("WORD_EMBEDDINGS_API_URL", "http://localhost:8001"),
@@ -32,7 +32,7 @@ API_URLS = {
     "rlhf-ppo": os.getenv("RLHF_PPO_API_URL", "http://localhost:8006"),
 }
 
-PAGES = {
+ALL_PAGES = {
     "word-embeddings": "Word Embeddings",
     "content-scoring": "Content Scoring",
     "vector-search-retrieval": "Vector Search & Retrieval",
@@ -43,6 +43,37 @@ PAGES = {
     "speech-emotion-recognition": "Speech Emotion Recognition",
     "rlhf-ppo": "RLHF / PPO",
 }
+
+
+def _selected_pages() -> dict[str, str]:
+    """The pages this instance should show, from `AI_RESIDENCY_PAGES`.
+
+    Unset means all of them, which is the portfolio hub and the default. Setting it
+    to one or more service names makes the same image the UI for just those, so
+    running a single system does not mean looking at a sidebar of eight pages whose
+    backends were never started -- and does not mean a second UI living in the
+    backend image either. The frontend stays the only place Streamlit runs.
+
+    Names are comma- or space-separated and must match `ALL_PAGES`. An unknown name
+    raises rather than being skipped: a typo that silently shows the wrong set is
+    worse to debug than one that refuses to start and says which names are valid.
+    """
+    raw = os.getenv("AI_RESIDENCY_PAGES", "").replace(",", " ").split()
+    if not raw:
+        return dict(ALL_PAGES)
+
+    unknown = [name for name in raw if name not in ALL_PAGES]
+    if unknown:
+        raise ValueError(
+            f"AI_RESIDENCY_PAGES names {unknown!r}, which are not services. "
+            f"Valid names: {', '.join(ALL_PAGES)}"
+        )
+    # Dedupe while keeping ALL_PAGES' order, so the sidebar reads the same however
+    # the variable was written.
+    return {name: label for name, label in ALL_PAGES.items() if name in set(raw)}
+
+
+PAGES = _selected_pages()
 
 TAG_URLS: dict[str, str] = {
     "NLP": "https://en.wikipedia.org/wiki/Natural_language_processing",

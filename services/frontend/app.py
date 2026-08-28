@@ -193,7 +193,7 @@ def render_home_page() -> None:
     )
 
     # Project cards — the main focus, above the fold.
-    service_keys = list(PROJECTS.keys())
+    service_keys = list(PAGES)
     for row_start in range(0, len(service_keys), 3):
         row = service_keys[row_start : row_start + 3]
         cols = st.columns(len(row), gap="medium")
@@ -240,10 +240,19 @@ def render_home_page() -> None:
 # Session state + routing setup
 # ---------------------------------------------------------------------------
 
+# With one page selected there is no gallery worth landing on, so it *is* the
+# landing page. `AI_RESIDENCY_PAGES` is what makes the hub image serve a single
+# system without a second UI existing anywhere.
+SINGLE_PAGE = next(iter(PAGES)) if len(PAGES) == 1 else None
+_DEFAULT_PAGE = SINGLE_PAGE or "home"
+
 if "page" in st.query_params and st.query_params["page"] != st.session_state.get("page"):
     st.session_state.page = st.query_params["page"]
 if "page" not in st.session_state:
-    st.session_state.page = "home"
+    st.session_state.page = _DEFAULT_PAGE
+# A stale ?page= from another deployment, or "home" when there is no home.
+if st.session_state.page not in PAGES and st.session_state.page != _DEFAULT_PAGE:
+    st.session_state.page = _DEFAULT_PAGE
 
 
 def navigate(page: str) -> None:
@@ -259,11 +268,11 @@ _PAGE = st.session_state.page
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    if st.button("← Home", key="sidebar_home", type="tertiary"):
+    if SINGLE_PAGE is None and st.button("← Home", key="sidebar_home", type="tertiary"):
         navigate("home")
         st.rerun()
 
-    if _PAGE != "home":
+    if SINGLE_PAGE is None and _PAGE != "home":
         st.divider()
         for wk, label in PAGES.items():
             if wk == _PAGE:

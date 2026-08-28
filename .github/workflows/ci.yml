@@ -23,6 +23,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Monday 04:00 UTC, for the vulnerability scan only -- every other job is gated
+  # off `schedule`. A CVE disclosed against an image that has not changed is
+  # invisible to a push-triggered scan.
+  schedule:
+    - cron: "0 4 * * 1"
   # Republish without inventing a commit. A dispatch selects every service,
   # since there is no diff to narrow it down.
   workflow_dispatch:
@@ -43,6 +48,7 @@ jobs:
       members: ${{ steps.detect.outputs.members }}
       all: ${{ steps.detect.outputs.all }}
       any: ${{ steps.detect.outputs.any }}
+      shared: ${{ steps.detect.outputs.shared }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -74,10 +80,17 @@ jobs:
           # list as the loop's last command makes the whole substitution exit 1,
           # which killed this step whenever the *last* service was unchanged --
           # and on any push whose diff is empty.
+          # A shared input -- the libraries, the lockfile, pyproject, CI itself or any
+          # Dockerfile -- is in every image, so it invalidates all of them including
+          # the base. Recorded as its own output because publishing now uses it to
+          # decide which images to rebuild and which the manifest already describes.
+          shared=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            shared=true
             selected="$all"
             selected_members="$members"
-          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/)'; then
+          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/|Dockerfile)'; then
+            shared=true
             selected="$all"
             selected_members="$members"
           else
@@ -104,6 +117,7 @@ jobs:
           echo "services=$json" >> "$GITHUB_OUTPUT"
           echo "members=$members_json" >> "$GITHUB_OUTPUT"
           echo "any=$([ -n "$selected_members" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "shared=$shared" >> "$GITHUB_OUTPUT"
 
           # Checks are narrowed by the path filter; publishing is not. Every push to
           # main publishes all ten images under one sha- tag, so that tag names a
@@ -117,6 +131,7 @@ jobs:
 
   lint:
     name: Lint (whole workspace)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -131,13 +146,24 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
 
+      # The chart and compose are generated from deploy/images.lock. Editing either by
+      # hand looks like it works and then deploys something the manifest does not
+      # name -- which is the whole failure mode the manifest exists to remove.
+      # Both here rather than in the check matrix: that matrix is per workspace
+      # member, and deploy/ is not one -- so a change to the manifest tooling would
+      # otherwise be the one thing in the repo nothing runs.
+      - name: The manifest and what it generates agree
+        run: uv run python deploy/pin_images.py --check
+      - name: Manifest tests
+        run: uv run pytest -q deploy/
+
   # One job per workspace member -- libraries as well as services. `matrix.member` is
   # a path (libs/common, services/rlhf-ppo), and the package name is always
   # ai-residency-<basename>, which is what lets one matrix cover both.
   check:
     name: ${{ matrix.member }}
     needs: changes
-    if: needs.changes.outputs.any == 'true'
+    if: needs.changes.outputs.any == 'true' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -195,6 +221,7 @@ jobs:
       && needs.lint.result == 'success'
       && (needs.check.result == 'success' || needs.check.result == 'skipped')
       && github.ref == 'refs/heads/main'
+      && github.event_name != 'schedule'
       && vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -206,17 +233,30 @@ jobs:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Only when a shared input moved -- the manifest keeps the digest otherwise.
       - uses: docker/build-push-action@v7
+        if: needs.changes.outputs.shared == 'true'
         with:
           context: .
           file: Dockerfile.base
           push: true
+          # arm64 is emulated through QEMU here and is not free: measured at 8.4
+          # minutes across a full eleven-image publish. It was dropped for that, and
+          # restored once selective rebuilds made the number wrong -- a typical commit
+          # rebuilds one image, so arm64 costs about fifty seconds, not eight minutes.
+          #
+          # What that buys: `docker run <image>` works on an Apple Silicon Mac. Docker
+          # does not fall back to emulation when a manifest lacks the platform, it
+          # refuses -- "no matching manifest for linux/arm64/v8" -- so amd64-only made
+          # the first command in the README fail for most of its readers, and made
+          # Docker Desktop's Kubernetes node (also arm64) unable to pull anything.
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha,scope=base-serve
           cache-to: type=gha,scope=base-serve,mode=max
           tags: |
             ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
             ${{ env.REGISTRY }}/ai-residency-base-serve:latest
+
 
   images:
     name: Publish ${{ matrix.service }}
@@ -226,14 +266,14 @@ jobs:
     # unless the condition contains a status function. Without it, a docs-only commit
     # published the base image and none of the ten that depend on it -- a sha- tag
     # naming an incomplete set, which is exactly what publishing-all exists to avoid.
-    if: always() && needs.images-base.result == 'success'
+    if: always() && needs.images-base.result != 'failure' && needs.images-base.result != 'cancelled'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # `all`, not `services`: see the note in the detect step. One sha- tag has to
         # name every image, or pinning it in deploy/ does not describe a real set.
-        service: ${{ fromJSON(needs.changes.outputs.all) }}
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -245,6 +285,23 @@ jobs:
 
       # The frontend's image has no -serve suffix: it is the only service with one
       # image rather than a serving/training pair.
+      - name: Base image
+        id: base
+        run: |
+          set -euo pipefail
+          # By digest from the manifest, not by `sha-<commit>`: that tag exists only
+          # when this commit rebuilt the base. The digest is always correct, and the
+          # base a service was built against is then recorded rather than implied.
+          if [ '${{ needs.changes.outputs.shared }}' = 'true' ]; then
+            # The base was rebuilt in this run, and the manifest is not updated until
+            # after these builds finish -- so the lock still names the *previous* base.
+            # This commit's tag is the only correct reference here.
+            echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            digest=$(python3 -c "import json;print(json.load(open('deploy/images.lock'))['images']['base-serve'])")
+            echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve@$digest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Image name
         id: image
         run: |
@@ -254,9 +311,10 @@ jobs:
             echo "name=${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-serve" >> "$GITHUB_OUTPUT"
           fi
 
-      # Both tags come off one commit, which is what makes a deployment
-      # reproducible: deploy/ pins the SHA, not a moving `latest`. BASE_IMAGE is
-      # pinned to this commit's base for the same reason.
+      # `sha-<commit>` exists only for images this commit actually rebuilt, and that
+      # is now fine: `deploy/images.lock` names the set by digest, so an unchanged
+      # image needs no tag minted for a commit it had nothing to do with. The tag is
+      # how the manifest step finds what was just built.
       # Built into the runner's own docker first, native amd64 only, so the next step
       # has something to actually run. The multi-arch push happens after it passes --
       # a `push: true` build produces no local image to test, which is how this
@@ -270,7 +328,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             ${{ matrix.service != 'frontend'
-                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
@@ -340,18 +398,70 @@ jobs:
           context: .
           file: services/${{ matrix.service }}/Dockerfile.serve
           push: true
+          # Both architectures -- see the note on the base image.
           platforms: linux/amd64,linux/arm64
           # The frontend builds FROM python:3.11-slim directly -- it has no ML
           # dependencies -- so it takes no base image.
           build-args: |
             ${{ matrix.service != 'frontend'
-                && format('BASE_IMAGE={0}/ai-residency-base-serve:sha-{1}', env.REGISTRY, github.sha)
+                && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
           tags: |
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
             ${{ steps.image.outputs.name }}:latest
+
+
+  # The manifest is the deployment artifact, so CI writes it rather than a human
+  # remembering to. Only images this commit rebuilt need resolving -- everything else
+  # keeps the digest it already has, which is exactly why nothing needs retagging.
+  #
+  # Pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot loop; the
+  # [skip ci] is belt-and-braces for anyone who swaps in a PAT later.
+  lock:
+    name: Update the image manifest
+    needs: [changes, images-base, images]
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
+      && github.event_name != 'schedule'
+      && needs.images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ env.REGISTRY }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve digests and propagate
+        run: |
+          set -euo pipefail
+          rebuilt=$(echo '${{ needs.changes.outputs.services }}' | jq -r '.[]' | tr '\n' ' ')
+          if [ '${{ needs.changes.outputs.shared }}' = 'true' ]; then
+            rebuilt="base-serve $rebuilt"
+          fi
+          echo "rebuilt: ${rebuilt:-nothing}"
+          python3 deploy/pin_images.py --update $rebuilt --sha ${{ github.sha }}
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "manifest already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/images.lock deploy/helm/ai-residency/values.yaml deploy/compose/docker-compose.yml
+          git commit -m "Update the image manifest for ${GITHUB_SHA::7} [skip ci]"
+          git push
+          echo "::notice::deploy/images.lock updated"
 
   # A published image is the artifact people actually run, so it is the thing worth
   # scanning -- a lockfile audit misses everything the base OS contributes.
@@ -372,10 +482,22 @@ jobs:
   # Reports rather than blocks (exit-code 0): a base-image CVE with no fix available
   # should be visible, not a merge gate. ignore-unfixed drops the ones nothing can be
   # done about.
+  # Whenever the base is actually rebuilt, *and* weekly. The two answer different
+  # questions: the first asks whether this change introduced something, the second
+  # whether anything has been disclosed against what was already shipped -- and only
+  # that one catches a CVE published against an image untouched for months, which is
+  # the normal state of this repo between bursts of work.
+  #
+  # The base is rebuilt only when a shared input moves, so the push arm no longer
+  # fires on every commit. That is the right shape: rescanning a byte-identical image
+  # on a docs commit told us nothing the weekly run does not. Together, roughly 55
+  # job-minutes a year.
   scan:
     name: Scan the published base image
     needs: images-base
-    if: always() && needs.images-base.result == 'success'
+    if: >-
+      always()
+      && (github.event_name == 'schedule' || needs.images-base.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -385,7 +507,7 @@ jobs:
       - name: Scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}
+          image-ref: ${{ env.REGISTRY }}/ai-residency-base-serve:${{ github.event_name == 'schedule' && 'latest' || format('sha-{0}', github.sha) }}
           format: table
           output: trivy.txt
           severity: CRITICAL,HIGH
@@ -397,7 +519,7 @@ jobs:
           {
             echo "## Trivy — ai-residency-base-serve"
             echo
-            echo "\`sha-${{ github.sha }}\` · CRITICAL and HIGH, fixable only."
+            echo "\`${{ github.event_name == 'schedule' && 'latest' || format('sha-{0}', github.sha) }}\` · CRITICAL and HIGH, fixable only."
             echo
             if [ -s trivy.txt ]; then
               echo '```'

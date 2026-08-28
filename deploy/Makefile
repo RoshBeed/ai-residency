@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images pin-images \
+.PHONY: pull up down logs status index-retrieval load-images pin-images local-up local-cluster \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -60,6 +60,7 @@ SUBSET := $(if $(filter vector-search-retrieval,$(SERVICES)),redis) $(SERVICES)
 
 up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-classifier"
 	@if [ -n "$(SERVICES)" ]; then \
+		AI_RESIDENCY_PAGES="$(SERVICES)" \
 		docker compose -f compose/docker-compose.yml up -d --no-deps frontend $(SUBSET); \
 	else \
 		docker compose -f compose/docker-compose.yml up -d; \
@@ -68,7 +69,7 @@ up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-clas
 	@echo "Frontend: http://localhost:8500"
 	@if [ -n "$(SERVICES)" ]; then \
 		echo "Running:  $(SUBSET)"; \
-		echo "The other pages will say their backend is not running, which is correct."; \
+		echo "The UI shows only these pages."; \
 	else \
 		echo "Backends: $(BACKENDS)"; \
 	fi
@@ -105,11 +106,54 @@ K8S_NODE ?= $(shell kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 IMAGE_TAG ?= latest
 IMAGES := $(shell grep -oE 'roshb/[a-z0-9.-]+' compose/docker-compose.yml | sort -u)
 
-pin-images: ## Repoint compose and the chart at a published tag: make pin-images TAG=sha-abc123
-	@test -n "$(TAG)" || (echo "Usage: make pin-images TAG=sha-<commit>   (CI prints it, or check Docker Hub)" && exit 1)
-	@sed -i '' -E 's|(image: roshb/ai-residency-[a-z0-9-]+):\$$\{IMAGE_TAG:-[^}]*\}|\1:$$\{IMAGE_TAG:-$(TAG)\}|' compose/docker-compose.yml
-	@sed -i '' -E 's|^  tag: .*|  tag: $(TAG)|' helm/ai-residency/values.yaml
-	@echo "Pinned compose and the chart to $(TAG)"
+pin-images: ## Regenerate compose and the chart from deploy/images.lock
+	@# Was `make pin-images TAG=sha-abc123`, which wrote one tag into eleven image
+	@# references. The chart pins digests from the manifest now, so writing a tag over
+	@# them would quietly deploy something images.lock does not name -- the exact
+	@# failure the manifest exists to prevent. CI keeps the lock current; this is for
+	@# regenerating after editing it by hand.
+	uv run python pin_images.py
+	@uv run python pin_images.py --check
+
+local-up: ## Build natively and run with the UI: make local-up SERVICES="word-embeddings"
+	@test -n "$(SERVICES)" || (echo 'Usage: make local-up SERVICES="word-embeddings"' && exit 1)
+	@# The main compose file pins digests, so it would pull published images and ignore
+	@# anything built here. The .local.yml override swaps them for the :latest tags
+	@# `make local` produces -- otherwise you build for a minute and then run someone
+	@# else's image without noticing.
+	$(MAKE) -C .. base
+	@for s in $(SERVICES) frontend; do \
+		echo "==> building $$s"; \
+		$(MAKE) -C .. build SERVICE=$$s || exit 1; \
+	done
+	@# --force-recreate because a container left behind by a failed run gets *started*
+	@# rather than recreated, and comes back with no network and no port mapping. The
+	@# usual cause is port 8500 being held by a Helm release of this same chart, whose
+	@# LoadBalancer Service claims it even with its pods scaled to zero --
+	@# `make helm-uninstall` frees it.
+	AI_RESIDENCY_PAGES="$(SERVICES)" docker compose \
+		-f compose/docker-compose.yml -f compose/docker-compose.local.yml \
+		up -d --no-deps --force-recreate frontend $(SUBSET)
+	@echo ""
+	@echo "Built here and running. UI: http://localhost:8500"
+
+local-cluster: ## Build every image natively and run the cluster from them: make local-cluster [SERVICES="a b"]
+	@# Published images are linux/amd64, and Docker Desktop's Kubernetes node is arm64
+	@# on Apple Silicon -- it cannot pull them at all. So a local cluster runs images
+	@# built here. Three steps that are easy to get wrong separately: build natively,
+	@# push them into the node's *own* image store (a `docker build` on the host is
+	@# invisible to it), and install with useDigest=false so the chart asks for the
+	@# tag those images carry rather than a published digest they will never match.
+	$(MAKE) -C .. base
+	@for s in $(if $(SERVICES),$(SERVICES),$(TARGETS)); do \
+		echo "==> building $$s"; \
+		$(MAKE) -C .. build SERVICE=$$s || exit 1; \
+	done
+	$(MAKE) load-images
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) -n $(HELM_NAMESPACE) --create-namespace \
+		$(HELM_SECRETS) --set image.useDigest=false --set image.tag=$(IMAGE_TAG)
+	@echo ""
+	@echo "Cluster running locally-built images. Frontend: http://localhost:8500"
 
 load-images: ## Import locally-built images into the cluster node's own image store
 	@for img in $(IMAGES); do \

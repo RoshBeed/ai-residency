@@ -25,7 +25,7 @@
 services:
   # --- CBOW vectors: nearest-neighbour and analogy inference ---
   word-embeddings:
-    image: roshb/ai-residency-word-embeddings-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-word-embeddings-serve@sha256:9dd46d7bbc77f75702cba869818457dcac4b83f2ca2357a6609a7080845c343b
     ports:
       - "8001:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -43,7 +43,7 @@ services:
 
   # --- The regression head that consumes those vectors ---
   content-scoring:
-    image: roshb/ai-residency-content-scoring-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-content-scoring-serve@sha256:3dd0c2539e1b2deedac49f0afc42750a734b8a0e718de226a34cb11f872beab4
     ports:
       - "8007:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -72,7 +72,7 @@ services:
       retries: 10
 
   vector-search-retrieval:
-    image: roshb/ai-residency-vector-search-retrieval-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vector-search-retrieval-serve@sha256:9cab730fc9311c65cd532e3d16e48fe351e0bc645dec048681815456ff0321b0
     depends_on:
       # `condition: service_healthy`, not a bare list entry: the bare form only orders
       # container *start*, so this one could come up and try to reach a Redis that had
@@ -108,7 +108,7 @@ services:
 
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
-    image: roshb/ai-residency-vit-classifier-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vit-classifier-serve@sha256:6ce755e2f23e7ab692a56ad6cfc3d2ca965491db7dba17b81d53b9b25d30cda4
     ports:
       - "8003:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -126,7 +126,7 @@ services:
 
   # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
   vit-seq2seq:
-    image: roshb/ai-residency-vit-seq2seq-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vit-seq2seq-serve@sha256:a6905997d63afe58c86111ef36736eeee5e9a9db318776460e114476a7a02dad
     ports:
       - "8008:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -143,7 +143,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   multimodal-captioning:
-    image: roshb/ai-residency-multimodal-captioning-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-multimodal-captioning-serve@sha256:e429431fbc58accd06edf74a3f000713399e4b4c3190b0812a8879ea24953002
     working_dir: /app
     ports:
       - "8004:8000"
@@ -161,7 +161,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   whisper-fine-tuning:
-    image: roshb/ai-residency-whisper-fine-tuning-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-whisper-fine-tuning-serve@sha256:155cd2f365939bcea5ae1cc19f69e38e3f2dc703b64e71d969bbc25105854b33
     ports:
       - "8005:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -179,7 +179,7 @@ services:
 
   # --- Emotion-aware Whisper: FastAPI inference container ---
   speech-emotion-recognition:
-    image: roshb/ai-residency-speech-emotion-recognition-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-speech-emotion-recognition-serve@sha256:942e416d9cc656c56891beb8d1a81b937dd840a20dac7ced557fa11b5b3cad15
     ports:
       - "8009:8000"
     # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
@@ -196,7 +196,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
 
   rlhf-ppo:
-    image: roshb/ai-residency-rlhf-ppo-serve:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-rlhf-ppo-serve@sha256:86d4b4defc0d49afdb40356da1977244710941b60bff89fda87618906f6a574f
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     ports:
@@ -216,7 +216,7 @@ services:
       HF_HOME: /root/.cache/huggingface
 
   frontend:
-    image: roshb/ai-residency-frontend:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-frontend@sha256:4e9c39109748359e97050a207e8b6ad4285eef5d858a56633a510abc89f0266e
     depends_on:
       - word-embeddings
       - content-scoring
@@ -237,6 +237,11 @@ services:
       WHISPER_FINE_TUNING_API_URL: http://whisper-fine-tuning:8000
       SPEECH_EMOTION_RECOGNITION_API_URL: http://speech-emotion-recognition:8000
       RLHF_PPO_API_URL: http://rlhf-ppo:8000
+      # Which pages this instance shows. Empty means all of them -- the portfolio
+      # hub. `make up SERVICES="word-embeddings"` sets it to what it started, so
+      # running one system gives a UI for that system rather than a hub with eight
+      # dead pages. The frontend image is the same either way; no backend grows a UI.
+      AI_RESIDENCY_PAGES: ${AI_RESIDENCY_PAGES:-}
     ports:
       - "8500:8501"
 
