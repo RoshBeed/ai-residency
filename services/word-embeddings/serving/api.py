@@ -24,6 +24,7 @@ from ai_residency_common import (
 )
 from config import Config
 from word2vec import nearest_words, valid_row_mask
+from word_embeddings.evaluate import checkpoint_vocabulary
 
 __all__ = ["app"]
 
@@ -50,8 +51,9 @@ class EmbeddingState:
         self.embeddings = embeddings
         self.word_to_index = word_to_index
         self.index_to_word = {index: word for word, index in word_to_index.items()}
-        # Which rows can be named at all. The checkpoint in production has 258,196
-        # rows and 230,701 of them map to a word, so this is not hypothetical --
+        # Which rows can be named at all. Current checkpoints have a dense vocabulary
+        # and no holes, but the one this service shipped for months had 258,196 rows
+        # against 230,701 nameable words, so this is not hypothetical --
         # searching the other 27,495 raised KeyError on `/nearest`.
         self.valid_rows = valid_row_mask(embeddings.shape[0], self.index_to_word)
         self.source = source
@@ -76,10 +78,10 @@ def load_embeddings() -> bool:
         return True
     try:
         config = Config()
-        path, source = resolve_required(config.cbow_checkpoint, config.hf_repo_id)
+        path, source = resolve_required(config.embedding_checkpoint, config.hf_repo_id)
         checkpoint = load_checkpoint(path)
         embeddings = checkpoint["model_state_dict"]["in_embed.weight"].cpu()
-        state.load(embeddings, checkpoint["extra"]["word_to_lemma_index"], source)
+        state.load(embeddings, checkpoint_vocabulary(checkpoint["extra"]), source)
         logger.info("Loaded %s embeddings from %s", tuple(embeddings.shape), source)
     except (FileNotFoundError, KeyError, RuntimeError) as error:
         logger.error("Could not load embeddings, /nearest will return 503: %s", error)
@@ -197,7 +199,12 @@ async def analogy(request: AnalogyRequest) -> NearestResponse:
         + embeddings[state.word_to_index[request.c]]
     )
     neighbours = nearest_words(
-        embeddings, vector, state.index_to_word, k=request.k, mask=state.valid_rows
+        embeddings,
+        vector,
+        state.index_to_word,
+        k=request.k,
+        exclude=(request.a, request.b, request.c),
+        mask=state.valid_rows,
     )
     logger.info("Analogy %r - %r + %r -> %s", request.a, request.b, request.c, neighbours)
     return NearestResponse(

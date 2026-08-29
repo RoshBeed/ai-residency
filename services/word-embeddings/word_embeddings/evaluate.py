@@ -1,17 +1,17 @@
-"""Intrinsic evaluation of the learned word vectors.
+"""Score a trained checkpoint and look at what it learned.
 
-Two standard word2vec checks, both weak on their own and worth stating plainly:
+    python -m word_embeddings.evaluate              # the benchmark table
+    python -m word_embeddings.evaluate --visualise  # and a t-SNE plot
 
-* the analogy test (``king - man + woman ~= queen``),
-* a Spearman correlation against a handful of hand-scored similarity pairs.
+The scoring itself lives in `benchmarks.py`; this module resolves a checkpoint,
+prints the numbers next to the baselines that make them mean something, and draws
+the embedding space.
 
-They are a smoke signal that the vectors learned *structure* during a long run, not
-a measure of embedding quality. The real evaluation of these vectors is the
-downstream content-scoring head in the sibling
-`content-scoring` service. ``visualise_embeddings`` projects the space
-to 2D with t-SNE.
-
-Run ``python -m word_embeddings.evaluate`` to load the saved checkpoint and print both.
+`visualise_embeddings` projects to 2D with t-SNE. Its "top N most frequent words"
+slice is `[:n]` because `corpus.build_vocabulary` assigns ids in descending frequency
+order -- under the previous pipeline ids came out in first-appearance order, so the
+figure captioned "top 100 by frequency" was showing the first 100 words the tokenizer
+happened to encounter.
 """
 
 import argparse
@@ -23,90 +23,127 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import torch
-import torch.nn.functional as F
-from scipy.stats import spearmanr
 from sklearn.manifold import TSNE
 
-from ai_residency_common import get_logger, load_checkpoint, resolve_required
+from ai_residency_common import get_logger, load_checkpoint, resolve_required, set_seed
 from config import Config
 from word2vec import nearest_words
+from word_embeddings.benchmarks import evaluate_embeddings, load_benchmarks
 
-__all__ = ["evaluate_embeddings", "main", "visualise_embeddings"]
+__all__ = ["checkpoint_vocabulary", "main", "report", "visualise_embeddings"]
 
 logger = get_logger(__name__)
 
-# Pairs with a rough human judgement of similarity, for a Spearman correlation.
-_SIMILARITY_PAIRS = (("king", "queen"), ("dog", "cat"), ("king", "dog"))
-_HUMAN_SCORES = (0.95, 0.85, 0.2)
-
-# The canonical word2vec analogy: king - man + woman ~= queen.
-_ANALOGY = ("king", "man", "woman", "queen")
-
-
-def _nearest_word(
-    embeddings: torch.Tensor, vector: torch.Tensor, index_to_word: dict[int, str]
-) -> str:
-    """Return the vocabulary word whose vector is closest to `vector`.
-
-    Empty when the vocabulary names none of the matrix's rows, which only happens
-    if the checkpoint and its vocabulary do not belong together.
-    """
-    found = nearest_words(embeddings, vector, index_to_word, k=1)
-    return found[0][0] if found else ""
+# Published word2vec results on text8, for the table to sit next to. A number with no
+# baseline beside it is not a result.
+PUBLISHED_TEXT8 = {
+    "wordsim353_spearman": 0.68,
+    "simlex999_spearman": 0.30,
+    "analogy_total": 0.38,
+}
 
 
-def evaluate_embeddings(
-    embeddings: torch.Tensor, word_to_index: dict[str, int]
-) -> dict[str, float]:
-    """Score the embeddings on the analogy and similarity checks.
+def checkpoint_vocabulary(extra: dict[str, object]) -> dict[str, int]:
+    """Read the vocabulary a checkpoint's embedding rows are indexed by.
 
     Args:
-        embeddings: The input-embedding matrix, one row per vocabulary entry.
-        word_to_index: Vocabulary the rows are indexed by.
+        extra: The checkpoint's `extra` payload.
 
     Returns:
-        `analogy_correct` (1.0 or 0.0) and `similarity_spearman`. Either is omitted
-        when the vocabulary lacks the words that check needs — a real corpus is not
-        obliged to contain "queen", and silently scoring 0.0 for that would look like
-        a training failure rather than a missing word.
+        The word-to-index mapping.
+
+    Raises:
+        KeyError: If the checkpoint carries no vocabulary at all.
+
+    Prefers `word_to_index` and falls back to `word_to_lemma_index` so checkpoints
+    written before the index spaces were untangled still load. They will score badly,
+    and that is not a regression: `word_to_lemma_index` maps words to *lemma* ids
+    while the matrix was trained on *word* ids, so those checkpoints were always being
+    read through the wrong mapping.
     """
-    metrics: dict[str, float] = {}
-    index_to_word = {index: word for word, index in word_to_index.items()}
+    for key in ("word_to_index", "word_to_lemma_index"):
+        if key in extra:
+            vocabulary: dict[str, int] = extra[key]  # type: ignore[assignment]
+            if key != "word_to_index":
+                logger.warning(
+                    "Checkpoint predates the vocabulary fix; reading %s, whose ids do "
+                    "not index these rows. Retrain for meaningful scores.",
+                    key,
+                )
+            return vocabulary
+    raise KeyError("checkpoint carries no vocabulary")
 
-    pairs = [pair for pair in _SIMILARITY_PAIRS if all(word in word_to_index for word in pair)]
-    if len(pairs) == len(_SIMILARITY_PAIRS):
-        model_scores = [
-            F.cosine_similarity(
-                embeddings[word_to_index[first]], embeddings[word_to_index[second]], dim=0
-            ).item()
-            for first, second in pairs
-        ]
-        correlation, _ = spearmanr(model_scores, list(_HUMAN_SCORES))
-        metrics["similarity_spearman"] = float(correlation)
 
-    first, second, third, expected = _ANALOGY
-    if all(word in word_to_index for word in _ANALOGY):
-        predicted = _nearest_word(
-            embeddings,
-            embeddings[word_to_index[second]]
-            - embeddings[word_to_index[first]]
-            + embeddings[word_to_index[third]],
-            index_to_word,
+def report(config: Config) -> dict[str, float]:
+    """Score the configured checkpoint and log the table.
+
+    Args:
+        config: Supplies the checkpoint location and the analogy restriction.
+
+    Returns:
+        The benchmark metrics.
+    """
+    path, source = resolve_required(config.embedding_checkpoint, config.hf_repo_id)
+    checkpoint = load_checkpoint(path)
+    embeddings = checkpoint["model_state_dict"]["in_embed.weight"].cpu()
+    word_to_index = checkpoint_vocabulary(checkpoint["extra"])
+    logger.info(
+        "%s checkpoint from %s: %d rows, %d dims, epoch %s",
+        config.architecture,
+        source,
+        embeddings.shape[0],
+        embeddings.shape[1],
+        checkpoint["epoch"],
+    )
+
+    benchmarks = load_benchmarks(config)
+    metrics = evaluate_embeddings(
+        embeddings, word_to_index, benchmarks, max_analogy_vocab=config.max_analogy_vocab
+    )
+
+    logger.info("%-24s %8s %8s %10s", "benchmark", "score", "published", "coverage")
+    for name, coverage_key in (
+        ("wordsim353_spearman", "wordsim353_coverage"),
+        ("simlex999_spearman", "simlex999_coverage"),
+        ("analogy_total", "analogy_coverage"),
+    ):
+        published = PUBLISHED_TEXT8.get(name)
+        logger.info(
+            "%-24s %8.4f %8s %9.1f%%",
+            name,
+            metrics[name],
+            f"{published:.2f}" if published else "-",
+            100 * metrics[coverage_key],
         )
-        metrics["analogy_correct"] = float(predicted == expected)
-        logger.debug("Analogy king-man+woman predicted %r, expected %r", predicted, expected)
+    logger.info(
+        "%-24s %8.4f  (semantic %.4f, syntactic %.4f)",
+        "analogy breakdown",
+        metrics["analogy_total"],
+        metrics["analogy_semantic"],
+        metrics["analogy_syntactic"],
+    )
 
+    index_to_word = {index: word for word, index in word_to_index.items()}
+    for word in config.probe_words:
+        if word in word_to_index:
+            neighbours = nearest_words(
+                embeddings, embeddings[word_to_index[word]], index_to_word, k=5, exclude=word
+            )
+            logger.info("  %-12s %s", word, ", ".join(other for other, _ in neighbours))
     return metrics
 
 
 def visualise_embeddings(config: Config, max_embeddings: int, output: str) -> None:
     """Write a t-SNE scatter plot of the most frequent word vectors."""
-    checkpoint = load_checkpoint(config.cbow_checkpoint)
+    set_seed(config.seed)
+    path, _ = resolve_required(config.embedding_checkpoint, config.hf_repo_id)
+    checkpoint = load_checkpoint(path)
     embeddings = checkpoint["model_state_dict"]["in_embed.weight"].cpu()
-    word_to_index: dict[str, int] = checkpoint["extra"]["word_to_lemma_index"]
+    word_to_index = checkpoint_vocabulary(checkpoint["extra"])
 
-    words = sorted(word_to_index, key=lambda word: word_to_index[word])[:max_embeddings]
+    index_to_word = {index: word for word, index in word_to_index.items()}
+    count = min(max_embeddings, embeddings.shape[0])
+    words = [index_to_word[index] for index in range(count) if index in index_to_word]
     vectors = embeddings[: len(words)].numpy()
     logger.info("Projecting %d of %d vectors", len(words), embeddings.shape[0])
 
@@ -119,7 +156,7 @@ def visualise_embeddings(config: Config, max_embeddings: int, output: str) -> No
     for (x, y), word in zip(reduced, words, strict=True):
         plt.scatter(x, y, s=6)
         plt.annotate(word, (x, y), fontsize=7)
-    plt.title(f"CBOW embeddings, t-SNE projection (top {len(words)})")
+    plt.title(f"{config.architecture} embeddings, t-SNE projection (top {len(words)})")
     plt.grid(True)
     plt.savefig(output, dpi=150, bbox_inches="tight")
     plt.close()
@@ -127,31 +164,23 @@ def visualise_embeddings(config: Config, max_embeddings: int, output: str) -> No
 
 
 def main() -> None:
-    """Load the saved CBOW checkpoint and report its intrinsic metrics."""
+    """Load the saved checkpoint and report its intrinsic metrics."""
     parser = argparse.ArgumentParser(description="Evaluate the learned word vectors")
     parser.add_argument(
-        "--visualise",
-        action="store_true",
-        help="Also write a t-SNE plot of the embedding space",
+        "--visualise", action="store_true", help="Also write a t-SNE plot of the embedding space"
     )
-    parser.add_argument("--max-embeddings", type=int, default=300)
-    parser.add_argument("--output", default="assets/embeddings_tsne.png")
+    # 200 rather than 300: past roughly that, t-SNE packs the function words into a
+    # centre where the labels overlap into illegibility, and the clusters worth
+    # seeing are all at the periphery anyway.
+    parser.add_argument("--max-embeddings", type=int, default=200)
+    # Matches the filename the README displays. The default used to be
+    # `embeddings_tsne.png`, so `make visualise` wrote a file nothing referenced and
+    # never regenerated the figure in the write-up.
+    parser.add_argument("--output", default="services/word-embeddings/assets/tsne_embeddings.png")
     args = parser.parse_args()
 
     config = Config()
-
-    cbow_path, cbow_source = resolve_required(config.cbow_checkpoint, config.hf_repo_id)
-    cbow = load_checkpoint(cbow_path)
-    embeddings = cbow["model_state_dict"]["in_embed.weight"]
-    word_to_index: dict[str, int] = cbow["extra"]["word_to_lemma_index"]
-    logger.info(
-        "CBOW checkpoint from %s (epoch %s, loss %.4f)",
-        cbow_source,
-        cbow["epoch"],
-        cbow["metrics"].get("epoch_loss", float("nan")),
-    )
-    logger.info("Intrinsic embedding metrics: %s", evaluate_embeddings(embeddings, word_to_index))
-
+    report(config)
     if args.visualise:
         visualise_embeddings(config, args.max_embeddings, args.output)
 

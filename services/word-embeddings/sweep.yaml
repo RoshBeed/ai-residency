@@ -1,35 +1,79 @@
-# Hyperparameter sweep for the CBOW stage.
+# Hyperparameter sweep for the word-vector stage.
 #
 # This replaces a hand-rolled cartesian product that lived inside the trainer: it read
 # list-valued keys out of a YAML file, expanded them itself, and ran all twelve
 # combinations back to back in one process, sequentially, with no way to stop, resume
 # or parallelise. W&B already does this properly.
 #
-#   wandb sweep sweep.yaml          # prints a sweep id
-#   make sweep SWEEP=<id>           # runs an agent against it
+#   wandb sweep services/word-embeddings/sweep.yaml   # prints a sweep id
+#   make -C services/word-embeddings sweep SWEEP=<id> COUNT=<n>
 #
-# `bayes` rather than `grid`: the old expansion was an exhaustive twelve runs over a
-# ~100M-token corpus, which is hours of compute to learn what a handful of informed
-# runs would. Set `--count` on the agent to bound it.
+# `bayes` rather than `grid`: the search space below has 2*3*3*3*3 = 162 discrete
+# corners before the continuous learning rate, which no wall-clock budget covers
+# exhaustively. Bound a run with COUNT; see the Makefile target for how to size it.
+# Without this the sweep is created in whatever project the working directory
+# suggests, which is not the one `Config.wandb_project` names -- so the sweep's runs
+# and every non-sweep run of the same service end up in two different places.
+project: ai-residency-word-embeddings
 program: python
+# `${env}` expands to `/usr/bin/env` and `${args_no_hyphens}` to `KEY=value ...`, and
+# the pair has to come *before* the program: that is what makes the sweep's parameters
+# environment variables rather than argv. Without `${args_no_hyphens}` the agent
+# passes nothing at all -- every run trains the defaults, reports a near-identical
+# score, and the Bayes search spends the night optimising noise. The previous
+# sweep.yaml had `${env}` alone, and a comment claiming the agent exported the
+# parameters; it never did.
 command:
   - ${env}
+  - ${args_no_hyphens}
   - ${program}
   - -m
   - word_embeddings.train
 method: bayes
 metric:
-  name: epoch_loss
-  goal: minimize
+  # NOT loss. Loss is not comparable across these runs at all: the random-init value
+  # is (positives + positives*num_negatives) * ln 2, so it is 4.16 for CBOW at 5
+  # negatives and 41.59 for skip-gram at the same setting. A sweep minimising loss
+  # would be ranking runs by their architecture and negative count, not by how good
+  # the vectors are.
+  name: best/score
+  goal: maximize
 parameters:
   # These names are the Config field names, uppercased and prefixed, because that is
   # exactly what BaseConfig reads from the environment. The agent exports them, so no
   # sweep-specific plumbing is needed in the trainer at all.
-  AI_RESIDENCY_CBOW_LEARNING_RATE:
+  AI_RESIDENCY_ARCHITECTURE:
+    values: [cbow, skipgram]
+  AI_RESIDENCY_LEARNING_RATE:
     distribution: log_uniform_values
-    min: 0.0001
+    min: 0.0003
     max: 0.01
-  AI_RESIDENCY_CBOW_EMBED_SIZE:
-    values: [128, 256]
-  AI_RESIDENCY_CBOW_WINDOW_SIZE:
-    values: [4, 8]
+  AI_RESIDENCY_EMBED_SIZE:
+    values: [100, 200, 300]
+  AI_RESIDENCY_WINDOW_SIZE:
+    values: [5, 8, 10]
+  AI_RESIDENCY_NUM_NEGATIVES:
+    values: [5, 10, 15]
+  AI_RESIDENCY_SUBSAMPLE_THRESHOLD:
+    values: [0.00001, 0.0001, 0.001]
+
+  # Held fixed, deliberately.
+  #
+  # `min_count` changes the vocabulary, which changes how many benchmark pairs are
+  # covered, which makes scores incomparable between runs -- a sweep that varied it
+  # would reward runs for being evaluated on an easier subset.
+  #
+  # `num_epochs` is fixed so every run takes about the same wall-clock time, which is
+  # what makes a COUNT budget mean anything.
+  AI_RESIDENCY_MIN_COUNT:
+    value: 5
+  AI_RESIDENCY_NUM_EPOCHS:
+    value: 10
+
+  # Sweep runs neither save nor push. Twenty-plus checkpoints at ~170MB of weights
+  # plus optimizer state is several GB of local disk and, if pushed, several GB on the
+  # Hub -- for artifacts that exist only to produce one number each.
+  AI_RESIDENCY_SAVE_CHECKPOINTS:
+    value: "false"
+  AI_RESIDENCY_HF_REPO_ID:
+    value: ""

@@ -16,10 +16,16 @@ __pycache__/
 # what it trains, so nothing here should ever depend on a local copy.
 services/*/checkpoints/
 services/*/data/
-# Also at the repo root: pytest run from the root resolves a service's `data_dir`
-# relative to the cwd, so MNIST lands here rather than under the service. 63MB of it
-# got committed once that way.
+# Also at the repo root: pytest and `python -m ...` run from the root resolve a
+# service's `data_dir` and `checkpoint_dir` relative to the cwd, so MNIST lands here
+# rather than under the service. 63MB of it got committed once that way.
+#
+# `/checkpoints/` needs its own rule despite the `*.pt` / `*.pth` patterns below:
+# those match the weights but not the metrics sidecar written beside them, so a root
+# training run left a stray `checkpoints/<arch>/<arch>_model.json` staged and nothing
+# else about the directory ignored.
 /data/
+/checkpoints/
 wandb/
 
 # Intermediates from synthesizing demo audio, which land in whatever directory

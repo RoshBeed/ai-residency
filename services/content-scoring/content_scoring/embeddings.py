@@ -38,15 +38,32 @@ def load_cbow_embeddings(model_path: str | Path) -> torch.Tensor:
 
 
 def load_cbow_vocabulary(model_path: str | Path) -> dict[str, int]:
-    """Load the word-to-lemma-index mapping a CBOW checkpoint was trained with.
+    """Load the vocabulary a CBOW checkpoint's embedding rows are indexed by.
 
     Args:
         model_path: Path to the same checkpoint passed to `load_cbow_embeddings`.
 
     Returns:
-        The `word_to_lemma_index` mapping stored in the checkpoint's `extra`.
+        The `word_to_index` mapping stored in the checkpoint's `extra`, falling back
+        to `word_to_lemma_index` for checkpoints written before the two were
+        untangled.
+
+    Raises:
+        KeyError: If the checkpoint carries no vocabulary at all.
+
+    The fallback exists because the word-embeddings service used to save a mapping
+    from words to *lemma* ids while training the matrix on *word* ids -- two
+    different index spaces -- so the vectors this function returned were being looked
+    up through the wrong mapping. A checkpoint from before the fix still loads, and
+    still scores badly; retraining is what fixes it.
     """
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-    vocabulary: dict[str, int] = checkpoint["extra"]["word_to_lemma_index"]
-    logger.info("Loaded vocabulary with %d words", len(vocabulary))
-    return vocabulary
+    extra = checkpoint["extra"]
+    for key in ("word_to_index", "word_to_lemma_index"):
+        if key in extra:
+            vocabulary: dict[str, int] = extra[key]
+            if key != "word_to_index":
+                logger.warning("Checkpoint predates the vocabulary fix; ids may not index its rows")
+            logger.info("Loaded vocabulary with %d words", len(vocabulary))
+            return vocabulary
+    raise KeyError("checkpoint carries no vocabulary")

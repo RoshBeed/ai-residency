@@ -1,11 +1,14 @@
 """Tests for the word-embeddings stage.
 
 Focused on the things that actually broke here: the text-normalization table being
-dead code, the CBOW model being constructed with the wrong arguments, and the
-embeddings carrying their vocabulary with them.
+dead code, the model being constructed with the wrong arguments, the embeddings
+carrying their vocabulary with them -- and, most of the above, the two index spaces
+that used to be confused for one another.
 """
 
+import math
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,7 +18,8 @@ from fastapi.testclient import TestClient
 from config import Config
 from serving.api import app
 from word_embeddings.etl import TextProcessor
-from word_embeddings.model import build_cbow
+from word_embeddings.model import build_word2vec
+from word_embeddings.train import train
 
 
 class TestTextNormalization:
@@ -40,7 +44,7 @@ class TestCbowModel:
     """
 
     def test_builds_the_matrix_everything_downstream_reads(self) -> None:
-        model = build_cbow(64, 8)
+        model = build_word2vec(64, Config(embed_size=8))
         assert model.in_embed.weight.shape == (64, 8)
         assert model.embeddings.shape == (64, 8)
 
@@ -50,7 +54,7 @@ class TestCbowModel:
         It scored negatives with `torch.bmm(...).squeeze()` -- no dim -- which
         collapses the batch axis along with the one it meant to remove.
         """
-        model = build_cbow(64, 8, num_negatives=5)
+        model = build_word2vec(64, Config(embed_size=8, num_negatives=5))
         loss = model(
             torch.randint(0, 64, (1,)),
             torch.randint(0, 64, (1, 4)),
@@ -102,10 +106,10 @@ class TestApi:
     ) -> None:
         """`/nearest` returned 500 in production on a vocabulary with holes.
 
-        The deployed checkpoint has 258,196 embedding rows and 230,701 of them map
-        to a word. `topk` searched all of them, so a nameless row could win and the
-        lookup that followed raised `KeyError`. Row 1 below stands in for that: it
-        ties with the query for closest, and has no word.
+        The checkpoint this service shipped for months had 258,196 embedding rows
+        and only 230,701 of them mapped to a word. `topk` searched all of them, so a
+        nameless row could win and the lookup that followed raised `KeyError`. Row 1
+        below stands in for that: it ties with the query for closest, and has no word.
         """
         loaded_state(torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]), {"king": 0, "apple": 2})
 
@@ -131,111 +135,254 @@ class TestConfig:
     def test_seed_is_fixed(self) -> None:
         assert Config().seed == 42
 
-    def test_cbow_checkpoint_dir_derives_from_the_checkpoint(self) -> None:
+    def test_checkpoint_dir_derives_from_the_checkpoint(self) -> None:
         config = Config()
-        assert config.cbow_checkpoint_dir == config.cbow_checkpoint.parent
+        assert config.embedding_checkpoint_dir == config.embedding_checkpoint.parent
 
 
-def test_config_carries_the_cbow_hyperparameters() -> None:
+def test_config_carries_the_hyperparameters() -> None:
     """They lived in a separate YAML read out of wandb.config until Pass 3."""
     config = Config()
-    assert config.cbow_embed_size > 0
-    assert config.cbow_window_size > 0
-    assert config.cbow_num_negatives > 0
-    assert config.cbow_checkpoint_dir == config.cbow_checkpoint.parent
+    assert config.embed_size > 0
+    assert config.window_size > 0
+    assert config.num_negatives > 0
+    assert config.min_count > 0
+    assert config.embedding_checkpoint_dir == config.embedding_checkpoint.parent
 
 
-def test_cbow_hyperparameters_are_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hyperparameters_are_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
     """A sweep sets these as environment variables; nothing else plumbs them."""
-    monkeypatch.setenv("AI_RESIDENCY_CBOW_EMBED_SIZE", "64")
-    monkeypatch.setenv("AI_RESIDENCY_CBOW_LEARNING_RATE", "0.005")
+    monkeypatch.setenv("AI_RESIDENCY_EMBED_SIZE", "64")
+    monkeypatch.setenv("AI_RESIDENCY_LEARNING_RATE", "0.005")
     config = Config()
-    assert config.cbow_embed_size == 64
-    assert config.cbow_learning_rate == 0.005
+    assert config.embed_size == 64
+    assert config.learning_rate == 0.005
 
 
-def test_sample_vocabulary_is_self_consistent() -> None:
-    from word_embeddings.data import (
-        UNKNOWN_TOKEN,
-        encode_corpus,
-        sample_vocabulary,
-    )
+def test_architecture_is_overridable_and_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Literal field could not be set from the environment until `_coerce` learned
+    about Literal, which silently excluded `architecture` from every sweep."""
+    monkeypatch.setenv("AI_RESIDENCY_ARCHITECTURE", "skipgram")
+    assert Config().architecture == "skipgram"
 
-    word_to_index, word_to_lemma_index, text = sample_vocabulary()
-    assert UNKNOWN_TOKEN in word_to_index
-    assert word_to_index == word_to_lemma_index
-
-    encoded = encode_corpus(text, word_to_index)
-    assert encoded, "the sample corpus must encode to something"
-    assert max(encoded) < len(word_to_index)
+    monkeypatch.setenv("AI_RESIDENCY_ARCHITECTURE", "cbowe")
+    with pytest.raises(ValueError, match="not one of"):
+        Config()
 
 
-def test_encode_corpus_maps_unseen_words_to_unknown() -> None:
-    from word_embeddings.data import (
-        UNKNOWN_TOKEN,
-        encode_corpus,
-    )
+class TestVocabulary:
+    """`corpus.build_vocabulary`, which decides the index space everything else uses."""
 
-    vocabulary = {"python": 0, UNKNOWN_TOKEN: 1}
-    assert encode_corpus("python haskell", vocabulary) == [0, 1]
+    def test_ids_are_ordered_by_descending_frequency(self) -> None:
+        """Every figure and probe in this service slices `[:n]` for the n most
+        frequent words. The previous pipeline assigned ids in first-appearance order,
+        so a plot captioned "top 100 by frequency" showed the first 100 words seen."""
+        from word_embeddings.corpus import build_vocabulary
+
+        word_to_index, counts = build_vocabulary(["rare"] + ["common"] * 5 + ["mid"] * 3, 1)
+
+        assert word_to_index == {"common": 0, "mid": 1, "rare": 2}
+        assert counts.tolist() == [5, 3, 1]
+
+    def test_min_count_drops_words_from_vocabulary_and_corpus(self) -> None:
+        from word_embeddings.corpus import build_vocabulary, encode
+
+        words = ["keep"] * 5 + ["drop"] * 2
+        word_to_index, _ = build_vocabulary(words, 5)
+
+        assert word_to_index == {"keep": 0}
+        # Dropped, not mapped to <UNK>: one row standing in for every rare word
+        # becomes a high-frequency token that appears beside everything and trains
+        # into the centre of the space.
+        assert encode(words, word_to_index).tolist() == [0] * 5
+
+    def test_an_impossible_threshold_raises_rather_than_returning_nothing(self) -> None:
+        from word_embeddings.corpus import build_vocabulary
+
+        with pytest.raises(ValueError, match="removed all"):
+            build_vocabulary(["a", "b"], 10)
 
 
-def test_evaluation_skips_checks_the_vocabulary_cannot_support() -> None:
-    """A real corpus need not contain "queen"; scoring 0.0 would read as failure."""
-    import torch
+class TestBatcher:
+    """The batcher replaced a Dataset that materialised 16.7M Python tuples up front."""
 
-    from word_embeddings.evaluate import evaluate_embeddings
+    def test_keep_probabilities_match_the_published_formula(self) -> None:
+        """P(keep) = (sqrt(z/t) + 1) * (t/z), Mikolov et al. (2013b)."""
+        from word_embeddings.data import keep_probabilities
 
-    metrics = evaluate_embeddings(torch.randn(2, 8), {"python": 0, "rust": 1})
-    assert metrics == {}
+        counts = torch.tensor([600, 300, 100])
+        probabilities = keep_probabilities(counts, 0.1)
 
+        assert probabilities[0] == pytest.approx((math.sqrt(6.0) + 1) * (1 / 6), rel=1e-5)
+        assert probabilities[1] == pytest.approx((math.sqrt(3.0) + 1) * (1 / 3), rel=1e-5)
+        # At or below the threshold a word is always kept, never kept 1.4 times.
+        assert probabilities[2] == pytest.approx(1.0)
 
-def test_evaluation_scores_a_vocabulary_that_supports_it() -> None:
-    import torch
+    def test_a_zero_threshold_raises_instead_of_producing_nans(self) -> None:
+        from word_embeddings.data import keep_probabilities
 
-    from word_embeddings.data import sample_vocabulary
-    from word_embeddings.evaluate import evaluate_embeddings
+        with pytest.raises(ValueError, match="must be positive"):
+            keep_probabilities(torch.tensor([1, 2]), 0.0)
 
-    word_to_index, _, _ = sample_vocabulary()
-    metrics = evaluate_embeddings(torch.randn(len(word_to_index), 8), word_to_index)
-    assert "analogy_correct" in metrics
-    assert "similarity_spearman" in metrics
+    def test_context_surrounds_the_centre_and_excludes_it(self) -> None:
+        from word_embeddings.corpus import Corpus
+        from word_embeddings.data import Word2VecBatcher
 
-
-def test_cbow_training_runs_and_is_reproducible(tmp_path: Any) -> None:
-    """The whole stage, end to end, on the sample corpus. Twice, identically."""
-    from word_embeddings.train import train_cbow
-
-    def run() -> float:
+        ids = torch.arange(1000) % 50
+        corpus = Corpus(ids, {f"w{i}": i for i in range(50)}, torch.ones(50, dtype=torch.long))
+        # Architecture pinned rather than inherited from the default: skip-gram draws
+        # num_negatives per positive pair, so this shape depends on it.
         config = Config(
-            cbow_checkpoint=tmp_path / "cbow.pt",
-            cbow_num_epochs=1,
-            cbow_batch_size=8,
-            hf_repo_id=None,
-            wandb_project=None,
+            architecture="cbow",
+            window_size=2,
+            batch_size=4,
+            num_negatives=3,
+            subsample_threshold=1.0,
         )
-        return train_cbow(config, sample=True)
 
-    first = run()
-    assert (tmp_path / "cbow.pt").exists()
-    assert first == run(), "seeded training must reproduce"
+        centre, context, negatives = next(
+            Word2VecBatcher(corpus, config, device=torch.device("cpu")).epoch()
+        )
+
+        assert centre.shape == (4,) and context.shape == (4, 4) and negatives.shape == (4, 3)
+        for row in range(4):
+            middle = int(centre[row])
+            expected = [(middle + offset) % 50 for offset in (-2, -1, 1, 2)]
+            assert context[row].tolist() == expected
+
+    def test_skipgram_draws_negatives_per_positive_pair(self) -> None:
+        """Skip-gram scores 2*window positives against the same negative set, so
+        drawing one row's worth would leave ten positives pulling up against five
+        negatives pushing down -- an imbalance CBOW does not have."""
+        from word_embeddings.corpus import Corpus
+        from word_embeddings.data import Word2VecBatcher
+
+        ids = torch.arange(1000) % 50
+        corpus = Corpus(ids, {f"w{i}": i for i in range(50)}, torch.ones(50, dtype=torch.long))
+        shapes = {}
+        for architecture in ("cbow", "skipgram"):
+            config = Config(
+                architecture=architecture,
+                window_size=3,
+                batch_size=4,
+                num_negatives=5,
+                subsample_threshold=1.0,
+            )
+            _, _, negatives = next(
+                Word2VecBatcher(corpus, config, device=torch.device("cpu")).epoch()
+            )
+            shapes[architecture] = negatives.shape[1]
+
+        assert shapes["cbow"] == 5
+        assert shapes["skipgram"] == 5 * 6
 
 
-def test_cbow_checkpoint_carries_its_vocabulary(tmp_path: Any) -> None:
-    """Embeddings are meaningless without the mapping they were trained against."""
-    from ai_residency_common import load_checkpoint
-    from word_embeddings.train import train_cbow
+class TestBenchmarks:
+    def test_similarity_reports_coverage_alongside_the_score(self) -> None:
+        """A correlation over the pairs a small vocabulary happens to cover is not
+        comparable to one over nearly all of them, so the two travel together."""
+        from word_embeddings.benchmarks import similarity_score
 
-    config = Config(
-        cbow_checkpoint=tmp_path / "cbow.pt",
-        cbow_num_epochs=1,
-        cbow_batch_size=8,
+        embeddings = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]])
+        vocabulary = {"a": 0, "b": 1, "c": 2}
+        pairs = [("a", "b", 9.0), ("a", "c", 1.0), ("a", "missing", 5.0)]
+
+        correlation, coverage = similarity_score(embeddings, vocabulary, pairs)
+
+        assert correlation == pytest.approx(1.0)
+        assert coverage == pytest.approx(2 / 3)
+
+    def test_analogy_excludes_all_three_query_words(self) -> None:
+        """`king - man + woman` lands nearest to `king` itself far more often than to
+        `queen`. The previous scorer excluded none of them, so the metric it reported
+        was very nearly a constant zero."""
+        from word_embeddings.benchmarks import analogy_accuracy
+
+        # `b` is the nearest row to the query vector b - a + c; `d` is the answer.
+        # Without exclusion the argmax is `b` and the question scores wrong.
+        embeddings = torch.tensor(
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 0.05], [0.02, 1.0]], dtype=torch.float32
+        )
+        vocabulary = {"a": 0, "b": 1, "c": 2, "d": 3}
+
+        result = analogy_accuracy(embeddings, vocabulary, [("a", "b", "c", "d", True)])
+
+        assert result["total"] == pytest.approx(1.0)
+        assert result["coverage"] == pytest.approx(1.0)
+
+    def test_untrained_embeddings_score_about_zero(self) -> None:
+        """The baseline every reported number has to be read against."""
+        from word_embeddings.benchmarks import similarity_score
+
+        torch.manual_seed(0)
+        vocabulary = {f"w{i}": i for i in range(200)}
+        pairs = [(f"w{i}", f"w{i + 1}", float(i)) for i in range(0, 100, 2)]
+
+        correlation, _ = similarity_score(torch.randn(200, 32), vocabulary, pairs)
+
+        assert abs(correlation) < 0.4
+
+
+class TestCheckpoint:
+    def test_training_runs_and_is_reproducible(self, tmp_path: Any) -> None:
+        from word_embeddings.train import train
+
+        def once() -> float:
+            return train(_tiny_config(tmp_path), corpus=_tiny_corpus())["score"]
+
+        assert once() == pytest.approx(once())
+
+    def test_checkpoint_carries_the_vocabulary_its_rows_are_indexed_by(self, tmp_path: Any) -> None:
+        """The bug this rewrite exists to fix: the corpus was encoded with
+        `word_to_index` while the checkpoint saved `word_to_lemma_index`, a different
+        index space, so every neighbour served was read through the wrong mapping."""
+        from ai_residency_common import load_checkpoint
+
+        config = _tiny_config(tmp_path)
+        corpus = _tiny_corpus()
+        train(config, corpus=corpus)
+
+        payload = load_checkpoint(config.embedding_checkpoint)
+        vocabulary = payload["extra"]["word_to_index"]
+
+        assert vocabulary == corpus.word_to_index
+        assert payload["model_state_dict"]["in_embed.weight"].shape[0] == len(vocabulary)
+        # Dense and total: every row can be named, so nearest-neighbour search has no
+        # holes to fall into.
+        assert sorted(vocabulary.values()) == list(range(len(vocabulary)))
+
+    def test_reader_prefers_the_new_key_and_falls_back_to_the_old(self) -> None:
+        from word_embeddings.evaluate import checkpoint_vocabulary
+
+        assert checkpoint_vocabulary({"word_to_index": {"a": 0}}) == {"a": 0}
+        assert checkpoint_vocabulary({"word_to_lemma_index": {"b": 0}}) == {"b": 0}
+        with pytest.raises(KeyError):
+            checkpoint_vocabulary({})
+
+
+def _tiny_corpus() -> Any:
+    from word_embeddings.corpus import Corpus
+
+    # Real benchmark words, so the tiny run exercises the scoring path rather
+    # than short-circuiting on an empty intersection.
+    words = ("king queen man woman car cat dog tiger book computer " * 40).split()
+    from word_embeddings.corpus import build_vocabulary, encode
+
+    word_to_index, counts = build_vocabulary(words, 1)
+    return Corpus(encode(words, word_to_index), word_to_index, counts)
+
+
+def _tiny_config(tmp_path: Any) -> Config:
+    return Config(
+        embed_size=8,
+        window_size=2,
+        num_negatives=2,
+        batch_size=8,
+        num_epochs=1,
+        eval_every=4,
+        subsample_threshold=1.0,
+        checkpoint_dir=tmp_path,
+        eval_dir=Path("data/eval"),
         hf_repo_id=None,
         wandb_project=None,
     )
-    train_cbow(config, sample=True)
-
-    payload = load_checkpoint(config.cbow_checkpoint)
-    vocabulary = payload["extra"]["word_to_lemma_index"]
-    assert vocabulary
-    assert payload["model_state_dict"]["in_embed.weight"].shape[0] == len(vocabulary)
