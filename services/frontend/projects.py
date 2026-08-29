@@ -139,7 +139,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "continuous bag-of-words architecture and negative sampling — no "
             "pretrained embeddings, no HuggingFace model."
         ),
-        "techniques": ["NLP", "Embeddings", "Representation Learning", "CBOW"],
+        "techniques": ["NLP", "Embeddings", "Representation Learning", "CBOW", "Skip-gram"],
         "papers": [
             (
                 "Mikolov et al.",
@@ -149,27 +149,36 @@ PROJECTS: dict[str, dict[str, Any]] = {
         ],
         "datasets": [
             ("text8", "https://huggingface.co/datasets/roshbeed/ai-residency-text8"),
-            ("HN Posts", "#"),
+            (
+                "Eval benchmarks",
+                "https://huggingface.co/datasets/roshbeed/ai-residency-word-embeddings-eval",
+            ),
         ],
-        "model_links": [],
+        "model_links": [
+            (
+                "Word vectors",
+                "https://huggingface.co/roshbeed/ai-residency-word-embeddings",
+            ),
+        ],
         "stats": [
-            ("Vocabulary", "258,196 words"),
-            ("Embedding dim", "128"),
-            ("Corpus", "text8 (100M chars)"),
-            ("Window", "4"),
+            ("Vocabulary", "71,290 words"),
+            ("Embedding dim", "300"),
+            ("WordSim-353", "0.73 rho"),
+            ("Google analogies", "46.4%"),
         ],
         "intro": (
-            "Trains word2vec CBOW embeddings from scratch. Stage 1 builds a vocabulary "
-            "from the text8 corpus (100M characters of cleaned Wikipedia text) and merges "
-            "it with Hacker News post titles. Stage 2 pretrains CBOW embeddings — "
-            "128-dimensional vectors trained with negative sampling over the merged corpus.\n\n"
-            "**Approach.** The embedding stage is a genuine from-scratch training run. The "
-            "negative-sampling loss, the vocabulary merger handling token-lemma mapping, and "
-            "the bag-of-words averaging are all implemented directly. Hyperparameter sweeps "
-            "over embedding dimension, context window, and learning rate are driven through "
-            "W&B. The vectors are published to the Hugging Face Hub, where the content-scoring "
-            "project consumes them frozen — this is the foundation for understanding how text "
-            "becomes vectors.\n\n"
+            "Trains word2vec from scratch on text8 — 17M tokens of cleaned Wikipedia, the "
+            "standard benchmark corpus for this task. Both architectures are trained: CBOW "
+            "averages the context to predict the centre word, skip-gram predicts each context "
+            "word from the centre. Both use negative sampling over a 71,290-word "
+            "vocabulary.\n\n"
+            "**Approach.** The negative-sampling loss, the unigram^0.75 sampler, frequent-word "
+            "subsampling and the batching are all implemented directly — no gensim, no "
+            "pretrained vectors. A 48-run Bayesian sweep through W&B picked the published "
+            "configuration, ranked on benchmark score rather than loss.\n\n"
+            "**Results.** Spearman 0.73 on WordSim-353, 0.30 on SimLex-999 and 46.4% on the "
+            "Google analogy set — at or above published word2vec results for this corpus. "
+            "Skip-gram is served; CBOW is published alongside it.\n\n"
             "**This page** calls the nearest-neighbour and analogy API: look up a word's "
             "closest neighbours in the learned space, or complete the canonical "
             "`king - man + woman` analogy."
@@ -188,8 +197,10 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ),
         ],
         "model_specs": [
-            "**CBOW** — vocab × 128 embedding matrices (in + out), context window 4, "
-            "15 negative samples. ~65M parameters trained from scratch on text8.",
+            "**Skip-gram** (served) — 71,290 × 300 embedding matrices (in + out), context "
+            "window 8, 10 negative samples. 42.8M parameters trained from scratch on text8.",
+            "**CBOW** — the same two matrices, context window 10, 15 negative samples. Wins "
+            "WordSim-353 (0.730 against 0.726) and loses the analogy set by 5.6 points.",
         ],
     },
     "content-scoring": {

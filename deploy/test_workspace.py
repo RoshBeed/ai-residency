@@ -235,3 +235,74 @@ def test_the_chart_does_not_restate_hf_home() -> None:
         assert "HF_HOME" not in (spec.get("env") or {}), (
             f"{name} sets HF_HOME, which Dockerfile.base already sets"
         )
+
+
+# --- the write-up ---------------------------------------------------------
+#
+# A service README is the write-up *and* the GitHub landing page, and the frontend
+# links to it and reuses its figures. That makes three ways for it to rot quietly: an
+# image reference that no longer resolves renders as a broken icon on GitHub, a
+# frontend diagram path that no longer exists raises at page render, and a `docs_path`
+# pointing at a moved README gives a 404 from the UI. None of them fail a build.
+
+
+def service_readmes() -> list[pathlib.Path]:
+    """Every service README, which is where the write-ups live."""
+    return sorted((ROOT / "services").glob("*/README.md"))
+
+
+def test_every_readme_image_resolves() -> None:
+    """A markdown image whose target is gone renders as a broken icon on GitHub."""
+    missing = []
+    for readme in service_readmes():
+        for target in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", readme.read_text()):
+            if target.startswith(("http://", "https://")):
+                continue
+            if not (readme.parent / target).exists():
+                missing.append(f"{readme.relative_to(ROOT)} -> {target}")
+    assert not missing, "README images that do not resolve: " + ", ".join(missing)
+
+
+def test_every_readme_image_has_alt_text() -> None:
+    """Alt text is the figure's description for anyone who cannot see it."""
+    bare = []
+    for readme in service_readmes():
+        for alt, target in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", readme.read_text()):
+            if not alt.strip():
+                bare.append(f"{readme.relative_to(ROOT)} -> {target}")
+    assert not bare, "README images with no alt text: " + ", ".join(bare)
+
+
+def frontend_projects() -> dict[str, Any]:
+    """The frontend's project table, imported without starting Streamlit."""
+    import importlib.util
+
+    path = ROOT / "services" / "frontend" / "projects.py"
+    spec = importlib.util.spec_from_file_location("_frontend_projects", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    projects: dict[str, Any] = module.PROJECTS
+    return projects
+
+
+def test_every_frontend_diagram_resolves() -> None:
+    """A missing diagram path raises when the page renders, not when it is built."""
+    assets = ROOT / "services" / "frontend"
+    missing = [
+        f"{name} -> {path}"
+        for name, project in frontend_projects().items()
+        for path, _ in project.get("diagrams", [])
+        if not (assets / path).exists()
+    ]
+    assert not missing, "frontend diagrams that do not resolve: " + ", ".join(missing)
+
+
+def test_every_frontend_docs_path_resolves() -> None:
+    """`docs_path` becomes a github.com/blob/main/... link; a stale one 404s."""
+    missing = [
+        f"{name} -> {project['docs_path']}"
+        for name, project in frontend_projects().items()
+        if "docs_path" in project and not (ROOT / project["docs_path"]).exists()
+    ]
+    assert not missing, "frontend docs_path values that do not resolve: " + ", ".join(missing)

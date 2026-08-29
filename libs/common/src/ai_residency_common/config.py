@@ -22,8 +22,9 @@ import random
 import types
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
+import numpy
 import torch
 
 from ai_residency_common.device import get_device
@@ -51,6 +52,16 @@ def _coerce(raw: str, annotation: Any) -> Any:
         ValueError: If the value cannot be converted to the declared type.
     """
     origin = get_origin(annotation)
+
+    # A Literal field names its own valid values, so the override is checked against
+    # them rather than merely converted. Without this branch a `Literal` field could
+    # not be set from the environment at all, which quietly excludes it from sweeps.
+    if origin is Literal:
+        allowed = get_args(annotation)
+        for option in allowed:
+            if raw == str(option):
+                return option
+        raise ValueError(f"{raw!r} is not one of {', '.join(str(o) for o in allowed)}")
 
     # `str | None` and friends: an empty value clears the field, anything else is
     # converted to whichever member of the union is not None.
@@ -85,19 +96,26 @@ def _coerce(raw: str, annotation: Any) -> Any:
 
 
 def set_seed(seed: int) -> None:
-    """Seed Python and PyTorch RNGs so a run is reproducible.
+    """Seed Python, NumPy and PyTorch RNGs so a run is reproducible.
 
     Seeds `torch`'s global generator, which covers weight initialisation, dropout and
-    `random_split`, plus the `random` module. Call this once, before building models
-    or splitting data.
+    `random_split`, plus the `random` and `numpy.random` modules. Call this once,
+    before building models or splitting data.
+
+    NumPy is seeded because scikit-learn draws from it -- t-SNE and k-means in this
+    portfolio's figure generation both do -- so without it a "reproducible" run still
+    produced a different plot every time.
 
     Args:
         seed: The seed to apply.
     """
     random.seed(seed)
+    numpy.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
     logger.info("Seeded RNGs with %d", seed)
 
 

@@ -1,192 +1,168 @@
-"""Vocabulary and corpus loading for the CBOW stage.
+"""Turning an encoded corpus into training batches.
 
-Split out of the training function, which used to do this inline along with model
-construction, the epoch loop, evaluation, checkpointing and the sweep. Reading the
-corpus is a separate concern from training on it, and keeping it separate is what
-lets the tests exercise a tiny vocabulary without touching the real 100M-token file.
+This replaces a `torch.utils.data.Dataset` that materialised every training example
+as a Python tuple in `__init__`. At text8's 16.7M tokens that is 16.7M tuples of an
+8-element list, built before the first optimizer step and held for the whole run --
+several GB of Python objects, and the reason the Makefile warned that this stage takes
+hours. The arithmetic was never the expensive part.
+
+What replaces it is a batcher that keeps the corpus as one `int64` tensor and cuts
+batches out of it with tensor operations. `Tensor.unfold` gives every sliding window
+as a *view*, so the window matrix costs nothing to build, and a permutation of its
+rows is the shuffle.
+
+Two things the old dataset left out, both of which matter more for embedding quality
+than any hyperparameter in the sweep:
+
+**Subsampling.** Mikolov et al. (2013b) discard frequent words with probability rising
+in their frequency, which both speeds training and improves the vectors for rare
+words. Without it most of the gradient goes into `the`. It is re-drawn every epoch, so
+a word dropped in one epoch is usually kept in another.
+
+**The unigram^0.75 negative distribution.** The old dataset drew negatives uniformly,
+so nearly every negative was a rare word the model already scored near zero and the
+update was wasted. `libs/word2vec` already had `NegativeSampler`; this uses it.
 """
 
-import json
-import random
+from collections.abc import Iterator
 
 import torch
-from torch.utils.data import Dataset
 
 from ai_residency_common import get_logger
 from config import Config
+from word2vec import NegativeSampler
+from word_embeddings.corpus import Corpus
 
-__all__ = [
-    "UNKNOWN_TOKEN",
-    "CBOWNegativeSamplingDataset",
-    "encode_corpus",
-    "load_corpus",
-    "load_vocabulary",
-    "sample_vocabulary",
-]
+__all__ = ["Batch", "Word2VecBatcher", "keep_probabilities"]
 
 logger = get_logger(__name__)
 
-UNKNOWN_TOKEN = "<UNK>"
-
-# A handful of words with obvious relationships, used by the sample vocabulary and by
-# the analogy check in `evaluation.py`. Kept here so the two cannot drift apart: the
-# evaluation used to assume "king"/"queen"/"man"/"woman" existed in whatever
-# vocabulary it was handed, which is only guaranteed for this one.
-_SAMPLE_WORDS = [
-    "hi",
-    "my",
-    "name",
-    "is",
-    "kernel",
-    "and",
-    "i",
-    "like",
-    "to",
-    "code",
-    "python",
-    "machine",
-    "learning",
-    "is",
-    "fun",
-    "king",
-    "queen",
-    "man",
-    "woman",
-    "dog",
-    "cat",
-]
-
-_SAMPLE_CORPUS = (
-    "python machine learning is fun and i like to code python is a great "
-    "language for machine learning and coding is fun with python "
-    "king queen man woman king queen man woman"
-)
+Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
-def _with_unknown(words: list[str]) -> dict[str, int]:
-    """Build a word-to-index mapping with `UNKNOWN_TOKEN` appended last.
+def keep_probabilities(counts: torch.Tensor, threshold: float) -> torch.Tensor:
+    """Probability of keeping each word, by Mikolov's frequent-word discard rule.
+
+    `P(keep) = (sqrt(z/t) + 1) * (t/z)`, where `z` is the word's corpus frequency and
+    `t` the threshold. Words at or below `t` are always kept; above it the probability
+    falls off, so `the` at ~6% frequency survives roughly one occurrence in forty at
+    `t=1e-4`.
 
     Args:
-        words: Vocabulary words, in any order; duplicates are collapsed.
+        counts: Occurrences per word id, `(vocab_size,)`.
+        threshold: The `t` above. Typically `1e-3` to `1e-5`.
 
     Returns:
-        The mapping, including an entry for `UNKNOWN_TOKEN`.
+        A `(vocab_size,)` float tensor of probabilities, clamped to at most 1.
+
+    Raises:
+        ValueError: If `threshold` is not positive, which would divide by zero and
+            silently produce a corpus of NaNs rather than an error.
     """
-    unique = sorted(set(words))
-    mapping = {word: index for index, word in enumerate(unique)}
-    mapping[UNKNOWN_TOKEN] = len(unique)
-    return mapping
+    if threshold <= 0:
+        raise ValueError(f"threshold must be positive, got {threshold}")
+    frequency = counts.double() / counts.sum()
+    probability = ((frequency / threshold).sqrt() + 1) * (threshold / frequency)
+    return probability.clamp(max=1.0).float()
 
 
-class CBOWNegativeSamplingDataset(Dataset[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
-    """Windowed context/target pairs with sampled negatives, for one CBOW epoch.
+class Word2VecBatcher:
+    """Yields `(centre, context, negatives)` batches over a corpus.
 
-    For every token, the surrounding `window_size` words on each side form the
-    context and the token itself the target. `num_negatives` random words are drawn
-    per sample as the negative examples the model scores against.
-
-    Args:
-        data: The encoded corpus, one token id per word.
-        window_size: Number of context words on each side of the target.
-        num_negatives: Negative samples per (context, target) pair.
+    Attributes:
+        window_size: Context words taken either side of the centre.
+        batch_size: Windows per batch.
+        num_negatives: Negatives drawn per row.
     """
 
-    def __init__(self, data: list[int], window_size: int, num_negatives: int) -> None:
-        self.samples = []
-        self.vocab_size = len(set(data))
-        self.num_negatives = num_negatives
-        for i in range(window_size, len(data) - window_size):
-            context = data[i - window_size : i] + data[i + 1 : i + window_size + 1]
-            target = data[i]
-            self.samples.append((context, target))
+    def __init__(
+        self,
+        corpus: Corpus,
+        config: Config,
+        *,
+        device: torch.device,
+        generator: torch.Generator | None = None,
+    ) -> None:
+        """Prepare the sampler and subsampling table for a corpus.
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        context, target = self.samples[idx]
-        negatives: list[int] = []
-        while len(negatives) < self.num_negatives:
-            neg = random.randint(0, self.vocab_size - 1)
-            if neg != target:
-                negatives.append(neg)
-        return torch.tensor(context), torch.tensor(target), torch.tensor(negatives)
+        Args:
+            corpus: The encoded corpus and its counts.
+            config: Supplies window, batch size, negatives and the threshold.
+            device: Where batches are delivered.
+            generator: Optional RNG, for reproducible runs.
+        """
+        self._ids = corpus.ids
+        self._device = device
+        self._generator = generator
+        self.window_size = config.window_size
+        self.batch_size = config.batch_size
+        self.num_negatives = config.num_negatives
+
+        self._keep = keep_probabilities(corpus.counts, config.subsample_threshold)
+        self._sampler = NegativeSampler(corpus.counts)
+
+        # Negatives are drawn *per positive pair*, which for skip-gram means
+        # `num_negatives` for each of the 2*window context words rather than
+        # `num_negatives` for the row. The shared loss sums logsigmoid over every
+        # positive and every negative, so drawing one row's worth would leave
+        # skip-gram with ten positives pulling up against five negatives pushing
+        # down -- a ratio CBOW does not have, and one that lets the model raise
+        # every score at once. It is not a knob; it is what makes the two
+        # architectures comparable at the same `num_negatives`.
+        context_size = 2 * config.window_size
+        self._draws = self.num_negatives * (
+            context_size if config.architecture == "skipgram" else 1
+        )
+
+        expected = float(self._keep[self._ids].sum())
+        logger.info(
+            "Subsampling at t=%g keeps about %.1fM of %.1fM tokens per epoch",
+            config.subsample_threshold,
+            expected / 1e6,
+            len(corpus) / 1e6,
+        )
+        self._steps = max(1, int(expected - 2 * self.window_size) // self.batch_size)
 
     def __len__(self) -> int:
-        return len(self.samples)
+        """Approximate batches per epoch.
 
+        Approximate because subsampling is re-drawn each epoch, so the exact count
+        varies by a fraction of a percent. Used for progress bars and for projecting
+        how long a run will take, neither of which needs it exact.
+        """
+        return self._steps
 
-def sample_vocabulary() -> tuple[dict[str, int], dict[str, int], str]:
-    """Return a tiny vocabulary and corpus, for smoke runs and tests.
+    def _subsampled(self) -> torch.Tensor:
+        """Draw one epoch's corpus, with frequent words thinned out."""
+        draws = torch.rand(self._ids.shape, generator=self._generator)
+        return self._ids[draws < self._keep[self._ids]]
 
-    Returns:
-        The word-to-index mapping, the word-to-lemma-index mapping, and the corpus
-        text. The two mappings are identical here; on the real corpus they differ.
-    """
-    mapping = _with_unknown(_SAMPLE_WORDS)
-    return mapping, dict(mapping), _SAMPLE_CORPUS
+    def epoch(self) -> Iterator[Batch]:
+        """Yield one epoch of shuffled batches.
 
+        Yields:
+            `(centre, context, negatives)` with shapes `(B,)`, `(B, 2*window)` and
+            `(B, draws)`, on the batcher's device -- where `draws` is
+            `num_negatives` for CBOW and `num_negatives * 2 * window` for skip-gram.
+        """
+        kept = self._subsampled()
+        span = 2 * self.window_size + 1
+        if kept.numel() < span:
+            return
 
-def load_vocabulary(config: Config) -> tuple[dict[str, int], dict[str, int]]:
-    """Load the vocabularies the ETL stage produced.
+        # A view, not a copy: `windows[i]` is the slice of `kept` starting at i.
+        windows = kept.unfold(0, span, 1)
+        order = torch.randperm(windows.shape[0], generator=self._generator)
 
-    Args:
-        config: Supplies `word_index_file` and `vocab_file`.
-
-    Returns:
-        The word-to-index and word-to-lemma-index mappings, each guaranteed to
-        contain `UNKNOWN_TOKEN`.
-
-    Raises:
-        FileNotFoundError: If either mapping is missing; run the corpus stage first.
-    """
-    for path in (config.word_index_file, config.vocab_file):
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{path} not found. Build the corpus first with `make train-corpus`."
+        for start in range(0, order.numel() - self.batch_size + 1, self.batch_size):
+            rows = windows[order[start : start + self.batch_size]]
+            centre = rows[:, self.window_size]
+            context = torch.cat(
+                (rows[:, : self.window_size], rows[:, self.window_size + 1 :]), dim=1
             )
-
-    with config.word_index_file.open(encoding="utf-8") as handle:
-        word_to_index: dict[str, int] = json.load(handle)
-    with config.vocab_file.open(encoding="utf-8") as handle:
-        word_to_lemma_index: dict[str, int] = json.load(handle)
-
-    if UNKNOWN_TOKEN not in word_to_lemma_index:
-        unknown = len(word_to_lemma_index)
-        word_to_lemma_index[UNKNOWN_TOKEN] = unknown
-        word_to_index[UNKNOWN_TOKEN] = unknown
-
-    logger.info("Vocabulary holds %d words", len(word_to_lemma_index))
-    return word_to_index, word_to_lemma_index
-
-
-def encode_corpus(text: str, word_to_index: dict[str, int]) -> list[int]:
-    """Turn corpus text into token ids, mapping unseen words to `UNKNOWN_TOKEN`.
-
-    Args:
-        text: Raw corpus text.
-        word_to_index: Mapping to encode against.
-
-    Returns:
-        One token id per whitespace-separated word.
-    """
-    unknown = word_to_index[UNKNOWN_TOKEN]
-    encoded = [word_to_index.get(word, unknown) for word in text.lower().split()]
-    logger.info("Encoded %d tokens", len(encoded))
-    return encoded
-
-
-def load_corpus(config: Config) -> str:
-    """Read the merged corpus text.
-
-    Args:
-        config: Supplies `corpus_file`.
-
-    Returns:
-        The corpus as one string.
-
-    Raises:
-        FileNotFoundError: If the corpus is missing; run the corpus stage first.
-    """
-    if not config.corpus_file.exists():
-        raise FileNotFoundError(
-            f"{config.corpus_file} not found. Build the corpus first with `make train-corpus`."
-        )
-    return config.corpus_file.read_text(encoding="utf-8")
+            negatives = self._sampler(rows.shape[0], self._draws, generator=self._generator)
+            yield (
+                centre.to(self._device),
+                context.to(self._device),
+                negatives.to(self._device),
+            )

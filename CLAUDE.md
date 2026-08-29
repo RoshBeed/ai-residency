@@ -141,10 +141,22 @@ credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_resid
 compose or `hostPath` volumes to the chart. Uploads need a stable, guessable filename — a
 run-timestamped name is unfetchable by anything downstream.
 
-**Structure first; model quality later.** The current phase is that everything is plumbed
-correctly end to end. Untrained or weakly-trained checkpoints are expected, not a defect. A
-service that starts, reports `checkpoint_loaded: false` and answers 503 honestly is *passing*.
-Verify wiring, not accuracy; don't propose training runs as the next step.
+**Structure first; model quality later -- except where a service has moved past it.** The default
+phase is that everything is plumbed correctly end to end: untrained or weakly-trained checkpoints
+are expected, not a defect, and a service that starts, reports `checkpoint_loaded: false` and
+answers 503 honestly is *passing*. Verify wiring, not accuracy, and don't propose training runs as
+the next step.
+
+`word-embeddings` is the exception and is now trained for real, on text8, scored against
+WordSim-353, SimLex-999 and the Google analogy set with published word2vec-on-text8 numbers beside
+them. Changing it means keeping those numbers true: `make -C services/word-embeddings evaluate`
+reports them from a checkpoint, and the README quotes them.
+
+The lesson generalises even for the services still in the default phase. Four separate defects in
+that trainer were invisible to every structural check -- the tests passed, the API answered, the
+loss went down. What exposed them was one number: the loss a *random-init* model reports. The
+shipped checkpoint sat at 10.02 against a random baseline of 11.09, which reads like a trained
+model until you know the untrained value. Log the baseline next to the metric, always.
 
 **`/health` and `/ready` are different endpoints, and must stay different.** `/health` is
 liveness — always 200, so a slow or missing checkpoint never restarts a pod. `/ready` is
@@ -302,13 +314,40 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
 - **`helm uninstall` returns before deletion finishes.** An install started right after can have
   its objects deleted by the tail of the previous release — a reinstall once came up with all
   eleven pods running and the frontend Service simply absent. `make helm-uninstall` now waits.
-- **An embedding matrix can have more rows than the vocabulary has words.** The
-  word-embeddings checkpoint is 258,196 rows against 230,701 words, so 27,495 rows
-  cannot be named. `topk` searches all of them, a nameless row wins, and the lookup
+- **An embedding matrix can have more rows than the vocabulary has words.** The old
+  word-embeddings checkpoint was 258,196 rows against 230,701 words, so 27,495 rows
+  could not be named. `topk` searches all of them, a nameless row wins, and the lookup
   after it raises `KeyError` -- `/nearest` returned 500 for any `k` above about 9
   while the schema advertised up to 100. Never index a vocabulary with a raw `topk`
   result; go through `word2vec.nearest_words`, which masks the unnamable rows out of
   the search.
+
+  The *cause* was worse than the symptom, and is fixed now: the corpus was encoded with
+  `word_to_index` (word ids) while the checkpoint saved `word_to_lemma_index` (lemma ids), so
+  serving and `content-scoring` were both reading a matrix through a mapping that indexed a
+  different space. Every neighbour it ever returned was junk. A checkpoint carries
+  `word_to_index` now, and the readers prefer it and fall back to the old key with a warning.
+- **Analogy search must exclude all three query words.** `king - man + woman` lands nearest to
+  `king` itself far more often than to `queen`, so a scorer that excludes none of them reports a
+  near-constant zero however good the vectors are -- which is exactly what the old
+  `evaluate_embeddings` did, and why a real defect hid behind a metric for months.
+  `word2vec.nearest_words` takes `exclude` as a word *or an iterable*; pass all three.
+- **A W&B sweep passes nothing without `${args_no_hyphens}`.** `${env}` alone expands to
+  `/usr/bin/env` and no parameters, so every run trains the defaults, reports a near-identical
+  score, and the Bayes search optimises noise for as long as you let it. The pair must also come
+  *before* the program in `command:`, which is what makes them environment variables rather than
+  argv. The previous `sweep.yaml` had `${env}` alone plus a comment claiming the agent exported
+  the parameters.
+- **Bound a long sweep by wall clock, not by `--count`.** Run times in one sweep span 6 to 31
+  minutes depending on which hyperparameters a run drew, so a count chosen for the average
+  finishes anywhere between half and double the budget. `make sweep SWEEP=<id> HOURS=12` wraps the
+  agent in `caffeinate -is timeout 12h`; stopping early costs nothing, since finished runs are
+  recorded and the next agent reads them back.
+- **A credential in the environment is not the only credential.** `get_hf_token` checked
+  `HF_TOKEN`/`HUGGINGFACE_TOKEN` only and `init_tracking` checked `WANDB_API_KEY` only, so on a
+  machine logged in through `huggingface-cli login` or `wandb login` a run trained for hours, then
+  warned once that it was keeping the checkpoint local, and logged to an offline directory nobody
+  looked at. Both now fall back to the credential store the CLIs write.
 - **The PPO ratio scores token ids, never re-tokenized text.** A generated state is
   carried as `state_token_ids` as well as `state_text`, and `PolicyRatio` reads the ids.
   Re-encoding the text looks equivalent and is not: about one in twenty states does not
@@ -320,6 +359,10 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
   passing the tokenizer's output through unchanged trains the decoder one position out of
   step. Nothing errors; the loss simply describes a different task. Use
   `speech.encode_target`, which drops it.
+- **`Config` fields typed as `Literal` need `_coerce` to know about `Literal`**, which it now
+  does -- and it validates the value against the allowed set while it is there. Before that, a
+  `Literal` field silently could not be set from the environment, which excluded it from every
+  sweep.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **buildx resolves a base-image tag against the registry, not the local store.** `make base`
   followed by `make build SERVICE=x` silently built against the *published* base until the Makefile
@@ -351,7 +394,7 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
 publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
 Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
-Security, which a private repo does not have). 311 tests.
+Security, which a private repo does not have). 330 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
