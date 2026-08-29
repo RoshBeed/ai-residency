@@ -31,7 +31,15 @@ from ai_residency_common.serving import (
     run_app,
 )
 from ai_residency_common.sse import format_sse, stream_sse
-from ai_residency_common.tracking import finish_tracking, init_tracking, log_metrics
+from ai_residency_common.tracking import (
+    define_metrics,
+    finish_tracking,
+    init_tracking,
+    log_figure,
+    log_metrics,
+    log_table,
+    set_summary,
+)
 
 __version__ = "0.7.2"
 
@@ -45,6 +53,7 @@ __all__ = [
     "add_health_routes",
     "decode_audio",
     "decode_image",
+    "define_metrics",
     "finish_tracking",
     "format_sse",
     "get_device",
@@ -54,7 +63,9 @@ __all__ = [
     "load_checkpoint",
     "load_env",
     "load_model",
+    "log_figure",
     "log_metrics",
+    "log_table",
     "pull_checkpoint",
     "push_checkpoint",
     "resolve_checkpoint",
@@ -63,5 +74,6 @@ __all__ = [
     "run_app",
     "save_checkpoint",
     "set_seed",
+    "set_summary",
     "stream_sse",
 ]

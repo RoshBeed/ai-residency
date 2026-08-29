@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi, get_token, hf_hub_download
 
 from ai_residency_common.logging import get_logger
 
@@ -51,19 +51,29 @@ class ResolvedCheckpoint(NamedTuple):
 
 
 def get_hf_token() -> str | None:
-    """Return the Hugging Face token from the environment, if one is set.
+    """Return the Hugging Face token, from the environment or the local Hub login.
 
     Checks `HF_TOKEN` then `HUGGINGFACE_TOKEN`, since repos in this portfolio have
-    historically used both names.
+    historically used both names, and finally the credential `huggingface-cli login`
+    writes to `~/.cache/huggingface/token`.
+
+    That last fallback is not a convenience. Without it, `push_checkpoint` returns
+    False and warns on a machine whose owner is demonstrably logged in -- and the
+    warning scrolls past in the middle of a training run, so what you notice is that
+    hours of compute produced nothing on the Hub. Every other Hub call in this
+    package already picks the cached token up automatically; only ours did not.
 
     Returns:
-        The token, or None when neither variable is set.
+        The token, or None when there is no environment variable and no local login.
     """
     for var in _TOKEN_VARS:
         token = os.environ.get(var)
         if token:
             return token
-    return None
+    try:
+        return get_token()
+    except Exception:  # pragma: no cover - a corrupt token file must not stop training
+        return None
 
 
 def push_checkpoint(

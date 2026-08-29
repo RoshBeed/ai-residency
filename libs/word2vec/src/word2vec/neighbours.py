@@ -11,6 +11,8 @@ word, and the lookup that follows raises `KeyError` rather than answering. See
 `nearest` for why the holes exist and what happens to them.
 """
 
+from collections.abc import Iterable
+
 import torch
 import torch.nn.functional as F
 
@@ -40,7 +42,7 @@ def nearest_words(
     index_to_word: dict[int, str],
     *,
     k: int = 5,
-    exclude: str | None = None,
+    exclude: str | Iterable[str] | None = None,
     mask: torch.Tensor | None = None,
 ) -> list[tuple[str, float]]:
     """Return the `k` words whose vectors are closest to `vector` by cosine similarity.
@@ -58,8 +60,12 @@ def nearest_words(
         vector: `(dim,)` query vector.
         index_to_word: Vocabulary mapping row index to word.
         k: How many neighbours to return.
-        exclude: A word to drop from the results -- normally the query itself, which
-            is always its own nearest neighbour.
+        exclude: A word, or words, to drop from the results. For a plain neighbour
+            lookup that is the query itself, which is always its own nearest
+            neighbour. For an analogy `a - b + c` it is all three of a, b and c: the
+            query vector sits a short hop from c, so without excluding them the
+            answer is almost always one of the words that were asked about. Scoring
+            an analogy set without this reports a near-constant zero.
         mask: Precomputed `valid_row_mask`. Pass it on a hot path to avoid rebuilding
             the mask per request; it is derived from `index_to_word` either way.
 
@@ -70,13 +76,15 @@ def nearest_words(
     if mask is None:
         mask = valid_row_mask(embeddings.shape[0], index_to_word)
 
+    excluded = {exclude} if isinstance(exclude, str) else set(exclude or ())
+
     similarities = F.cosine_similarity(embeddings, vector.unsqueeze(0)).cpu()
     similarities = similarities.masked_fill(~mask, float("-inf"))
 
     # Ask for one extra so dropping `exclude` still leaves k, and never ask for more
     # than there are namable rows -- topk on a larger k returns the -inf padding,
     # whose indices are exactly the rows that have no word.
-    wanted = min(k + (1 if exclude is not None else 0), int(mask.sum()))
+    wanted = min(k + len(excluded), int(mask.sum()))
     if wanted <= 0:
         return []
 
@@ -85,6 +93,6 @@ def nearest_words(
         (index_to_word[int(index)], float(similarity))
         for index, similarity in zip(top.indices, top.values, strict=True)
     ]
-    if exclude is not None:
-        pairs = [pair for pair in pairs if pair[0] != exclude]
+    if excluded:
+        pairs = [pair for pair in pairs if pair[0] not in excluded]
     return pairs[:k]

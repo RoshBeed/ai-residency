@@ -1,4 +1,4 @@
-"""The word-embedding model: CBOW trained with negative sampling.
+"""The word-embedding model: CBOW or skip-gram, trained with negative sampling.
 
 The algorithm lives in `libs/word2vec` now, shared with vector-search-retrieval,
 which had grown its own copy. Read `word2vec/model.py` to understand word2vec; this
@@ -11,6 +11,9 @@ service used a full softmax with `emb`/`ffw`, where `ffw` is
 `nn.Linear(embed, vocab, bias=False)` and its weight is the *same* `(vocab, embed)`
 matrix under another name.
 
+`build_cbow` became `build_word2vec` when the service started training skip-gram as
+well: the architecture is a config field now, not a literal, so a sweep can vary it.
+
 `load_cbow_embeddings` is how the rest of the repo reads the trained vectors back out
 of a saved checkpoint, and the key it reads -- `in_embed.weight` -- is unchanged.
 """
@@ -20,27 +23,20 @@ from pathlib import Path
 import torch
 
 from ai_residency_common import get_logger
+from config import Config
 from word2vec import Word2Vec, Word2VecConfig
 
-__all__ = ["build_cbow", "load_cbow_embeddings"]
+__all__ = ["build_word2vec", "load_cbow_embeddings"]
 
 logger = get_logger(__name__)
 
 
-def build_cbow(
-    vocab_size: int,
-    embed_size: int,
-    *,
-    window_size: int = 4,
-    num_negatives: int = 5,
-) -> Word2Vec:
-    """Build the CBOW model this service trains.
+def build_word2vec(vocab_size: int, config: Config) -> Word2Vec:
+    """Build the model this service trains, for either architecture.
 
     Args:
-        vocab_size: Tokens in the vocabulary.
-        embed_size: Width of each word vector.
-        window_size: Context words either side of the target.
-        num_negatives: Negatives scored against each positive.
+        vocab_size: Tokens in the vocabulary, which is the embedding row count.
+        config: Supplies the architecture and dimensions.
 
     Returns:
         An untrained model. Its `in_embed.weight` is what training produces and
@@ -49,11 +45,11 @@ def build_cbow(
     return Word2Vec(
         Word2VecConfig(
             vocab_size=vocab_size,
-            embed_size=embed_size,
-            architecture="cbow",
+            embed_size=config.embed_size,
+            architecture=config.architecture,
             objective="negative_sampling",
-            window_size=window_size,
-            num_negatives=num_negatives,
+            window_size=config.window_size,
+            num_negatives=config.num_negatives,
         )
     )
 

@@ -1,25 +1,38 @@
 .DEFAULT_GOAL := help
-.PHONY: train-corpus train-cbow train-cbow-sample train sweep visualise serve test help
+.PHONY: train train-sample train-corpus time sweep visualise evaluate serve test help
 
-train-corpus: ## Stage 1: build the merged vocabulary/corpus
-	uv run python -m word_embeddings.etl
-
-train-cbow: ## Stage 2: pretrain CBOW embeddings (hours on the real corpus)
+# The corpus is text8, fetched from the Hub on first use, so there is no corpus stage
+# to run first. `train-corpus` remains for the Hacker News extract that
+# content-scoring consumes; nothing on this service's training path calls it.
+train: ## Train word vectors on text8 (~75s/epoch on an M1 Max; 10 epochs by default)
 	uv run python -m word_embeddings.train
 
-train-cbow-sample: ## Stage 2 against a tiny built-in corpus — seconds, writes a separate checkpoint
+train-sample: ## Train on a tiny slice of the corpus — seconds, writes a separate checkpoint
 	uv run python -m word_embeddings.train --sample
 
-# WARNING: multi-hour end to end — corpus download+lemmatize, then CBOW over ~100M
-# tokens, run back to back. Shorten either stage with the AI_RESIDENCY_* config
-# overrides, e.g. AI_RESIDENCY_CBOW_NUM_EPOCHS=1.
-train: train-corpus train-cbow ## Run both training stages in sequence (multi-hour, see warning above)
+time: ## Measure throughput and project how long a full run takes, without training
+	uv run python -m word_embeddings.train --time-only
 
-sweep: ## Run a W&B sweep agent: make sweep SWEEP=<id from `wandb sweep sweep.yaml`>
-	@test -n "$(SWEEP)" || (echo "Usage: make sweep SWEEP=<sweep id>   (create one with: wandb sweep sweep.yaml)" && exit 1)
-	uv run wandb agent $(SWEEP)
+train-corpus: ## Build the merged Hacker News corpus (not used by this service's training)
+	uv run python -m word_embeddings.etl
 
-visualise: ## Write a t-SNE plot of the learned embedding space to assets/
+# HOURS bounds the sweep by wall clock, COUNT by number of runs; HOURS is usually
+# what you want. Run times here span 6 to 31 minutes depending on architecture,
+# embedding size and how much the subsampling threshold keeps, so a COUNT chosen for
+# an average finishes anywhere from half to double the intended budget. Stopping an
+# agent early costs nothing: every finished run is already recorded, and Bayes reads
+# them back on the next agent.
+#
+# caffeinate because an overnight sweep on a laptop otherwise stops when it sleeps.
+# timeout is GNU coreutils, not macOS base -- `brew install coreutils`.
+sweep: ## Run a W&B sweep agent: make sweep SWEEP=<id> [HOURS=12] [COUNT=n]
+	@test -n "$(SWEEP)" || (echo "Usage: make sweep SWEEP=<sweep id> [HOURS=12] [COUNT=n]   (create one with: wandb sweep sweep.yaml)" && exit 1)
+	caffeinate -is $(if $(HOURS),timeout $(HOURS)h,) uv run wandb agent $(if $(COUNT),--count $(COUNT),) $(SWEEP)
+
+evaluate: ## Score the trained checkpoint on WordSim-353, SimLex-999 and the Google analogies
+	uv run python -m word_embeddings.evaluate
+
+visualise: ## Score the checkpoint and write a t-SNE plot of the embedding space to assets/
 	uv run python -m word_embeddings.evaluate --visualise
 
 serve: ## Run the FastAPI nearest-neighbour/analogy service locally (no Docker)

@@ -22,9 +22,23 @@ from ai_residency_common import (
 from ai_residency_common.tracking import finish_tracking
 
 
-def test_get_hf_token_reads_either_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neither an environment token nor a machine that is logged in.
+
+    `get_hf_token` falls back to the credential `huggingface-cli login` writes, so
+    clearing the environment alone is no longer enough to simulate an unconfigured
+    machine -- and on a developer's laptop these tests would otherwise find a real
+    token and push to the Hub for real.
+    """
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.setattr("ai_residency_common.hub.get_token", lambda: None)
+
+
+def test_get_hf_token_reads_either_variable(
+    monkeypatch: pytest.MonkeyPatch, no_credentials: None
+) -> None:
     assert get_hf_token() is None
 
     monkeypatch.setenv("HUGGINGFACE_TOKEN", "legacy-name")
@@ -34,13 +48,8 @@ def test_get_hf_token_reads_either_variable(monkeypatch: pytest.MonkeyPatch) -> 
     assert get_hf_token() == "preferred-name"
 
 
-def test_push_checkpoint_skips_without_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_push_checkpoint_skips_without_token(tmp_path: Path, no_credentials: None) -> None:
     """Training must survive having no Hub credentials, not crash."""
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-
     path = tmp_path / "model.pth"
     save_checkpoint(path, nn.Linear(2, 2))
 
@@ -136,3 +145,16 @@ def test_resolve_checkpoint_can_read_a_dataset_repo(
     )
     assert resolved.source == "hub"
     assert seen["repo_type"] == "dataset"
+
+
+def test_get_hf_token_falls_back_to_the_local_hub_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`huggingface-cli login` writes a token that every other Hub call already
+    picks up. Ours did not, so a logged-in machine trained for hours and then
+    warned that it was keeping the checkpoint local."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.setattr("ai_residency_common.hub.get_token", lambda: "cached-login")
+
+    assert get_hf_token() == "cached-login"
