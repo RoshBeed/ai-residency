@@ -518,8 +518,7 @@ is defined once for the whole portfolio instead of reimplemented per repo.
 
 ## 5. Usage
 
-There is no corpus stage. `text8` is fetched from the Hub the first time training runs, so
-reproducing this is one command.
+There is no corpus stage — `text8` is fetched from the Hub on first use.
 
 **Figure 16.** Reproduction pipeline.
 ```mermaid
@@ -527,110 +526,75 @@ flowchart LR
     fetch["1. Fetch text8<br/>+ benchmarks"] --> pretrain["2. Train<br/>+ score each epoch"] --> hub["3. Publish<br/>to the Hub"]
 ```
 
-**Running locally is the fast path on Apple Silicon.** Training selects the device through
-`ai_residency_common.get_device()`, which prefers CUDA, then MPS, then CPU. Docker Desktop on macOS
-runs containers inside a Linux VM with no GPU/MPS passthrough, so training in a container is
-CPU-only here regardless — fine for portability and as the on-ramp to a real GPU host later, but
-about half the speed on this machine.
-
-### 5.1 Training
-
 ```bash
 make install
-cp .env.example .env   # HF_TOKEN, WANDB_API_KEY -- both optional
-make train SERVICE=word-embeddings
+make train SERVICE=word-embeddings                # ~75s/epoch, 10 epochs
+
+make -C services/word-embeddings train-sample     # a tiny slice, seconds
+make -C services/word-embeddings time             # measure throughput, train nothing
+make -C services/word-embeddings evaluate         # score a saved checkpoint
+make serve SERVICE=word-embeddings                # the API, no Docker
 ```
 
-What it runs: `uv run python -m word_embeddings.train`.
+Credentials are optional. Without `WANDB_API_KEY` the run logs offline and syncs later; without
+`HF_TOKEN` the checkpoint stays local. Both are read from an existing `wandb login` or
+`huggingface-cli login`, so a logged-in machine needs no `.env`.
 
-Neither credential is required. Without `WANDB_API_KEY` the run logs offline and can be synced
-later; without `HF_TOKEN` the checkpoint stays local. Both are also read from an existing
-`wandb login` or `huggingface-cli login`, so a machine that is already logged in needs no `.env`
-at all.
-
-Every hyperparameter lives in `Config` (in `config/`), and any of them can be overridden from the
-environment without editing code:
+Every hyperparameter is a field on `Config`, overridable from the environment:
 
 ```bash
 AI_RESIDENCY_NUM_EPOCHS=1 AI_RESIDENCY_EMBED_SIZE=64 make train SERVICE=word-embeddings
 AI_RESIDENCY_ARCHITECTURE=skipgram make train SERVICE=word-embeddings
-
-make -C services/word-embeddings train-sample   # a tiny slice of the corpus, seconds
-make -C services/word-embeddings time           # measure throughput, train nothing
-make -C services/word-embeddings evaluate       # score a saved checkpoint
 ```
 
-The best epoch's checkpoint saves to `checkpoints/<architecture>/<architecture>_model.pt` and
-pushes to the Hub. The vocabulary is stored inside it, so the embeddings and the mapping that
-indexes them cannot drift apart.
+**Run it locally on Apple Silicon.** `get_device()` prefers CUDA, then MPS, then CPU, and Docker
+Desktop on macOS has no MPS passthrough — so training in a container here is CPU-only and about
+half the speed.
 
-It stores no optimizer state. Adam's two moment buffers are the same size as the two embedding
-matrices, so carrying them made the artifact 515MB where 173MB says everything, and nothing reads
-them: serving and content-scoring want `in_embed.weight`, and a run worth keeping has finished.
+The best epoch saves to `checkpoints/<architecture>/<architecture>_model.pt` and pushes to the Hub,
+with the vocabulary inside it so the matrix and the mapping that indexes it cannot drift apart. No
+optimizer state: Adam's moment buffers are the size of the two embedding matrices, which made the
+artifact 515MB where 173MB says everything, and nothing downstream reads them.
 
-### 5.2 Sweeps
+### 5.1 Sweeps
 
-Sweeps aren't expanded by hand inside the trainer. `sweep.yaml` defines the search and W&B runs it:
+`sweep.yaml` defines the search; W&B runs it. Its parameter names are the `AI_RESIDENCY_*`
+overrides, so the agent needs no sweep-specific plumbing in the trainer.
 
 ```bash
 wandb sweep services/word-embeddings/sweep.yaml    # prints a sweep id
 make -C services/word-embeddings sweep SWEEP=<id> HOURS=12
 ```
 
-The parameter names in that file are the `AI_RESIDENCY_*` environment overrides, so the agent needs
-no sweep-specific plumbing in the training code at all.
+Two settings there matter more than they look:
 
-`HOURS` bounds the sweep by wall clock rather than by run count. Run times here span roughly 6 to
-31 minutes depending on architecture, embedding size and how much the subsampling threshold keeps,
-so a `COUNT` chosen for the average finishes anywhere between half and double the intended budget.
-Stopping an agent early costs nothing — every finished run is already recorded, and the Bayes
-search reads them back on the next agent.
+- **The metric is `best/score`, not loss.** Loss is not comparable across these runs: the
+  random-init value is $(p + pk)\ln 2$, which is 4.16 for CBOW at 5 negatives and 41.59 for
+  skip-gram — so minimising it would rank runs by architecture and negative count rather than by
+  how good the vectors are.
+- **`min_count` and `num_epochs` are fixed.** `min_count` changes the vocabulary, which changes
+  benchmark coverage, which makes scores incomparable — a sweep varying it would reward runs for
+  being evaluated on an easier subset. Fixing `num_epochs` keeps run times close enough for a
+  wall-clock budget to mean anything.
 
-Two settings in `sweep.yaml` matter more than they look:
+`HOURS` bounds the sweep by wall clock rather than run count, because run times span 6 to 31
+minutes and a count chosen for the average lands anywhere between half and double the budget.
+Stopping early costs nothing — finished runs are recorded and the next agent reads them back.
 
-- **The metric is `best/score`, not loss.** Loss is not comparable across these runs at all. The
-  random-init value is $(p + pk)\ln 2$ for $p$ positives and $k$ negatives, which is 4.16 for CBOW
-  at 5 negatives and 41.59 for skip-gram at the same setting — so a sweep minimising loss would
-  rank runs by their architecture and negative count rather than by how good the vectors are.
-- **`min_count` and `num_epochs` are held fixed.** `min_count` changes the vocabulary, which
-  changes benchmark coverage, which makes scores incomparable between runs; a sweep that varied it
-  would reward runs for being evaluated on an easier subset. Fixing `num_epochs` keeps run times
-  close enough for a wall-clock budget to mean something.
-
-
-### 5.3 Deployment
-
-Two single-purpose Dockerfiles: `Dockerfile.serve` builds `FROM
-roshb/ai-residency-base-serve` (CPU torch — the FastAPI container Kubernetes runs), and
-`Dockerfile.train` builds `FROM roshb/ai-residency-base-train` (CUDA torch — what a rented GPU
-host pulls).
-Neither needs a git credential. `libs/common` used to be a private git dependency, which meant every build mounted a token; it is a workspace member now and arrives with the source.
+### 5.2 Deployment
 
 ```bash
-# both images for this service, built from the repository root
-make build SERVICE=word-embeddings
-make push SERVICE=word-embeddings
-
-# the whole stack, this service included
-make -C deploy up
-
-# train in a container
+make build SERVICE=word-embeddings                # serving + training images
+make -C deploy up                                 # the whole stack
 cd deploy && docker compose --profile train run --rm train-word-embeddings
 ```
 
-The checkpoint isn't baked into either image: serving pulls it from the Hugging Face Hub, so the
-container always serves whatever was most recently trained rather than a stale snapshot. The
-training service is gated behind a Compose *profile*, so a plain `docker compose up` never
-accidentally starts a training run.
+The checkpoint is not baked into either image: serving pulls from the Hub, so a container always
+serves the most recently trained vectors rather than a snapshot from build time. Training is gated
+behind a Compose profile so a plain `docker compose up` never starts one by accident.
 
-Without Docker:
-
-```bash
-make serve SERVICE=word-embeddings                # uv run python -m serve
-```
-
-The Streamlit UI no longer lives in this repo — it is a thin HTTP client in
-`services/frontend`, calling the nearest-neighbour/analogy API this repo serves.
+The UI is not in this repo. It is a thin HTTP client in `services/frontend` calling this API — see
+the [Quickstart](#quickstart) for running both from Docker.
 
 ## 6. Related Work
 
