@@ -29,9 +29,37 @@ docker stop word-embeddings >/dev/null
 ```
 
 ```json
-{"query":"king","nearest":[["kings",1.0],["tetrachord",0.42],["voci",0.42]],
+{"query":"king","nearest":[["kings",0.63],["throne",0.62],["fitzalan",0.62]],
  "checkpoint_source":"hub"}
 ```
+
+### With the UI
+
+The same backend plus the Streamlit page for it. They need a shared network so the
+frontend can resolve the backend by name, and `AI_RESIDENCY_PAGES` makes the UI a
+single-system app rather than the nine-system hub:
+
+```bash
+docker network create ai-residency >/dev/null
+
+docker run --rm -d --network ai-residency --name word-embeddings \
+  roshb/ai-residency-word-embeddings-serve
+
+docker run --rm -d --network ai-residency --name frontend -p 8500:8501 \
+  -e AI_RESIDENCY_PAGES=word-embeddings \
+  -e WORD_EMBEDDINGS_API_URL=http://word-embeddings:8000 \
+  roshb/ai-residency-frontend
+
+# http://localhost:8500 -- the page waits on /ready, so give it a few seconds
+```
+
+```bash
+docker stop frontend word-embeddings >/dev/null
+docker network rm ai-residency >/dev/null
+```
+
+From a clone, `make up SERVICES="word-embeddings"` does the same thing through
+Compose, and `make up` on its own starts all nine behind the hub.
 
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub,
 which is why the `--retry` loop is there rather than a fixed sleep: `/ready` answers **503** until

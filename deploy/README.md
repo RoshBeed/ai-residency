@@ -278,7 +278,7 @@ Per-repo caveats worth knowing before you rent anything:
 
 | Repo | Caveat |
 |---|---|
-| `word-embeddings` | `train-corpus` needs a Hacker News Postgres mirror that is not publicly reachable; `train-cbow` works from data on the Hub. |
+| `word-embeddings` | `train` works from data on the Hub -- text8 and the benchmark sets are fetched on first use. `train-corpus`, which builds the Hacker News corpus for content-scoring, needs a Postgres mirror that is not publicly reachable. |
 | `content-scoring` | Trains only the regression head; pulls the frozen CBOW vectors from the word-embeddings Hub checkpoint. |
 | `vector-search-retrieval` | Needs Redis for serving (not for training). `make serve` is the HTTP service; `make query` is an interactive CLI. |
 | `vit-classifier` / `vit-seq2seq` | Separate epoch caps — the classifier reads `AI_RESIDENCY_CLASSIFIER_EPOCHS`, not `AI_RESIDENCY_NUM_EPOCHS`. |

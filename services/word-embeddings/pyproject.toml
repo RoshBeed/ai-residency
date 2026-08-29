@@ -8,9 +8,9 @@ authors = [{ name = "RoshBeed" }]
 dependencies = [
     # torch and transformers are kept in the same range deliberately: an old
     # transformers>=4.46-requires-torch>=2.4 mismatch used to silently disable
-    # transformers' PyTorch backend, turning CBOWNS (the transformers.PreTrainedModel
+    # transformers' PyTorch backend, turning the model (then a transformers.PreTrainedModel
     # subclass in models/word2vec/cbow/model.py) into an unusable dummy stub. Bumped
-    # together and re-verified by instantiating CBOWNS and running a forward pass,
+    # together and re-verified by instantiating the model and running a forward pass,
     # not just by `uv sync` succeeding -- the failure mode here is a stub class that
     # imports cleanly and does nothing.
     "torch>=2.9.0",

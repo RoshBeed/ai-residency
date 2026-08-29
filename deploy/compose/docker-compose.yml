@@ -210,7 +210,7 @@ services:
       - ../../services/word-embeddings/data:/app/data
     environment:
       <<: *hub-credentials
-      AI_RESIDENCY_CBOW_NUM_EPOCHS: ${AI_RESIDENCY_CBOW_NUM_EPOCHS:-1}
+      AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
   train-content-scoring:
     profiles: [train]

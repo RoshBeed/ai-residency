@@ -234,7 +234,7 @@ def resolve_required(
         repo_id: Repo to fall back to. None means local-only.
         repo_type: `"model"` or `"dataset"`.
         rebuild_hint: Appended to the error, e.g. which `make` target recreates
-            the artifact. Ends up as " ... Build it with `make train-cbow`."
+            the artifact. Ends up as " ... Build it with `make train`."
 
     Returns:
         `(path, source)` where `source` is `"local"` or `"hub"`.

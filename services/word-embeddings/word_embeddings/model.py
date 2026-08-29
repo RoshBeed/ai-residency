@@ -58,7 +58,7 @@ def load_cbow_embeddings(model_path: str | Path) -> torch.Tensor:
     """Load the trained input-embedding matrix from a CBOW checkpoint.
 
     Args:
-        model_path: Path to the checkpoint saved by `train_cbow`.
+        model_path: Path to the checkpoint saved by `train`.
 
     Returns:
         The `in_embed` weight matrix, shape `(vocab_size, embed_size)`, on CPU.
