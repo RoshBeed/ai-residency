@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import torch
+import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -36,6 +37,7 @@ class EmbeddingState:
 
     def __init__(self) -> None:
         self.embeddings: torch.Tensor | None = None
+        self.unit_embeddings: torch.Tensor | None = None
         self.word_to_index: dict[str, int] = {}
         self.index_to_word: dict[int, str] = {}
         self.valid_rows: torch.Tensor | None = None
@@ -47,8 +49,11 @@ class EmbeddingState:
         `index_to_word` used to be a property, which rebuilt the whole inverse dict on
         every read -- and it is read on the hot path of both `/nearest` and `/analogy`,
         so every request paid a full pass over the vocabulary to answer a top-k query.
+        The unit-normalised copy is precomputed here for the same reason: `/analogy`
+        needs it on every call and it depends only on the checkpoint.
         """
         self.embeddings = embeddings
+        self.unit_embeddings = F.normalize(embeddings, dim=1)
         self.word_to_index = word_to_index
         self.index_to_word = {index: word for word, index in word_to_index.items()}
         # Which rows can be named at all. Current checkpoints have a dense vocabulary
@@ -193,10 +198,18 @@ async def analogy(request: AnalogyRequest) -> NearestResponse:
         if word not in state.word_to_index:
             raise HTTPException(status_code=404, detail=f"word {word!r} not in vocabulary")
 
+    # Unit vectors, not raw ones. 3CosAdd is defined on normalised embeddings, and
+    # that is how `benchmarks.py` scores the analogy set -- so computing it on raw
+    # vectors here meant the endpoint answered a slightly different question from the
+    # accuracy the README reports. Word vector norms grow with frequency, so the raw
+    # sum is tilted towards whichever of the three words is commonest rather than
+    # towards the relation being asked about.
+    unit = state.unit_embeddings
+    assert unit is not None  # set together with `embeddings`, checked above
     vector = (
-        embeddings[state.word_to_index[request.a]]
-        - embeddings[state.word_to_index[request.b]]
-        + embeddings[state.word_to_index[request.c]]
+        unit[state.word_to_index[request.a]]
+        - unit[state.word_to_index[request.b]]
+        + unit[state.word_to_index[request.c]]
     )
     neighbours = nearest_words(
         embeddings,

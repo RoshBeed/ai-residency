@@ -74,6 +74,7 @@ def loaded_state() -> Iterator[Callable[[torch.Tensor, dict[str, int]], None]]:
 
     saved = (
         state.embeddings,
+        state.unit_embeddings,
         state.word_to_index,
         state.index_to_word,
         state.valid_rows,
@@ -85,9 +86,14 @@ def loaded_state() -> Iterator[Callable[[torch.Tensor, dict[str, int]], None]]:
 
     yield load
 
-    (state.embeddings, state.word_to_index, state.index_to_word, state.valid_rows, state.source) = (
-        saved
-    )
+    (
+        state.embeddings,
+        state.unit_embeddings,
+        state.word_to_index,
+        state.index_to_word,
+        state.valid_rows,
+        state.source,
+    ) = saved
 
 
 class TestApi:
@@ -117,6 +123,37 @@ class TestApi:
 
         assert response.status_code == 200, response.text
         assert [word for word, _ in response.json()["nearest"]] == ["apple"]
+
+    def test_analogy_scores_the_same_way_the_benchmark_does(
+        self, loaded_state: Callable[[torch.Tensor, dict[str, int]], None]
+    ) -> None:
+        """`/analogy` and `benchmarks.analogy_accuracy` must define 3CosAdd alike.
+
+        The endpoint used to sum raw embeddings while the benchmark summed normalised
+        ones, so the accuracy the write-up reports was measured on a slightly
+        different computation from the one the service performs. Norms grow with word
+        frequency, which tilts a raw sum towards whichever of the three words is
+        commonest rather than towards the relation being asked about.
+
+        `a` and `b` point the same way and differ only in length, so on unit vectors
+        they cancel and the answer is `c`'s direction -- row `d`. On raw vectors `a`
+        dominates the sum by being ten times longer, and the answer swings to `e`.
+        """
+        embeddings = torch.tensor(
+            [
+                [10.0, 0.0],  # a -- same direction as b, ten times the norm
+                [1.0, 0.0],  # b
+                [0.0, 1.0],  # c
+                [0.05, 1.0],  # d -- wins on normalised vectors
+                [1.0, 0.05],  # e -- wins on raw ones
+            ]
+        )
+        loaded_state(embeddings, {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4})
+
+        response = TestClient(app).post("/analogy", json={"a": "a", "b": "b", "c": "c", "k": 1})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["nearest"][0][0] == "d"
 
     def test_analogy_returns_words_rather_than_the_route_function(
         self, loaded_state: Callable[[torch.Tensor, dict[str, int]], None]

@@ -554,12 +554,12 @@ excluded:
 | query | top 3 |
 |---|---|
 | `bigger - big + small` | **smaller**, larger, large |
-| `walked - walk + run` | had, **ran**, seemed |
-| `paris - france + italy` | turin, bologna, **rome** |
-| `king - man + woman` | throne, anjou, daughter |
+| `walked - walk + run` | **ran**, running, runs |
+| `paris - france + italy` | bologna, turin, **rome** |
+| `king - man + woman` | throne, ermengarde, anjou |
 
-Three of the four put the intended answer in the top three. The fourth is the example everyone
-quotes, and it misses — so it is worth saying exactly why, because the obvious reading is wrong.
+Three of the four put the intended answer in the top three, two of them first. The fourth is the
+example everyone quotes, and it misses — so it is worth saying exactly why, because the obvious reading is wrong.
 
 **It is not that the gender direction was never learned.** Four of six family analogies land on the
 right word outright:
@@ -575,8 +575,9 @@ The axis is there. What fails is `king` in particular, and the neighbours say wh
 `childless`, `marrying`. In 17M tokens of Wikipedia, `king` occurs overwhelmingly in regnal lists
 and succession prose, so its vector encodes *monarchy and lineage* far more strongly than it
 encodes *male*. Push it along the gender axis and you land on the nearest female role in that same
-dynastic context, which is `daughter` — a coherent answer to the question the vectors actually
-represent, and not the one the demo wants. `queen` comes 15th.
+dynastic context. `queen` comes 15th; `daughter` is 3rd once candidates are restricted to the
+30,000 most frequent words as the benchmark does — a coherent answer to the question the vectors
+actually represent, and not the one the demo wants.
 
 Corpus size is the rest of it. `queen` appears 1,940 times here and `woman` 1,753; the canonical
 demo comes from Google News at 100 billion words, about 6,000 times more text. Category accuracy
