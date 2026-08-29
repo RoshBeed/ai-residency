@@ -81,3 +81,27 @@ def test_a_precomputed_mask_matches_building_it_each_time() -> None:
     without = nearest_words(embeddings, embeddings[0], index_to_word, k=3)
 
     assert with_mask == without
+
+
+def test_exclude_accepts_several_words_for_an_analogy() -> None:
+    """`a - b + c` lands near c, so an analogy must exclude all three query words.
+
+    Excluding only the query -- which is all a single `exclude` string allowed --
+    left `king - man + woman` answering `king`, and any analogy benchmark scored
+    that way reports a near-constant zero regardless of the embeddings.
+    """
+    embeddings = torch.eye(4)
+    index_to_word = {0: "a", 1: "b", 2: "c", 3: "d"}
+
+    found = nearest_words(embeddings, embeddings[2], index_to_word, k=2, exclude=("a", "b", "c"))
+
+    assert [word for word, _ in found] == ["d"]
+
+
+def test_exclude_still_accepts_a_bare_string() -> None:
+    embeddings = torch.eye(3)
+    index_to_word = {0: "a", 1: "b", 2: "c"}
+
+    found = nearest_words(embeddings, embeddings[0], index_to_word, k=1, exclude="a")
+
+    assert [word for word, _ in found] != ["a"]
