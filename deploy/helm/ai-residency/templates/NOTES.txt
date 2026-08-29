@@ -4,7 +4,18 @@ Images are pulled from Docker Hub under `roshb`, published by CI on every push t
 tagged `sha-<commit>`. (`roshbeed` is the *Hugging Face* account that holds the weights and
 datasets -- different account, not interchangeable.)
 
-  Image tag in this release: {{ .Values.image.tag }}
+{{- $pinned := 0 }}
+{{- range $name, $svc := .Values.backends }}{{ if $svc.digest }}{{ $pinned = add1 $pinned }}{{ end }}{{ end }}
+{{- if $pinned }}
+  Pinned by digest: {{ $pinned }} of {{ len .Values.backends }} backends, from deploy/images.yaml.
+{{- else }}
+  NOT PINNED. Every image in this release resolves to the tag "{{ .Values.image.tag }}",
+  which moves. That is correct for a local cluster running images built on this machine
+  (`make local-cluster`), and wrong for anything else -- deploy/images.yaml names the
+  exact set, and nothing supplied it:
+
+    helm upgrade {{ .Release.Name }} ./helm/ai-residency -n {{ .Release.Namespace }} -f ../images.yaml
+{{- end }}
 
 Frontend (LoadBalancer -- Docker Desktop binds this to localhost automatically):
 
@@ -16,7 +27,8 @@ for debugging, port-forward it. They all listen on 8000, so forward one at a tim
 different local port per shell):
 {{- range $name := (keys .Values.backends | sortAlpha) }}
 {{- $svc := index $.Values.backends $name }}
-  kubectl port-forward -n {{ $.Release.Namespace }} svc/{{ $name }} {{ $svc.containerPort }}:{{ $svc.containerPort }}
+{{- $port := $svc.containerPort | default $.Values.backendDefaults.containerPort }}
+  kubectl port-forward -n {{ $.Release.Namespace }} svc/{{ $name }} {{ $port }}:{{ $port }}
 {{- end }}
 
 Two endpoints, two meanings. `/health` says the process is up and always answers 200.

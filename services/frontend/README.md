@@ -58,9 +58,15 @@ The exploratory notebooks live at [`notebooks/`](../../notebooks), one folder pe
 
 ## The app
 
-`app.py` is one Streamlit app, one page per system. Each page is a thin HTTP client calling that
-system's own backend container — **no inference logic lives here**, only request/response wiring and
-display. That's deliberate: the models run in their own services, and this repo just renders.
+One Streamlit app, one module per system under `views/`. Each page is a thin HTTP client calling
+that system's own backend container — **no inference logic lives here**, only request/response
+wiring and display. That's deliberate: the models run in their own services, and this repo just
+renders.
+
+Routing is `st.navigation`, so Streamlit owns the URL, the browser history and the sidebar.
+`app.py` maps a service name to its `views/` module and gets out of the way; every page is an
+ordinary function, which is what lets the suite render all nine of them headlessly with
+`AppTest`.
 
 ![The portfolio home page: a card per system, each with its architecture summary and topic tags](assets/deployment/home.png)
 
@@ -106,9 +112,17 @@ its own backend container.
 
 ```
 services/frontend/
-├── app.py            the whole app, one page per system
+├── app.py            entry point: page config, theme, st.navigation
+├── views/            one module per page, each exporting render()
+│   ├── home.py         the gallery — a card per system
+│   └── <service>.py    that system's demo and the trace it renders
+├── shared.py         the framing every service page shares, and the small helpers
+├── client.py         one call() returning ok / not_ready / failed
+├── components.py     pure display helpers — no Streamlit import
+├── projects.py       per-system metadata: titles, tags, diagrams, links
+├── theme.py          logo and CSS
 ├── assets/           figures the pages render inline
-├── Dockerfile        the published roshb/ai-residency-frontend image
+├── Dockerfile.serve  the published roshb/ai-residency-frontend image
 ├── Makefile          run
 └── pyproject.toml    streamlit + requests + pillow — no ML dependencies
 ```

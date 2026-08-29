@@ -109,6 +109,19 @@ jobs:
           username: ${{ env.REGISTRY }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The module the image runs is declared in the service's own pyproject.toml, so
+      # one root Dockerfile.train covers every service without a table here to drift.
+      - name: Training entrypoint
+        id: entrypoint
+        if: >-
+          github.event.inputs.services == 'all'
+          || contains(github.event.inputs.services, matrix.service)
+        run: |
+          set -euo pipefail
+          module=$(python3 -c "import tomllib;print(tomllib.load(open('services/${{ matrix.service }}/pyproject.toml','rb'))['tool']['ai-residency']['train-module'])")
+          echo "module=$module" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.service }} trains via $module"
+
       - name: Build and push
         if: >-
           github.event.inputs.services == 'all'
@@ -116,9 +129,11 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: services/${{ matrix.service }}/Dockerfile.train
+          file: Dockerfile.train
           push: true
           build-args: |
+            SERVICE=${{ matrix.service }}
+            TRAIN_MODULE=${{ steps.entrypoint.outputs.module }}
             BASE_IMAGE=${{ env.REGISTRY }}/ai-residency-base-train:sha-${{ github.sha }}
           tags: |
             ${{ env.REGISTRY }}/ai-residency-${{ matrix.service }}-train:sha-${{ github.sha }}

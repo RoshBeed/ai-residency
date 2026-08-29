@@ -20,6 +20,10 @@ dev = [
     "mypy>=1.11",
     "pytest>=8.0",
     "ruff>=0.6",
+    # deploy/ reads the image manifest and CI's path filters as YAML. Declared rather
+    # than relied on transitively: it arrived through a service's dependency tree, so
+    # the deploy tooling would have broken on an unrelated dependency change.
+    "pyyaml>=6.0",
     "types-PyYAML",
     "types-tqdm",
 ]
@@ -78,11 +82,13 @@ convention = "google"
 # logo, the prose shown on each page, and dimension labels written properly as "28 x 28"
 # with a multiplication sign. Wrapping a CSS rule to satisfy a line-length limit, or
 # spelling the character wrong to satisfy RUF001, would damage what the reader sees.
-# Scoped to the display modules only -- components.py holds the logic, and is held to
-# the same standard as every other module here.
-"services/frontend/app.py" = ["E501", "RUF001"]
+# Scoped to the display modules only -- components.py holds the logic, and shared.py
+# the framing, and both are held to the same standard as every other module here.
 "services/frontend/theme.py" = ["E501", "RUF001"]
 "services/frontend/projects.py" = ["E501", "RUF001"]
+# One module per service page, each the markup and prose for one demo. Same reason:
+# these render "a − b + c" and "28 x 28" with the characters those actually use.
+"services/frontend/views/*.py" = ["E501", "RUF001"]
 
 # ---------------------------------------------------------------------------
 # Types

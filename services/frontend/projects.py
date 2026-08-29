@@ -1,14 +1,24 @@
 """Which services exist, where they are, and what each one is.
 
 Pure data, no Streamlit. Extracted from `app.py` so it can be imported and asserted
-against without a Streamlit runtime -- `app.py` executes its whole page flow at import,
-which is why the frontend was for a long time the one service with no tests at all.
+against without a Streamlit runtime, back when `app.py` ran its whole page flow at
+import and the frontend was the one service with no tests at all. `st.navigation`
+routes to `views/` now and every page is an ordinary function, but keeping the metadata
+here is still right: it is the one thing both the pages and the deployment agree on.
 
 `API_URLS` keys are the canonical service names, and they match the directory under
 `services/`, the Deployment name in the Helm chart, and the compose service name. The
 environment variable is that name uppercased with hyphens as underscores, which is what
 lets the chart generate the frontend's environment from `.Values.backends` without a
 per-service special case.
+
+The defaults are localhost ports, not `http://<service>:8000`, and that is deliberate
+even though service-name DNS resolves identically under compose and in the cluster.
+Both deployments inject the URLs anyway -- the chart generates them, compose lists them
+(and `deploy/test_workspace.py` fails if that list and the compose services disagree) --
+so the default is only ever used by `make run`, a frontend started on the host against
+port-forwarded backends. A container-shaped default would break exactly that case and
+help nothing that already sets the variable.
 """
 
 import os

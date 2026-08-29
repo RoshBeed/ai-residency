@@ -38,11 +38,11 @@ from ai_residency_common import (
     retrying,
     run_app,
 )
-from base_setup import BaseModelSetup
 from config import PPOConfig
-from models import PolicyModel
-from ppo_trainer import PPOStepResult, PPOTrainer
-from training.run_ppo import EXAMPLE_PROMPTS
+from rlhf_ppo.base_setup import BaseModelSetup
+from rlhf_ppo.models import PolicyModel
+from rlhf_ppo.ppo import PPOStepResult, PPOTrainer
+from rlhf_ppo.training.run_ppo import EXAMPLE_PROMPTS
 
 __all__ = ["app"]
 

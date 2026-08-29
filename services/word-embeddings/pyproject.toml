@@ -10,8 +10,9 @@ dependencies = [
     # transformers>=4.46-requires-torch>=2.4 mismatch used to silently disable
     # transformers' PyTorch backend, turning CBOWNS (the transformers.PreTrainedModel
     # subclass in models/word2vec/cbow/model.py) into an unusable dummy stub. Bumped
-    # together and re-verified (model instantiation + forward pass, not just
-    # `uv sync` succeeding) — see TODO.md for what was actually exercised.
+    # together and re-verified by instantiating CBOWNS and running a forward pass,
+    # not just by `uv sync` succeeding -- the failure mode here is a stub class that
+    # imports cleanly and does nothing.
     "torch>=2.9.0",
     "ai-residency-common",
     "ai-residency-word2vec",
@@ -26,18 +27,31 @@ dependencies = [
     "uvicorn>=0.38.0",
     "transformers>=4.57.0",
     "huggingface_hub>=0.36.0",
-    # db extras (formerly requirements_db.txt)
+]
+
+# The Hacker News corpus stage only. `etl.py` reads a Postgres mirror to build the
+# vocabulary, which happens in the training image; `serving/api.py` never imports it,
+# so shipping the driver in the serving image was ~15MB and a C extension that no
+# running backend loads. `make train-corpus` and Dockerfile.train install this group.
+[project.optional-dependencies]
+corpus = [
     "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.1.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings"
-Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+Repository = "https://github.com/RoshBeed/ai-residency.git"
 
 [dependency-groups]
 dev = [
     "httpx>=0.27",
+    # Named here as well as in the `corpus` extra, and the two mean different things:
+    # the extra is what the training image installs to *run* the corpus stage, this is
+    # what the checkout needs to type-check `etl.py`, which imports psycopg2 at module
+    # scope. Dev groups are never installed into an image, which is the point -- the
+    # serving image does not get the driver.
+    "psycopg2-binary>=2.9.10",
     "mypy>=1.11",
     "pytest>=8.0",
     "ruff>=0.6",
@@ -52,6 +66,12 @@ package = false
 # without an editable install — these repos are applications, not libraries.
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+# The module `Dockerfile.train` runs. One root Dockerfile builds every training
+# image, so the one thing that genuinely differs per service is declared here,
+# beside the code it names, rather than in a table in the build tooling.
+[tool.ai-residency]
+train-module = "word_embeddings.train"
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }

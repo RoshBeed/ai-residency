@@ -12,9 +12,10 @@ libs/vision-transformer/     attention, encoder, decoder, patch embedding — th
 libs/word2vec/               CBOW and skip-gram, negative sampling or softmax, nearest
                              neighbours — word-embeddings, vector-search-retrieval
 libs/speech/                 Whisper loading, features, labels, decoding — the two audio services
-services/<name>/             one per system: package, config/, serving/, tests/, Dockerfiles, README
+services/<name>/             one per system: package, config/, serving/, tests/, README
 services/_template/          the shape a new service starts from; a working one, not a skeleton
-services/frontend/           the Streamlit app, one page per system
+services/frontend/           the Streamlit app, one module per system under views/
+Dockerfile.{base,serve,train}  every image, at the root, selected by --build-arg SERVICE=
 deploy/{compose,helm,terraform}/
 notebooks/<service>/         chdir into ../../services/<service> when run
 ```
@@ -47,6 +48,14 @@ previous team's code. Those are `libs/word2vec` and `libs/speech` now. When you 
 copy of something, the answer is a library, not a tidy-up of one copy — the git history keeps
 the provenance either way.
 
+**One package per service, not nine.** `rlhf-ppo` had `advantage`, `base_setup`,
+`experience_buffer`, `models`, `ppo_trainer`, `reward_kl`, `sa_pair`, `token_attribution` and
+`training` as top-level packages -- two of them holding a single type alias and a single class.
+The cost was not the file count but the namespace: mypy already has to run per service because
+nine services each define a top-level `config`, and generic names like `models` and `training`
+made that worse. It is one `rlhf_ppo` package now, laid out by PPO stage. The eight other
+services already did this.
+
 **Vocabulary building is deliberately not shared, and that was checked rather than assumed.**
 `word-embeddings/etl.py` (947 lines) and `vector-search-retrieval/cbow/train_tokenizer.py`
 (117) both end in a word→id mapping, which looks like the same duplication word2vec was. It
@@ -56,6 +65,60 @@ ASCII, and counts. The genuinely common part is about twenty lines — a `Counte
 a reserved `<PAD>` at id 0 — and extracting that would buy less than the indirection costs.
 Two implementations of *the same algorithm* is a library; two pipelines that happen to end in
 a dict is not.
+
+**CI's path filter is `dorny/paths-filter`, and its filter list is checked against the
+workspace.** The diff was the part that kept being subtly wrong: resolving a base SHA
+needs one rule for `pull_request` and another for `push`, and the hand-rolled version
+had already produced two bugs -- an empty diff killing the step under `set -e`, and an
+empty selection serialising as `[""]`, a matrix with one nameless entry. The filters are
+listed rather than derived from the directory tree, which is a real trade: a list can go
+stale, and it goes stale silently, because a member with no filter is simply never
+selected and CI stays green while running none of it. `deploy/test_workspace.py` is what
+makes that safe -- it fails if the filters and the workspace disagree in either
+direction.
+
+**The manifest is consumed, never propagated.** `deploy/images.yaml` is a Helm values
+file: `helm upgrade -f ../images.yaml` merges it over the chart's defaults, so
+`values.yaml` holds no digests and cannot disagree with it. Compose reads
+`compose/images.env`, written from the same manifest, through
+`image: <repo>${<SERVICE>_REF:-:latest}` -- and an unset variable falls back to
+`:latest`, which is what `make local-up` gets by passing `--env-file /dev/null`. This
+replaced a script that rewrote `values.yaml` and `docker-compose.yml` with regular
+expressions, plus a third generated file whose only job was undoing the pinning. Drift
+used to be *detected*; now there is one generated file and nothing else to disagree.
+`base-image.digest` is separate on purpose -- it is a build input, not something the
+chart deploys.
+
+**A container image declares how it runs; nothing downstream restates it.** Training
+Jobs and compose's training services both use the image's own `CMD`, which comes from
+`[tool.ai-residency] train-module`. The chart used to carry a `trainCommand` per
+backend, and it went stale the moment rlhf-ppo's packages moved -- `make helm-train
+SERVICE=rlhf-ppo` launched a Job that died on `ModuleNotFoundError` while the image was
+correct all along. Compose never had the bug, because it never restated the command.
+
+**Compose repeats itself through `x-` anchors, not by copy-paste.** The readiness
+healthcheck was written out nine times and the credential pair eighteen -- ~90 lines of
+a 367-line file, and nine copies of one contract that could drift a service at a time.
+Compose's own extension point holds them: a top-level `x-backend-healthcheck` /
+`x-hub-credentials` that Compose ignores, aliased with `*name`, merged with `<<:` where
+a service needs extra variables alongside. Verified by diffing `docker compose config`
+before and after: all twenty services resolve identically.
+
+**The chart derives what it can from the backend key.** Image repositories are
+`<registry>/<chart>-<service>-serve` and `-train`, built in `ai-residency.repository`
+from the `range` key rather than written out eighteen times in `values.yaml` beside the
+very key they derive from. `containerPort` and `cpuRequest` are chart-level defaults in
+`backendDefaults`, having been one distinct value across nine backends. The measured
+`memoryRequest` / `memoryLimit` stay per service -- those genuinely differ. An explicit
+`image:` still wins for a service that breaks the convention; `deploy/test_workspace.py`
+fails on one that spells out what the chart would derive anyway.
+
+**`HF_HOME` is set once, in `Dockerfile.base`, and nothing downstream repeats it.** The
+base sets it so the path the chart mounts and the path huggingface_hub writes cannot
+drift apart, and then compose overrode it to `/root/.cache/huggingface` -- unwritable by
+UID 1000 -- while the chart restated the correct value for two backends. Which services
+mount the cache is now a list on `hfCache`, with the mountPath given once and asserted
+against the Dockerfile.
 
 **Two registries, two usernames.** Docker Hub is **`roshb`** (image names only); Hugging Face is
 **`roshbeed`** (`hf_repo_id`, `hf_dataset_repo_id`, hub URLs). They are not interchangeable, and a
@@ -150,9 +213,38 @@ Docker Desktop's Kubernetes node — also arm64 — could not pull any image at 
 
 **A local cluster can run locally-built images.** `make -C deploy local-cluster` builds
 natively, imports into the node's own store (a host `docker build` is invisible to it),
-and installs with `image.useDigest=false`, because a locally-built image has its own
-digest and will never match the manifest's. Not required now that published images are
+and installs *without* the `images.yaml` overlay, so the chart falls back to
+`image.tag` -- a locally-built image has its own digest and would never match the
+manifest's. Skaffold was considered for this loop and turned down: the load step cannot
+be delegated (Docker Desktop does not expose its node through the kind CLI), and
+published images have been multi-arch since the arm64 restore, so this is an escape
+hatch rather than the normal path. Not required now that published images are
 multi-arch — useful for iterating on something unpublished.
+
+**One Dockerfile per image kind, at the root, parameterised by `SERVICE`.** There were
+ten `Dockerfile.serve` and ten `Dockerfile.train`; six of each were byte-identical once
+the service name was substituted, and the rest differed by a redundant `COPY` or a
+comment. That is not ordinary copy-paste: what was duplicated twenty times is the `uv
+sync --no-install-package torch ... --inexact` line documented below as subtle, so
+correcting it was a twenty-site edit. `make build SERVICE=x` and CI both pass
+`--build-arg SERVICE=`. `services/frontend` keeps its own `Dockerfile.serve` -- it does
+not build FROM the torch base and does not run a FastAPI app. A test fails if a
+per-service Dockerfile reappears.
+
+**Images install with `--no-dev`.** uv installs the `dev` dependency-group unless told
+not to, so every serving image shipped mypy, pytest, ruff and httpx -- a published
+backend carrying a type checker and a linter it can never run, 150MB on
+word-embeddings and 134MB on the frontend. It is also the split that keeps a service's
+dev-only dependencies out of a runtime that never imports them. Runtime extras a
+training stage genuinely needs go in `[project.optional-dependencies]`, which
+`Dockerfile.train` installs with `--all-extras` and the serving image does not install
+at all.
+
+**The training entrypoint is declared in the service's own pyproject.toml.**
+`[tool.ai-residency] train-module` is the one thing that differs between training
+images, so it lives next to the code it names rather than in a table in the Makefile or
+in CI. Both read it; `deploy/test_workspace.py` fails if a service omits it or names a
+module that does not exist.
 
 **Only changed images are built, and nothing is retagged.** CI's publish matrix
 covers `changes.outputs.services`, so an unchanged image gets no build and no tag it
@@ -162,15 +254,23 @@ existed only because `deploy/` pinned a single tag across every image; the manif
 removed the reason for either.
 
 **Images are published to Docker Hub publicly** (the free tier allows one private repository, and
-there are twelve images). CI pushes the serving base and *all ten* service images on every push to
+there are twelve images). CI pushes the serving base and the images that changed on every push to
 `main`, gated behind the `PUBLISH_IMAGES` repository variable and the `DOCKERHUB_TOKEN` secret.
-Publishing deliberately ignores the path filter that narrows the checks: one `sha-<commit>` tag has
-to name a complete set, or pinning it in `deploy/` describes something the registry cannot serve.
+Publishing follows the same path filter as the checks -- see the rule above on why the manifest
+removed the reason to ignore it.
 
 Training images go through the separate `Publish training images` workflow, run on demand: they are
 ~9GB each, and the base plus one service does not fit in a runner's default free disk, so that
 workflow clears the preinstalled toolchains and builds one service per job. Runners are x86-64, so
 those builds are native rather than the slow emulation a Mac would do.
+
+**Training images carry their own tag, and must not share the serving one.** `deploy/images.yaml`
+covers serving images only -- nothing resolves a digest for a ~9GB image published on demand by a
+different workflow. They were rendered as `{{ .Values.image.tag }}`, which the manifest stopped
+moving, so `make helm-train` was pinned to whichever commit last ran the old `make pin-images` and
+would have stayed there forever. The chart uses `train.imageTag` and compose uses
+`TRAIN_IMAGE_TAG`, both defaulting to `latest` -- the tag that workflow pushes alongside its sha-
+tag. Pin a run with `--set train.imageTag=sha-<commit>`.
 
 ## Environment gotchas that still bite
 
@@ -248,21 +348,33 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 
 ## State
 
-CI is one path-filtered workflow: lint, then per-service mypy and pytest, then build → smoke-test →
-publish (all images, not just the changed ones) gated behind a `PUBLISH_IMAGES` repository variable,
-then a Trivy scan of the published base whose results go to the job summary (SARIF upload
-needs Advanced Security, which a private repo does not have). 282 tests.
+CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
+publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
+Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
+Security, which a private repo does not have). 311 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
 
-`services/frontend` is now four modules plus the page flow: `projects.py` (metadata), `theme.py`
-(logo and CSS), `components.py` (pure display helpers) and `client.py` (one `call()` returning
-ok / not_ready / failed). None of the four imports Streamlit, which is what makes them testable —
-`app.py` still runs its page flow at import.
+`services/frontend` routes with `st.navigation`: `app.py` is 85 lines that map a service name to
+its module in `views/`, and each page is an ordinary `render()`. That replaced an 892-line
+`if _PAGE == ...` chain at module scope plus a session-state and query-param dance to keep the URL
+and the sidebar agreeing. Streamlit owns the URL and history now, and because a page is a function
+rather than a script body, `AppTest` renders all nine headlessly — both the ready and the not-ready
+path — which took the frontend from 33 tests to 53. `shared.py` holds the framing every page shares
+(`service_page`, the readiness gate); `projects.py`, `theme.py`, `components.py` and `client.py` are
+unchanged and still Streamlit-free.
+
+`_template` is checked but never published. It was excluded from both CI matrices, so the seed for
+every new service was linted, typed and tested on a laptop and nowhere else; the publish matrix
+still drops it, since nothing needs to ship a template image.
 
 Open:
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
   pipeline, trainer and API are wired and verified.
+- The `base-serve` digest in `deploy/base-image.digest` is single-platform (amd64). Any push touching a
+  shared input rebuilds the base multi-arch and the `lock` job replaces it, so it self-heals; the
+  `images` job now fails with a named error rather than "no match for platform in manifest" if a
+  service-only push ever meets a single-platform base.
 - The eleven predecessor repos are archived on GitHub. `backup/pre-squash-2026-08-23` tags the
   pre-history-rewrite tip; delete it once the current history is settled.

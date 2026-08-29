@@ -72,7 +72,7 @@ modules doing generation, KL, advantage estimation, and the two training updates
 **Figure 2.** Package layout: four independent model wrappers sharing only code, not weights.
 ```mermaid
 flowchart TD
-    config["config/<br/>PPOConfig"] --> trainer["ppo_trainer/<br/>PPOTrainer"]
+    config["config/<br/>PPOConfig"] --> trainer["rlhf_ppo.ppo/<br/>PPOTrainer"]
 
     subgraph ModelsPkg["models/ — 4 independent LoRA-wrapped copies of the base model"]
         policym["PolicyModel"]
@@ -92,7 +92,7 @@ flowchart TD
     generator --> attribution["token_attribution/<br/>state-action pairs"]
     attribution --> klmod["reward_kl/<br/>KLDivergence + RewardAdjuster"]
     klmod --> advmod["advantage/<br/>TDError + GAEAdvantage + ReturnCalculator"]
-    advmod --> buffer[("experience_buffer/")]
+    advmod --> buffer[("rlhf_ppo.buffer")]
     advmod --> trainmod["training/<br/>PolicyLoss + ValueLoss + PolicyRatio"]
     trainmod --> modeltrain
 ```
@@ -209,25 +209,26 @@ rather than being reimplemented here. `PPOConfig` inherits from its `BaseConfig`
 ```
 
 ├── config/                PPOConfig(BaseConfig) — model name, LoRA rank, PPO hyperparameters
-├── base_setup/            Tokenizer, LoRA config, and base-model construction
-├── models/                PolicyModel, SFTModel, RewardModel, ValueModel (each: BaseModel + a head)
-├── ppo_trainer/
-│   ├── ppo_trainer.py       PPOTrainer — orchestrates the 10-step ppo_step()
-│   ├── generator.py         SequenceGenerator — generation + per-token (state, action) extraction
-│   ├── reward_computer.py   RewardComputer — scores full (prompt + generation) text
-│   ├── value_adder.py       ValueAdder — attaches value predictions to (s, a) pairs
-│   └── model_trainer.py     ModelTrainer — value MSE loss + policy PPO-clip loss, two optimizers
-├── token_attribution/     Alternative (s, a) pair construction path (extractor + pair builder)
-├── reward_kl/             KLDivergence, RewardAdjuster
-├── advantage/             TDError, GAEAdvantage, ReturnCalculator
-├── experience_buffer/     Simple list-based replay buffer
-├── training/
-│   ├── policy_ratio.py      PolicyRatio — recomputes log pi_new(a|s) for the PPO ratio
-│   ├── policy_loss.py       PolicyLoss — the PPO-clip surrogate objective
-│   ├── value_loss.py        ValueLoss — MSE against reward-to-go
-│   └── run_ppo.py           Entrypoint: one ppo_step() on two example prompts (`make train SERVICE=rlhf-ppo`)
+├── rlhf_ppo/
+│   ├── base_setup/          Tokenizer, LoRA config, and base-model construction
+│   ├── models/              PolicyModel, SFTModel, RewardModel, ValueModel (each: BaseModel + a head)
+│   ├── ppo/
+│   │   ├── trainer.py         PPOTrainer — orchestrates the 12-stage ppo_step()
+│   │   ├── generator.py       SequenceGenerator — generation + per-token (state, action) extraction
+│   │   ├── reward_computer.py RewardComputer — scores full (prompt + generation) text
+│   │   ├── value_adder.py     ValueAdder — attaches value predictions to (s, a) pairs
+│   │   └── model_trainer.py   ModelTrainer — value MSE loss + policy PPO-clip loss, two optimizers
+│   ├── token_attribution/   Alternative (s, a) pair construction path (extractor + pair builder)
+│   ├── reward_kl/           KLDivergence, RewardAdjuster
+│   ├── advantage/           TDError, GAEAdvantage, ReturnCalculator
+│   ├── training/
+│   │   ├── policy_ratio.py    PolicyRatio — recomputes log pi_new(a|s) for the PPO ratio
+│   │   ├── policy_loss.py     PolicyLoss — the PPO-clip surrogate objective
+│   │   ├── value_loss.py      ValueLoss — MSE against reward-to-go
+│   │   └── run_ppo.py         Entrypoint: one ppo_step() on two example prompts (`make train SERVICE=rlhf-ppo`)
+│   ├── buffer.py            ExperienceBuffer — the experience one policy update reads
+│   └── types.py             SAPair, the (state, action) dict every stage reads from and writes to
 ├── serving/api.py         FastAPI generation service (`make serve SERVICE=rlhf-ppo`), what the portfolio frontend calls
-└── sa_pair.py             The (state, action) dict every pipeline stage reads from and writes to
 examples/basic_usage.py  Three consecutive PPO steps, for watching the losses move
 notebooks/walkthrough.ipynb    Narrated, cell-by-cell run of the real ppo_step() call sequence
 tests/test_ppo_components.py   Unit tests for every module above
@@ -303,8 +304,10 @@ pytest -q
 
 ### Docker
 
-Two single-purpose Dockerfiles, both `FROM roshb/ai-residency-base-serve`: `Dockerfile.serve` (the FastAPI
-generation service) and `Dockerfile.train` (one PPO step on a GPU host). Neither needs a git
+Two images, built from the repository's root `Dockerfile.serve` (the FastAPI generation service,
+`FROM roshb/ai-residency-base-serve`) and `Dockerfile.train` (one PPO step on a GPU host,
+`FROM` the CUDA base). Both are parameterised by `--build-arg SERVICE=rlhf-ppo`, so this service
+carries no Dockerfile of its own. Neither needs a git
 credential — `libs/common` is already installed in the base image.
 
 ```bash

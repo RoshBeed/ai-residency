@@ -38,11 +38,28 @@ make push  SERVICE=word-embeddings
 Serving images are published by CI when the service they belong to changes; training images on
 demand, by the `Publish training images` workflow.
 
-**What deploys is `deploy/images.lock`.** It names each image by immutable digest, and both this
-compose file and the chart's values are generated from it — `make pin-images` regenerates them,
-and `--check` runs in CI so a hand edit that drifts from the manifest fails rather than deploying
-something the lock does not name. CI updates the lock for whatever it rebuilt, so
-`git log deploy/images.lock` is the deployment history and `git revert` is the rollback.
+Backend image names are derived from each `backends` key rather than listed — `image:` is an
+override, not a requirement — and `containerPort` / `cpuRequest` come from `backendDefaults`. Which
+services mount the Hugging Face cache is a list on `hfCache`; the mountPath is given once and has
+to match the `HF_HOME` that `Dockerfile.base` sets, which a test asserts.
+
+The compose file uses `x-` extension fields for the blocks every backend shares — the readiness
+healthcheck and the Hub credentials — aliased per service and merged with `<<:` where one needs
+extra variables. Compose ignores `x-` keys, which is what they exist for.
+
+**What deploys is `deploy/images.yaml`.** It names each image by immutable digest, and both tools
+read it without anything in between:
+
+* It **is** a Helm values file. `helm upgrade -f ../images.yaml` merges it over the chart's
+  defaults, so `values.yaml` holds no digests and cannot fall out of step with the manifest.
+* Compose substitutes from an env file. The image lines read
+  `<repo>${<SERVICE>_REF:-:latest}`, and `make pin-images` writes the digests into
+  `compose/images.env` — the only generated artifact left, and the only thing `--check` guards.
+
+This used to rewrite `values.yaml` and `docker-compose.yml` in place with regular expressions and
+keep a third generated file to undo the pinning for local builds. CI updates the manifest for
+whatever it rebuilt, so `git log deploy/images.yaml` is the deployment history and `git revert` is
+the rollback.
 
 Images are published for `linux/amd64` and `linux/arm64`, so the cluster pulls them natively on
 either. To run it from images built here instead — for a change that is not published yet, or
@@ -53,10 +70,10 @@ make local-cluster                              # everything, built natively
 make local-cluster SERVICES="word-embeddings"   # or just one
 ```
 
-That builds the base first (every `Dockerfile.serve` builds `FROM` it), imports each image into
-the node's own store — a `docker build` on the host is invisible to it — and installs with
-`image.useDigest=false`, because locally-built images have their own digests and will never
-match the ones the manifest names.
+That builds the base first (the root `Dockerfile.serve` builds `FROM` it), imports each image into
+the node's own store — a `docker build` on the host is invisible to it — and installs *without*
+the `images.yaml` overlay, so the chart falls back to `image.tag`. Locally-built images have their
+own digests and would never match the ones the manifest names.
 
 That is enough for docker-compose, which reads the host's images directly. **Kubernetes does
 not.** Docker Desktop runs its node as a kind container with its own containerd image store, so
@@ -122,7 +139,7 @@ it looked in, so mounting `checkpoints` read-only turns "fall back to the Hub" i
 services.
 
 ```bash
-make helm-install         # helm install ai-residency ./helm/ai-residency -n ai-residency --create-namespace
+make helm-install         # helm install ... -f images.yaml, so the release is pinned to the manifest
 ```
 
 Then open http://localhost:8500 — Docker Desktop's Kubernetes auto-binds `LoadBalancer` services to
@@ -272,7 +289,7 @@ Per-repo caveats worth knowing before you rent anything:
 ### AWS EC2 spot GPU — alternative to RunPod
 
 `infra/aws-training/` is Terraform that provisions a single AWS spot GPU instance, pulls a pushed
-`roshb/ai-residency-<service>-train` image (built by that service's own `Dockerfile.train`,
+`roshb/ai-residency-<service>-train` image (built from the root `Dockerfile.train`,
 `make push SERVICE=<name>`), runs it, and terminates itself when training finishes or times out. It
 moved here from the vision-transformer work (where it started as a single-service script) because it isn't specific to one service
 infrastructure — `train_image` picks which service's already-built image to run.
@@ -285,8 +302,8 @@ terraform plan      # review before spending anything
 terraform apply     # provisions a real, billable spot instance
 ```
 
-Or `./quick-start.sh` for interactive setup, `./monitor.sh` to check on a running instance,
-`./cleanup.sh` to tear it down manually. Full detail — including two real bugs found while
+`terraform output` prints the shell and log commands for a running instance; `terraform destroy`
+tears it down by hand, though it terminates itself on completion. Full detail — including two real bugs found while
 generalizing this out of one service's own copy (a Terraform template referencing undefined variables, and a
 duplicate output definition — either alone means the original could never have passed
 `terraform validate`) — is in `infra/aws-training/README.md`.
@@ -309,8 +326,9 @@ then `docker run -e HF_TOKEN="$HF_TOKEN" -p 8000:8000 roshb/ai-residency-<servic
 ## Related
 
 The frontend and the full write-up for every service live in `services/frontend`. The
-backend repos are container source only: two Dockerfiles (`Dockerfile.train` for a RunPod/AWS
-GPU host, `Dockerfile.serve` for Kubernetes) and a short technical README:
+backend services are container source only: they share the repository's two root Dockerfiles
+(`Dockerfile.train` for a RunPod/AWS GPU host, `Dockerfile.serve` for Kubernetes), each selected
+by `--build-arg SERVICE=<name>`, plus a short technical README:
 
 [Word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) ·
 [Content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) ·

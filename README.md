@@ -218,15 +218,16 @@ NetworkPolicies restricting the backends to the frontend.
 
 A push to `main` builds the images whose service actually changed, **smoke-tests each one before
 pushing it** — non-root, both probe endpoints registered, working directory writable — and
-publishes those. A change to a shared library, the lockfile or a Dockerfile rebuilds everything,
+publishes those. A change to a shared library, the lockfile or a root Dockerfile rebuilds everything,
 because it is in everything.
 
-`deploy/images.lock` is what actually deploys: each image pinned by immutable digest, with the
-compose file and the chart's values generated from it. CI updates it for whatever it rebuilt, so
-`git log deploy/images.lock` is the deployment history.
+`deploy/images.yaml` is what actually deploys: each image pinned by immutable digest. It is a
+Helm values file, so `helm upgrade -f deploy/images.yaml` consumes it directly and nothing is
+generated on the chart side at all. CI updates it for whatever it rebuilt, so
+`git log deploy/images.yaml` is the deployment history and `git revert` is the rollback.
 
 ```bash
-make pin-images     # regenerate compose and the chart from the manifest
+make pin-images     # regenerate the compose env file from the manifest
 make local-cluster  # build natively and run the cluster from those images
 ```
 
@@ -255,10 +256,13 @@ ai-residency/
 │   ├── vision-transformer/  attention, encoder, decoder, patch embedding — the two ViTs
 │   ├── word2vec/            CBOW and skip-gram, negative sampling or softmax
 │   └── speech/              Whisper loading, features, labels, decoding
-├── services/                one directory per service — package, tests, Dockerfiles, write-up
-│   └── frontend/            the Streamlit app, one page per system
+├── services/                one directory per service — package, config, serving, tests, write-up
+│   └── frontend/            the Streamlit app, one module per system under views/
 ├── deploy/                  docker-compose, the Helm chart, Terraform for a GPU training host
 ├── notebooks/               exploratory notebooks, one folder per system
+├── Dockerfile.base          the two base images: CPU torch for serving, CUDA for training
+├── Dockerfile.serve         every backend's serving image, selected by --build-arg SERVICE=
+├── Dockerfile.train         every service's training image, same shape
 ├── pyproject.toml           the uv workspace: one lockfile, one ruff and mypy configuration
 └── Makefile                 install / check / build / push, dispatching on SERVICE=
 ```

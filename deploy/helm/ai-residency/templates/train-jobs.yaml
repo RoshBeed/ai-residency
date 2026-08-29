@@ -1,10 +1,16 @@
 {{- /*
-One training Job per backend that declares a `trainCommand`, opt-in behind
-`--set train.enabled=true` so a normal install only ever serves.
+One training Job per backend, opt-in behind `--set train.enabled=true` so a normal
+install only ever serves. Every backend here has a training image; a future one that
+does not would need a flag, which is a better moment to add it than now.
 
-Each Job runs that backend's own `trainImage` -- built from its Dockerfile.train,
-a real, distinct image from the one the serving Deployment runs (Dockerfile.serve).
-`docker compose build` builds both.
+Each Job runs that backend's own training image, a real and distinct image from the one
+the serving Deployment runs. No `command:` is set: the image already declares what it
+runs, from `[tool.ai-residency] train-module` in that service's pyproject.toml, and an
+override here would be the same fact written a third time. It was, and it went stale --
+the chart went on naming `training.run_ppo` after rlhf-ppo's packages were folded into
+one, so `make helm-train SERVICE=rlhf-ppo` started a Job that died on ModuleNotFoundError
+while the image's own CMD was correct all along. Compose never had the problem: its nine
+training services carry no command either.
 
 Jobs are named with a suffix from .Values.train.runName so a second run does not
 collide with a completed Job of the same name (a Job's pod template is immutable, so
@@ -16,7 +22,7 @@ case, not the exception.
 */ -}}
 {{- if .Values.train.enabled }}
 {{- range $name, $svc := .Values.backends }}
-{{- if and $svc.trainCommand (or (not $.Values.train.only) (eq $.Values.train.only $name)) }}
+{{- if or (not $.Values.train.only) (eq $.Values.train.only $name) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -40,11 +46,9 @@ spec:
       {{- include "ai-residency.podSecurityContext" $ | nindent 6 }}
       containers:
         - name: train
-          image: "{{ $svc.trainImage }}:{{ $.Values.image.tag }}"
+          image: "{{ include "ai-residency.repository" (dict "spec" (dict "image" $svc.trainImage) "ctx" $ "name" $name "suffix" "-train") }}:{{ $.Values.train.imageTag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
-          command:
-            {{- toYaml $svc.trainCommand | nindent 12 }}
           envFrom:
             - secretRef:
                 name: {{ $.Values.secrets.name }}
@@ -69,15 +73,24 @@ spec:
             limits:
               memory: {{ $svc.trainMemoryLimit }}
           {{- end }}
-          {{- if $svc.volumes }}
+          {{- $mountsCache := has $name $.Values.hfCache.services }}
+          {{- if or $mountsCache $svc.volumes }}
           volumeMounts:
+            {{- if $mountsCache }}
+            - name: hf-cache
+              mountPath: {{ $.Values.hfCache.mountPath }}
+            {{- end }}
             {{- range $vol := $svc.volumes }}
             - name: {{ $vol.name }}
               mountPath: {{ $vol.mountPath }}
             {{- end }}
           {{- end }}
-      {{- if $svc.volumes }}
+      {{- if or (has $name $.Values.hfCache.services) $svc.volumes }}
       volumes:
+        {{- if has $name $.Values.hfCache.services }}
+        - name: hf-cache
+          {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" (dict "kind" "hfCache")) | nindent 10 }}
+        {{- end }}
         {{- range $vol := $svc.volumes }}
         - name: {{ $vol.name }}
           {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" $vol) | nindent 10 }}

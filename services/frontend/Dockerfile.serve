@@ -36,7 +36,7 @@ COPY pyproject.toml uv.lock ./
 # is why this needs no per-member enumeration to go stale.
 COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
 COPY libs libs
-RUN uv sync --frozen --no-install-project --package ai-residency-frontend
+RUN uv sync --frozen --no-dev --no-install-project --package ai-residency-frontend
 
 COPY services/frontend services/frontend
 

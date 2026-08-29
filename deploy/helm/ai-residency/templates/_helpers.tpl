@@ -32,12 +32,13 @@ and throttling a model mid-inference makes a fast request slow for no benefit he
 */}}
 {{- define "ai-residency.resources" -}}
 {{- $spec := .spec -}}
-{{- if or $spec.cpuRequest $spec.memoryRequest $spec.memoryLimit }}
+{{- $cpu := $spec.cpuRequest | default (.defaultCpuRequest | default "") -}}
+{{- if or $cpu $spec.memoryRequest $spec.memoryLimit }}
 resources:
-  {{- if or $spec.cpuRequest $spec.memoryRequest }}
+  {{- if or $cpu $spec.memoryRequest }}
   requests:
-    {{- if $spec.cpuRequest }}
-    cpu: {{ $spec.cpuRequest }}
+    {{- if $cpu }}
+    cpu: {{ $cpu }}
     {{- end }}
     {{- if $spec.memoryRequest }}
     memory: {{ $spec.memoryRequest }}
@@ -79,22 +80,50 @@ hostPath:
 {{- end -}}
 
 {{/*
-An image reference, by digest when the manifest has one.
+The repository an image lives in, derived unless a service names one.
 
-`deploy/images.lock` names the exact image each service runs, and `pin_images.py`
-propagates it here as a per-service `digest`. A digest cannot be moved, and it is
-per-image -- which a single shared `image.tag` could not be. `image.useDigest=false` falls back to the tag, which is what a local cluster needs:
-images built on this machine have their own digests, and published amd64 images cannot
-run on Docker Desktop's Kubernetes node at all -- that node is arm64 on Apple Silicon.
+Every image this repo builds is `<registry>/<chart>-<service>-serve` or `-train`, with
+the frontend the one exception (no suffix). That rule was written out eighteen times in
+values.yaml, once per backend per image kind, and the key it derives from was sitting
+right there in the `range`. The drift it allowed was quiet: rename a backend key and
+the Deployment, the Service and the frontend's env var all follow, while `image:` goes
+on naming the old repository -- a release that comes up running the previous service
+under the new name.
+
+An explicit `image:` still wins, for a service that does not follow the convention.
+
+{{ include "ai-residency.repository" (dict "spec" $svc "ctx" $ "name" $name "suffix" "-serve") }}
+*/}}
+
+`deploy/images.yaml` is a values file naming every image by digest, merged over these
+defaults with `helm upgrade -f ../images.yaml`. A digest cannot be moved, and it is
+per-image -- which a single shared `image.tag` could not be.
+
+There is no flag to turn that off, and no need for one: supplying the overlay pins the
+release, omitting it falls back to `image.tag`. That fallback is what a local cluster
+wants, since images built on this machine have their own digests and would never match
+a published one. This used to read `image.useDigest` as well, which was a second switch
+for the same decision the presence of a digest already makes.
 
 Takes a dict: `spec` (the service's own values) and `ctx` (the root context).
 */}}
+{{- define "ai-residency.repository" -}}
+{{- $ctx := .ctx -}}
+{{- $spec := .spec -}}
+{{- if $spec.image -}}
+{{ $spec.image }}
+{{- else -}}
+{{ $ctx.Values.image.registry }}/{{ $ctx.Chart.Name }}-{{ .name }}{{ .suffix }}
+{{- end -}}
+{{- end -}}
+
 {{- define "ai-residency.image" -}}
 {{- $spec := .spec -}}
 {{- $ctx := .ctx -}}
-{{- if and $spec.digest $ctx.Values.image.useDigest -}}
-{{ $spec.image }}@{{ $spec.digest }}
+{{- $repo := include "ai-residency.repository" (dict "spec" $spec "ctx" $ctx "name" .name "suffix" (.suffix | default "")) -}}
+{{- if $spec.digest -}}
+{{ $repo }}@{{ $spec.digest }}
 {{- else -}}
-{{ $spec.image }}:{{ $ctx.Values.image.tag }}
+{{ $repo }}:{{ $ctx.Values.image.tag }}
 {{- end -}}
 {{- end -}}

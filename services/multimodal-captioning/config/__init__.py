@@ -10,8 +10,9 @@ so a training run and the service that loads its output cannot disagree.
 the architecture it was trained with, because *not* recording that is precisely what
 produced this repo's longest-standing bug: `adapter_flickr_batched.pth` was saved from
 an adapter with a trailing `LayerNorm` that was later deleted from the code, and every
-later attempt to load it raised a `state_dict` key mismatch. See `models.build_adapter`
-and the note in `TODO.md`.
+later attempt to load it raised a `state_dict` key mismatch. `models.build_adapter`
+reads the recorded architecture back, so a checkpoint names the shape it needs rather
+than relying on the code not having moved since.
 """
 
 from dataclasses import dataclass, field

@@ -33,6 +33,18 @@
         },
         "claimName": {
           "type": "string"
+        },
+        "mountPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the cache mounts; must match the image HF_HOME."
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Backends that mount the Hugging Face cache."
         }
       }
     },
@@ -56,9 +68,10 @@
             "Never"
           ]
         },
-        "useDigest": {
-          "type": "boolean",
-          "description": "Pin by digest from images.lock; false uses tag (local clusters)."
+        "registry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Docker Hub account; repository names derive from it and the chart name."
         }
       }
     },
@@ -149,6 +162,10 @@
         },
         "env": {
           "type": "object"
+        },
+        "imageTag": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -185,13 +202,13 @@
     "frontend": {
       "type": "object",
       "required": [
-        "image",
         "containerPort",
         "servicePort"
       ],
       "properties": {
         "image": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional override. Derived as <registry>/<chart>-frontend when absent."
         },
         "containerPort": {
           "type": "integer"
@@ -224,7 +241,7 @@
         "digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$",
-          "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
+          "description": "Immutable image digest from deploy/images.yaml; overrides image.tag."
         }
       }
     },
@@ -266,28 +283,25 @@
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
-        "required": [
-          "image",
-          "containerPort"
-        ],
         "properties": {
           "image": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional override. Derived from the registry, the chart name and this backend's key when absent."
           },
           "trainImage": {
-            "type": "string"
-          },
-          "trainCommand": {
-            "type": "array"
+            "type": "string",
+            "description": "Optional override. Derived from the registry, the chart name and this backend's key when absent."
           },
           "trainEnv": {
             "type": "object"
           },
           "containerPort": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Optional override of backendDefaults.containerPort"
           },
           "cpuRequest": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional override of backendDefaults.cpuRequest"
           },
           "memoryRequest": {
             "type": "string"
@@ -354,8 +368,29 @@
           "digest": {
             "type": "string",
             "pattern": "^sha256:[0-9a-f]{64}$",
-            "description": "Immutable image digest from deploy/images.lock; overrides image.tag."
+            "description": "Immutable image digest from deploy/images.yaml; overrides image.tag."
           }
+        }
+      }
+    },
+    "backendDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containerPort",
+        "cpuRequest"
+      ],
+      "properties": {
+        "containerPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port every backend listens on unless it overrides it."
+        },
+        "cpuRequest": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CPU request every backend gets unless it overrides it."
         }
       }
     }

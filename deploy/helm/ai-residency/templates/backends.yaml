@@ -55,7 +55,7 @@ spec:
         {{- end }}
         {{- if $svc.bootstrapCommand }}
         - name: bootstrap-index
-          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $) }}"
+          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $ "name" $name "suffix" "-serve") }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           {{- if $svc.bootstrapOptional }}
@@ -88,8 +88,13 @@ spec:
               value: {{ tpl ($v | toString) $ | quote }}
             {{- end }}
           {{- end }}
-          {{- if $svc.volumes }}
+          {{- $mountsCache := has $name $.Values.hfCache.services }}
+          {{- if or $mountsCache $svc.volumes }}
           volumeMounts:
+            {{- if $mountsCache }}
+            - name: hf-cache
+              mountPath: {{ $.Values.hfCache.mountPath }}
+            {{- end }}
             {{- range $vol := $svc.volumes }}
             - name: {{ $vol.name }}
               mountPath: {{ $vol.mountPath }}
@@ -102,11 +107,11 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
-          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $) }}"
+          image: "{{ include "ai-residency.image" (dict "spec" $svc "ctx" $ "name" $name "suffix" "-serve") }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" $ | nindent 10 }}
           ports:
-            - containerPort: {{ $svc.containerPort }}
+            - containerPort: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
           {{- if $.Values.probes.enabled }}
           # Two endpoints, two meanings -- and they must not be the same URL.
           #
@@ -129,25 +134,25 @@ spec:
           startupProbe:
             httpGet:
               path: {{ $svc.healthPath | default $.Values.probes.healthPath }}
-              port: {{ $svc.containerPort }}
+              port: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
             periodSeconds: {{ $.Values.probes.startup.periodSeconds }}
             failureThreshold: {{ $.Values.probes.startup.failureThreshold }}
           readinessProbe:
             httpGet:
               path: {{ $svc.readyPath | default $.Values.probes.readyPath }}
-              port: {{ $svc.containerPort }}
+              port: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
             periodSeconds: {{ $.Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ $.Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ $.Values.probes.readiness.failureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ $svc.healthPath | default $.Values.probes.healthPath }}
-              port: {{ $svc.containerPort }}
+              port: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
             periodSeconds: {{ $.Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ $.Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ $.Values.probes.liveness.failureThreshold }}
           {{- end }}
-          {{- include "ai-residency.resources" (dict "ctx" $ "spec" $svc) | nindent 10 }}
+          {{- include "ai-residency.resources" (dict "ctx" $ "spec" $svc "defaultCpuRequest" $.Values.backendDefaults.cpuRequest) | nindent 10 }}
           {{- if or $.Values.secrets.hfToken $.Values.secrets.wandbApiKey }}
           envFrom:
             # optional: a release installed without credentials still starts, and its
@@ -163,8 +168,13 @@ spec:
               value: {{ tpl ($v | toString) $ | quote }}
             {{- end }}
           {{- end }}
-          {{- if $svc.volumes }}
+          {{- $mountsCache := has $name $.Values.hfCache.services }}
+          {{- if or $mountsCache $svc.volumes }}
           volumeMounts:
+            {{- if $mountsCache }}
+            - name: hf-cache
+              mountPath: {{ $.Values.hfCache.mountPath }}
+            {{- end }}
             {{- range $vol := $svc.volumes }}
             - name: {{ $vol.name }}
               mountPath: {{ $vol.mountPath }}
@@ -173,8 +183,12 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
-      {{- if $svc.volumes }}
+      {{- if or (has $name $.Values.hfCache.services) $svc.volumes }}
       volumes:
+        {{- if has $name $.Values.hfCache.services }}
+        - name: hf-cache
+          {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" (dict "kind" "hfCache")) | nindent 10 }}
+        {{- end }}
         {{- range $vol := $svc.volumes }}
         - name: {{ $vol.name }}
           {{- include "ai-residency.volumeSource" (dict "ctx" $ "vol" $vol) | nindent 10 }}
@@ -193,7 +207,7 @@ spec:
   selector:
     app.kubernetes.io/name: {{ $name }}
   ports:
-    - port: {{ $svc.containerPort }}
-      targetPort: {{ $svc.containerPort }}
+    - port: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
+      targetPort: {{ $svc.containerPort | default $.Values.backendDefaults.containerPort }}
 ---
 {{- end }}

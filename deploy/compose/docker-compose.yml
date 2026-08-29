@@ -16,48 +16,58 @@
 #
 # `train` services are profile-gated, so a bare `docker compose up` never trains.
 #
-# Images are pinned to a commit, not to `latest`. One tag names the exact set that
-# was built and verified together, so `docker compose up` a month from now brings
-# up what it brought up today. Override with IMAGE_TAG=latest to track the tip, or
-# IMAGE_TAG=sha-<other> to roll back.
+# Serving images are pinned by digest from deploy/images.yaml, so `docker compose up`
+# a month from now brings up exactly what it brought up today. The digests come from
+# compose/images.env, which `make -C deploy pin-images` generates; the `${..._REF}`
+# references below are what read it, and fall back to `:latest` when it is absent.
+#
+# Training images are not in that manifest: they are ~9GB, built on demand by a
+# separate workflow, and nothing regenerates a digest for them. They track
+# `TRAIN_IMAGE_TAG`, which defaults to `latest` -- the tag that workflow pushes
+# alongside its sha- tag. Pin a run with TRAIN_IMAGE_TAG=sha-<commit>.
+
+# The blocks every backend repeated. `x-` prefixed top-level keys are Compose's own
+# extension point -- it ignores them, so they exist to hold a YAML anchor that services
+# alias. The healthcheck below was written out nine times and the credential pair
+# eighteen, which is not only ~90 lines of a 367-line file but nine copies of one
+# readiness contract that could drift apart one service at a time.
+#
+# `<<:` merges the anchor into a service that needs extra variables alongside it.
+
+# Compose's analog of the chart's readinessProbe: /ready answers 503 until the service
+# can actually serve, so `depends_on: condition: service_healthy` waits for a backend
+# that works rather than one that has merely started.
+x-backend-healthcheck: &backend-healthcheck
+  test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
+  interval: 10s
+  timeout: 5s
+  retries: 30
+  start_period: 60s
+
+# Both optional. The model and dataset repos are public, so a stack started with
+# neither still pulls what it needs and serves; HF_TOKEN is for pushing, and without
+# WANDB_API_KEY a training run logs offline.
+x-hub-credentials: &hub-credentials
+  HF_TOKEN: ${HF_TOKEN:-}
+  WANDB_API_KEY: ${WANDB_API_KEY:-}
 
 
 services:
   # --- CBOW vectors: nearest-neighbour and analogy inference ---
   word-embeddings:
-    image: roshb/ai-residency-word-embeddings-serve@sha256:9dd46d7bbc77f75702cba869818457dcac4b83f2ca2357a6609a7080845c343b
+    image: roshb/ai-residency-word-embeddings-serve${WORD_EMBEDDINGS_REF:-:latest}
     ports:
       - "8001:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   # --- The regression head that consumes those vectors ---
   content-scoring:
-    image: roshb/ai-residency-content-scoring-serve@sha256:3dd0c2539e1b2deedac49f0afc42750a734b8a0e718de226a34cb11f872beab4
+    image: roshb/ai-residency-content-scoring-serve${CONTENT_SCORING_REF:-:latest}
     ports:
       - "8007:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   # --- Redis, for the retrieval service's HNSW index ---
   redis:
@@ -72,7 +82,7 @@ services:
       retries: 10
 
   vector-search-retrieval:
-    image: roshb/ai-residency-vector-search-retrieval-serve@sha256:9cab730fc9311c65cd532e3d16e48fe351e0bc645dec048681815456ff0321b0
+    image: roshb/ai-residency-vector-search-retrieval-serve${VECTOR_SEARCH_RETRIEVAL_REF:-:latest}
     depends_on:
       # `condition: service_healthy`, not a bare list entry: the bare form only orders
       # container *start*, so this one could come up and try to reach a Redis that had
@@ -81,8 +91,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
@@ -96,127 +105,63 @@ services:
     # serving container that behaved differently on the machine that trained it.
     ports:
       - "8002:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
+    healthcheck: *backend-healthcheck
 
   # --- Single-digit ViT classifier: FastAPI inference container ---
   vit-classifier:
-    image: roshb/ai-residency-vit-classifier-serve@sha256:6ce755e2f23e7ab692a56ad6cfc3d2ca965491db7dba17b81d53b9b25d30cda4
+    image: roshb/ai-residency-vit-classifier-serve${VIT_CLASSIFIER_REF:-:latest}
     ports:
       - "8003:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   # --- Multi-digit encoder-decoder ViT: FastAPI inference container ---
   vit-seq2seq:
-    image: roshb/ai-residency-vit-seq2seq-serve@sha256:a6905997d63afe58c86111ef36736eeee5e9a9db318776460e114476a7a02dad
+    image: roshb/ai-residency-vit-seq2seq-serve${VIT_SEQ2SEQ_REF:-:latest}
     ports:
       - "8008:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   multimodal-captioning:
-    image: roshb/ai-residency-multimodal-captioning-serve@sha256:e429431fbc58accd06edf74a3f000713399e4b4c3190b0812a8879ea24953002
+    image: roshb/ai-residency-multimodal-captioning-serve${MULTIMODAL_CAPTIONING_REF:-:latest}
     working_dir: /app
     ports:
       - "8004:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   whisper-fine-tuning:
-    image: roshb/ai-residency-whisper-fine-tuning-serve@sha256:155cd2f365939bcea5ae1cc19f69e38e3f2dc703b64e71d969bbc25105854b33
+    image: roshb/ai-residency-whisper-fine-tuning-serve${WHISPER_FINE_TUNING_REF:-:latest}
     ports:
       - "8005:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   # --- Emotion-aware Whisper: FastAPI inference container ---
   speech-emotion-recognition:
-    image: roshb/ai-residency-speech-emotion-recognition-serve@sha256:942e416d9cc656c56891beb8d1a81b937dd840a20dac7ced557fa11b5b3cad15
+    image: roshb/ai-residency-speech-emotion-recognition-serve${SPEECH_EMOTION_RECOGNITION_REF:-:latest}
     ports:
       - "8009:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   rlhf-ppo:
-    image: roshb/ai-residency-rlhf-ppo-serve@sha256:86d4b4defc0d49afdb40356da1977244710941b60bff89fda87618906f6a574f
+    image: roshb/ai-residency-rlhf-ppo-serve${RLHF_PPO_REF:-:latest}
     volumes:
-      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # /home/app, not /root: these containers run as UID 1000, and the image sets
+      # HF_HOME=/home/app/.cache/huggingface. Mounted at /root the cache was inert --
+      # nothing ever wrote there -- so this service re-downloaded a multi-GB backbone
+      # on every fresh run while looking like it had a warm cache. Written when the
+      # images still ran as root, and never revisited when they stopped.
+      - ${HOME}/.cache/huggingface:/home/app/.cache/huggingface
     ports:
       - "8006:8000"
-    # Compose's analog of the chart's readinessProbe: /ready answers 503 until the
-    # service can actually serve, so `depends_on: condition: service_healthy` below
-    # waits for a backend that works rather than one that has merely started.
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
-      HF_HOME: /root/.cache/huggingface
+    healthcheck: *backend-healthcheck
+    environment: *hub-credentials
 
   frontend:
-    image: roshb/ai-residency-frontend@sha256:4e9c39109748359e97050a207e8b6ad4285eef5d858a56633a510abc89f0266e
+    image: roshb/ai-residency-frontend${FRONTEND_REF:-:latest}
     depends_on:
       - word-embeddings
       - content-scoring
@@ -260,25 +205,23 @@ services:
 
   train-word-embeddings:
     profiles: [train]
-    image: roshb/ai-residency-word-embeddings-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-word-embeddings-train:${TRAIN_IMAGE_TAG:-latest}
     volumes:
       - ../../services/word-embeddings/data:/app/data
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_CBOW_NUM_EPOCHS: ${AI_RESIDENCY_CBOW_NUM_EPOCHS:-1}
 
   train-content-scoring:
     profiles: [train]
-    image: roshb/ai-residency-content-scoring-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-content-scoring-train:${TRAIN_IMAGE_TAG:-latest}
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
   train-vector-search-retrieval:
     profiles: [train]
-    image: roshb/ai-residency-vector-search-retrieval-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vector-search-retrieval-train:${TRAIN_IMAGE_TAG:-latest}
     # No command override: the image's own CMD is the single source of truth for what
     # a training container runs, so it cannot drift from the Dockerfile.
     depends_on:
@@ -286,75 +229,66 @@ services:
     volumes:
       - ../../services/vector-search-retrieval/data:/app/data
     environment:
+      <<: *hub-credentials
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
   train-vit-classifier:
     profiles: [train]
-    image: roshb/ai-residency-vit-classifier-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vit-classifier-train:${TRAIN_IMAGE_TAG:-latest}
     volumes:
       - ../../services/vit-classifier/data:/app/data
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       # The classifier's epoch cap is its own field, so AI_RESIDENCY_NUM_EPOCHS alone
       # would not shorten a run.
       AI_RESIDENCY_CLASSIFIER_EPOCHS: ${AI_RESIDENCY_CLASSIFIER_EPOCHS:-1}
 
   train-vit-seq2seq:
     profiles: [train]
-    image: roshb/ai-residency-vit-seq2seq-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-vit-seq2seq-train:${TRAIN_IMAGE_TAG:-latest}
     volumes:
       - ../../services/vit-seq2seq/data:/app/data
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
 
   train-multimodal-captioning:
     profiles: [train]
-    image: roshb/ai-residency-multimodal-captioning-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-multimodal-captioning-train:${TRAIN_IMAGE_TAG:-latest}
     working_dir: /app
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
       # Never overwrite the committed adapter during a smoke run.
       AI_RESIDENCY_CHECKPOINT_NAME: ${AI_RESIDENCY_CHECKPOINT_NAME:-adapter_smoke.pth}
 
   train-whisper-fine-tuning:
     profiles: [train]
-    image: roshb/ai-residency-whisper-fine-tuning-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-whisper-fine-tuning-train:${TRAIN_IMAGE_TAG:-latest}
     volumes:
       - ../../services/whisper-fine-tuning/data:/app/data
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
   train-speech-emotion-recognition:
     profiles: [train]
-    image: roshb/ai-residency-speech-emotion-recognition-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-speech-emotion-recognition-train:${TRAIN_IMAGE_TAG:-latest}
     volumes:
       - ../../services/speech-emotion-recognition/data:/app/data
       - ../../services/speech-emotion-recognition/datasets:/app/datasets
     environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}
 
   train-rlhf-ppo:
     profiles: [train]
-    image: roshb/ai-residency-rlhf-ppo-train:${IMAGE_TAG:-sha-c09591b2b30d5b4ebb9756b0d9ae63718a43d48f}
+    image: roshb/ai-residency-rlhf-ppo-train:${TRAIN_IMAGE_TAG:-latest}
     # One PPO step -- this repo has no epoch loop, by design.
     volumes:
-      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
-    environment:
-      HF_HOME: /root/.cache/huggingface
-      HF_TOKEN: ${HF_TOKEN:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      - ${HOME}/.cache/huggingface:/home/app/.cache/huggingface
+    environment: *hub-credentials

@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1-labs
+#
+# The training image for every service.
+#
+# One file, parameterised by SERVICE and TRAIN_MODULE, rather than one per service.
+# The ten it replaces differed only in the module their CMD ran -- everything above
+# it, the `uv sync` line included, was the same text ten times over.
+#
+# This builds FROM the CUDA base, not the CPU one, and is linux/amd64 only: a GPU
+# host is x86-64, and these carry the full CUDA stack at around 9GB each. `make
+# base-train` builds the base; `make build` passes --platform for this.
+#
+# The build context is the repository root, not a service directory: the image needs
+# the workspace's root pyproject.toml, the single shared uv.lock and libs/, none of
+# which live inside a service.
+#
+#   docker build -f Dockerfile.train --build-arg SERVICE=word-embeddings \
+#     --build-arg TRAIN_MODULE=word_embeddings.train .
+#   (or: make build SERVICE=word-embeddings)
+
+ARG BASE_IMAGE=roshb/ai-residency-base-train:latest
+FROM ${BASE_IMAGE}
+
+# No default. A wrong image is worse than a failed build, and an unset SERVICE would
+# otherwise produce `ai-residency-` as a package name and fail somewhere less obvious.
+ARG SERVICE
+# The one thing that genuinely differs per service. It is declared in that service's
+# own pyproject.toml under [tool.ai-residency], so the fact lives next to the code it
+# names rather than in a table here that would go stale; `make build` reads it.
+ARG TRAIN_MODULE
+RUN test -n "$SERVICE" || { echo "build with --build-arg SERVICE=<name>"; exit 1; }
+RUN test -n "$TRAIN_MODULE" || { echo "build with --build-arg TRAIN_MODULE=<module>"; exit 1; }
+
+WORKDIR /app
+
+# Every member's manifest plus the shared lock, before any source. The workspace
+# then resolves exactly as it does on a developer machine, and this layer stays
+# cached until a dependency actually changes rather than on every code edit.
+# `--parents` keeps the directory structure, which is why this needs no per-member
+# enumeration to go stale.
+COPY pyproject.toml uv.lock ./
+COPY --parents libs/*/pyproject.toml services/*/pyproject.toml ./
+
+# The libraries are real installable packages, so their source has to be present
+# before the dependency sync can build them -- a manifest alone is not enough.
+# `COPY libs libs` rather than naming them: this said `libs/common` until a service
+# gained a second library dependency, at which point the build failed on a missing
+# `src` directory. There is no list to keep in step now.
+COPY libs libs
+
+# The CUDA base already carries torch, and the lock's wheels are CPU-only by design.
+# Excluding those three from the sync is what stops uv reinstalling them over the
+# CUDA build -- and `--inexact` stops it removing them as extraneous.
+RUN uv sync --frozen --no-dev --no-install-project \
+      --no-install-package torch \
+      --no-install-package torchvision \
+      --no-install-package torchaudio \
+      --inexact \
+      --package "ai-residency-${SERVICE}"
+
+COPY services/${SERVICE} services/${SERVICE}
+# `--all-extras`: a service's optional dependencies are the ones only its data or
+# training stages need -- word-embeddings' Postgres driver for the corpus build, for
+# instance. The serving image installs none of them; this one installs all of them.
+RUN uv sync --frozen --no-dev --all-extras \
+      --no-install-package torch \
+      --no-install-package torchvision \
+      --no-install-package torchaudio \
+      --inexact \
+      --package "ai-residency-${SERVICE}"
+
+WORKDIR /app/services/${SERVICE}
+
+# Drop to the unprivileged user the base image created. Everything above this line
+# installs; nothing below it needs root. The service directory is chowned because a
+# few services write into it at run time (temp files, a checkpoint directory), and a
+# root-owned working directory would make those fail on the first request instead of
+# at build time. UID 1000 matches securityContext.runAsUser in the Helm chart.
+RUN chown -R app:app /app/services/${SERVICE}
+USER app
+
+# A build argument does not survive into the running container, so it is persisted as
+# an environment variable for the CMD to expand. Shell form on purpose: the exec form
+# does no variable expansion at all and would try to import a module literally named
+# `${TRAIN_MODULE}`. `exec` keeps Python as PID 1, so a Job's termination signal
+# reaches it rather than a shell that ignores it.
+ENV TRAIN_MODULE=${TRAIN_MODULE}
+CMD exec python -m ${TRAIN_MODULE}

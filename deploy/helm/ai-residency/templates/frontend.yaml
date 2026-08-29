@@ -28,7 +28,7 @@ spec:
       {{- include "ai-residency.podSecurityContext" . | nindent 6 }}
       containers:
         - name: frontend
-          image: "{{ include "ai-residency.image" (dict "spec" .Values.frontend "ctx" .) }}"
+          image: "{{ include "ai-residency.image" (dict "spec" .Values.frontend "ctx" . "name" "frontend") }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "ai-residency.containerSecurityContext" . | nindent 10 }}
           ports:
@@ -62,7 +62,7 @@ spec:
           env:
             {{- range $name := (keys .Values.backends | sortAlpha) }}
             - name: {{ upper (replace "-" "_" $name) }}_API_URL
-              value: "http://{{ $name }}:{{ (index $.Values.backends $name).containerPort }}"
+              value: "http://{{ $name }}:{{ (index $.Values.backends $name).containerPort | default $.Values.backendDefaults.containerPort }}"
             {{- end }}
             # Which pages the UI shows. Derived from the backends this release
             # actually deploys, so trimming .Values.backends to one service gives a UI
