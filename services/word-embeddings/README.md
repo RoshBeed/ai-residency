@@ -556,12 +556,35 @@ excluded:
 | `bigger - big + small` | **smaller**, larger, large |
 | `walked - walk + run` | had, **ran**, seemed |
 | `paris - france + italy` | turin, bologna, **rome** |
-| `king - man + woman` | daughter, throne, ermengarde |
+| `king - man + woman` | throne, anjou, daughter |
 
-Three of the four put the intended answer in the top three; the last one does not. `king - man +
-woman` is the example everyone quotes, and on these vectors it returns `daughter` — semantically
-in the right region, not the right word. At 46.4% analogy accuracy roughly half of them miss, so
-picking only the ones that work would be picking the sample to fit the claim.
+Three of the four put the intended answer in the top three. The fourth is the example everyone
+quotes, and it misses — so it is worth saying exactly why, because the obvious reading is wrong.
+
+**It is not that the gender direction was never learned.** Four of six family analogies land on the
+right word outright:
+
+| query | top 3 |
+|---|---|
+| `father : mother :: son : ?` | **daughter**, wife, granddaughter |
+| `brother : sister :: grandson : ?` | **granddaughter**, daughter, grandchildren |
+| `man : woman :: son : ?` | **daughter**, wife, mother |
+| `boy : girl :: father : ?` | **mother**, wife, daughter |
+
+The axis is there. What fails is `king` in particular, and the neighbours say why: `throne`, `anjou`,
+`childless`, `marrying`. In 17M tokens of Wikipedia, `king` occurs overwhelmingly in regnal lists
+and succession prose, so its vector encodes *monarchy and lineage* far more strongly than it
+encodes *male*. Push it along the gender axis and you land on the nearest female role in that same
+dynastic context, which is `daughter` — a coherent answer to the question the vectors actually
+represent, and not the one the demo wants. `queen` comes 15th.
+
+Corpus size is the rest of it. `queen` appears 1,940 times here and `woman` 1,753; the canonical
+demo comes from Google News at 100 billion words, about 6,000 times more text. Category accuracy
+matches that story — `gram6-nationality-adjective` 93.2%, `capital-common-countries` 86.2%,
+`gram8-plural` 71.4%, against `family` at 39.9%, the weakest of the semantic categories.
+
+Reporting the miss rather than dropping it is the point: at 46.4% overall, showing only the
+queries that work would be choosing the sample to fit the claim.
 
 **Figure 12.** Benchmarks over training, both architectures, against the published references.
 
