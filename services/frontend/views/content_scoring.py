@@ -65,7 +65,7 @@ def render() -> None:
                         )
                         st.markdown(
                             '<div class="trace-caption">'
-                            "Words looked up in CBOW vocabulary (258,196 words). "
+                            "Words looked up in the CBOW vocabulary (71,290 words). "
                             "Unknown words are skipped.</div>",
                             unsafe_allow_html=True,
                         )
