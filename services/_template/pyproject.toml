@@ -31,6 +31,12 @@ pythonpath = ["."]
 
 # torch resolves to the CUDA build on linux/arm64 otherwise, which bloats images
 # roughly 5-10x. This portfolio runs CPU-only in containers.
+# The module `Dockerfile.train` runs. One root Dockerfile builds every training
+# image, so the one thing that genuinely differs per service is declared here,
+# beside the code it names, rather than in a table in the build tooling.
+[tool.ai-residency]
+train-module = "template.training"
+
 [tool.uv.sources]
 ai-residency-common = { workspace = true }
 torch = [{ index = "pytorch-cpu" }]

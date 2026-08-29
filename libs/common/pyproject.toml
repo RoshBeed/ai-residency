@@ -21,7 +21,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/libs/common"
-Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+Repository = "https://github.com/RoshBeed/ai-residency.git"
 
 [dependency-groups]
 dev = [

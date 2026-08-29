@@ -11,11 +11,11 @@
 # libs/common checks everything, which is correct -- it is the one thing they
 # genuinely share.
 #
-# Publishing deliberately does NOT follow the filter. Every push to main publishes all
-# ten images under one `sha-<commit>` tag, so that tag names a complete set that
-# deploy/ can pin. When only the changed service was published, most SHAs existed for
-# some images and not others, and the "reproducible from a single identifier" claim in
-# the README was not something the registry could actually honour.
+# Publishing follows the same filter. It did not always: every push to main once
+# rebuilt all eleven images so that one `sha-<commit>` tag would name a complete set
+# for deploy/ to pin. `deploy/images.yaml` names that set by digest now, which removed
+# the reason -- an unchanged image needs no rebuild and no tag minted for a commit it
+# had nothing to do with. Rebuilding everything was 78% of this repo's Actions minutes.
 
 name: CI
 
@@ -41,93 +41,113 @@ env:
 
 jobs:
   changes:
-    name: Which services changed
+    name: Which members changed
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      services: ${{ steps.detect.outputs.services }}
-      members: ${{ steps.detect.outputs.members }}
-      all: ${{ steps.detect.outputs.all }}
-      any: ${{ steps.detect.outputs.any }}
-      shared: ${{ steps.detect.outputs.shared }}
+      members: ${{ steps.select.outputs.members }}
+      services: ${{ steps.select.outputs.services }}
+      any: ${{ steps.select.outputs.any }}
+      shared: ${{ steps.filter.outputs.shared }}
     steps:
       - uses: actions/checkout@v7
+
+      # dorny/paths-filter rather than a hand-rolled `git diff`. The diff itself is
+      # the part that kept being subtly wrong: resolving a base SHA needs one rule
+      # for pull_request (the merge base) and another for push (`github.event.before`,
+      # which is all zeroes on a new branch), and the version of that logic written
+      # here had already produced two bugs -- an empty diff killing the step under
+      # `set -e`, and an empty selection serialising as `[""]`, a matrix with one
+      # nameless entry. The action handles both events and exposes `changes` as a
+      # JSON array of the filters that matched, which is the shape a matrix wants.
+      #
+      # The filters are listed rather than derived from the directory tree. That is a
+      # deliberate trade: `test_ci_filters.py` fails if this list and the workspace
+      # ever disagree, so a new member cannot be silently skipped -- and being written
+      # down means the diff for adding one shows what will now run.
+      - uses: dorny/paths-filter@v4
+        id: filter
         with:
-          fetch-depth: 0
+          filters: |
+            shared: &shared
+              - 'libs/**'
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+              - 'Dockerfile.base'
+              - 'Dockerfile.serve'
+            common:
+              - *shared
+            vision-transformer:
+              - *shared
+            word2vec:
+              - *shared
+            speech:
+              - *shared
+            _template:
+              - *shared
+              - 'services/_template/**'
+            word-embeddings:
+              - *shared
+              - 'services/word-embeddings/**'
+            content-scoring:
+              - *shared
+              - 'services/content-scoring/**'
+            vector-search-retrieval:
+              - *shared
+              - 'services/vector-search-retrieval/**'
+            vit-classifier:
+              - *shared
+              - 'services/vit-classifier/**'
+            vit-seq2seq:
+              - *shared
+              - 'services/vit-seq2seq/**'
+            multimodal-captioning:
+              - *shared
+              - 'services/multimodal-captioning/**'
+            whisper-fine-tuning:
+              - *shared
+              - 'services/whisper-fine-tuning/**'
+            speech-emotion-recognition:
+              - *shared
+              - 'services/speech-emotion-recognition/**'
+            rlhf-ppo:
+              - *shared
+              - 'services/rlhf-ppo/**'
+            frontend:
+              - *shared
+              - 'services/frontend/**'
 
-      - id: detect
+      # The filter names are basenames; the check matrix needs paths, and the publish
+      # matrix needs service names without the libraries or the template. One jq pass
+      # rather than three shell loops.
+      - id: select
+        env:
+          MATCHED: ${{ steps.filter.outputs.changes }}
+          DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            base=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
-          fi
-          changed=$(git diff --name-only "$base" HEAD)
-          all=$(ls -d services/*/ | sed 's|services/||;s|/||' | grep -v '^_template$')
-
-          # Every checkable member, as a path. Libraries are checked too, which they
-          # were not before: the matrix covered services only, so libs/common's own
-          # test suite -- the most-shared code here -- had never actually run in CI.
-          # A change to it triggered every service, which exercises it through their
-          # imports, but never ran its own tests.
-          #
-          # `ai-residency-<basename>` is the package name for every member, libraries
-          # included, so one matrix can cover both.
-          members=$(ls -d libs/*/ services/*/ | sed 's|/$||' | grep -v '/_template$')
-
-          # The shared library, the lockfile, the lint config and CI itself all
-          # affect every service.
-          #
-          # `if` rather than `grep -q ... && echo`: under `set -e` a failing `&&`
-          # list as the loop's last command makes the whole substitution exit 1,
-          # which killed this step whenever the *last* service was unchanged --
-          # and on any push whose diff is empty.
-          # A shared input -- the libraries, the lockfile, pyproject, CI itself or any
-          # Dockerfile -- is in every image, so it invalidates all of them including
-          # the base. Recorded as its own output because publishing now uses it to
-          # decide which images to rebuild and which the manifest already describes.
-          shared=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            shared=true
-            selected="$all"
-            selected_members="$members"
-          elif echo "$changed" | grep -qE '^(libs/|uv\.lock|pyproject\.toml|\.github/|Dockerfile)'; then
-            shared=true
-            selected="$all"
-            selected_members="$members"
+          set -euo pipefail
+          all_members=$(printf '%s\n' libs/*/ services/*/ | sed 's|/$||' | jq -R . | jq -sc .)
+          if [ "$DISPATCH" = 'true' ]; then
+            members="$all_members"
           else
-            selected=$(for s in $all; do
-              if echo "$changed" | grep -q "^services/$s/"; then echo "$s"; fi
-            done)
-            selected_members=$(for m in $members; do
-              if echo "$changed" | grep -q "^$m/"; then echo "$m"; fi
-            done)
+            members=$(jq -nc --argjson matched "$MATCHED" --argjson all "$all_members" \
+              '$all | map(select(. as $p | $matched | index($p | split("/") | last)))')
           fi
-
-          # An empty selection has to serialise as [] -- `printf | jq -R` on an
-          # empty string yields [""], a matrix with one nameless entry.
-          if [ -z "$selected" ]; then
-            json='[]'
-          else
-            json=$(printf '%s\n' $selected | jq -R . | jq -sc .)
-          fi
-          if [ -z "$selected_members" ]; then
-            members_json='[]'
-          else
-            members_json=$(printf '%s\n' $selected_members | jq -R . | jq -sc .)
-          fi
-          echo "services=$json" >> "$GITHUB_OUTPUT"
-          echo "members=$members_json" >> "$GITHUB_OUTPUT"
-          echo "any=$([ -n "$selected_members" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "shared=$shared" >> "$GITHUB_OUTPUT"
-
-          # Checks are narrowed by the path filter; publishing is not. Every push to
-          # main publishes all ten images under one sha- tag, so that tag names a
-          # complete, deployable set. Publishing only what changed meant most SHAs
-          # existed for some images and not others, and `deploy/` pinning one tag was
-          # a claim the registry could not honour. The layer cache makes the images
-          # whose inputs did not change nearly free to republish.
-          echo "all=$(printf '%s\n' $all | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
-          echo "Selected for checks: ${selected:-none}"
-          echo "Published on main:   $all"
+          # `_template` is checked like any other member -- it is a working service and
+          # the seed for every new one -- but it is never published.
+          services=$(jq -nc --argjson m "$members" \
+            '$m | map(select(startswith("services/"))) | map(split("/") | last)
+                | map(select(. != "_template"))')
+          {
+            echo "members=$members"
+            echo "services=$services"
+            echo "any=$(jq -nr --argjson m "$members" '$m | length > 0')"
+          } >> "$GITHUB_OUTPUT"
+          echo "Checked:   $(jq -r 'join(" ")' <<<"$members")"
+          echo "Published: $(jq -r 'join(" ")' <<<"$services")"
 
   lint:
     name: Lint (whole workspace)
@@ -146,13 +166,13 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
 
-      # The chart and compose are generated from deploy/images.lock. Editing either by
-      # hand looks like it works and then deploys something the manifest does not
-      # name -- which is the whole failure mode the manifest exists to remove.
-      # Both here rather than in the check matrix: that matrix is per workspace
-      # member, and deploy/ is not one -- so a change to the manifest tooling would
-      # otherwise be the one thing in the repo nothing runs.
-      - name: The manifest and what it generates agree
+      # compose/images.env is generated from deploy/images.yaml, and it is the only
+      # generated deployment artifact left -- the chart reads the manifest directly as
+      # a values overlay, so there is nothing to propagate into values.yaml and nothing
+      # there that can disagree with it. Checked here rather than in the check matrix:
+      # that matrix is per workspace member and deploy/ is not one, so a change to the
+      # manifest tooling would otherwise be the one thing in the repo nothing runs.
+      - name: The compose env file matches the manifest
         run: uv run python deploy/pin_images.py --check
       - name: Manifest tests
         run: uv run pytest -q deploy/
@@ -261,18 +281,26 @@ jobs:
   images:
     name: Publish ${{ matrix.service }}
     needs: [changes, images-base]
-    # `always()` for the same reason images-base needs it: a commit that touches no
-    # service skips the check matrix, and a skip propagates to everything downstream
-    # unless the condition contains a status function. Without it, a docs-only commit
-    # published the base image and none of the ten that depend on it -- a sha- tag
-    # naming an incomplete set, which is exactly what publishing-all exists to avoid.
-    if: always() && needs.images-base.result != 'failure' && needs.images-base.result != 'cancelled'
+    # `success()`, and it has to stay that way. Every gate that decides whether this
+    # repo publishes at all -- on main, not a schedule, PUBLISH_IMAGES set, lint and
+    # check green -- is declared once, on images-base, and reaches this job only
+    # through this line. `result != 'failure'` reads like a safe loosening and is not:
+    # `skipped` passes it, and images-base is skipped on precisely the runs that must
+    # not publish, so a pull request touching one service would push that service's
+    # image, `:latest` included, from unmerged code.
+    #
+    # The skip-propagation problem the looser form was reaching for does not arise
+    # here. images-base reports `success` when it runs with its build step skipped --
+    # `if: needs.changes.outputs.shared == 'true'` is on the step, not the job -- so a
+    # commit that rebuilds no base still leaves this job free to run.
+    if: needs.images-base.result == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # `all`, not `services`: see the note in the detect step. One sha- tag has to
-        # name every image, or pinning it in deploy/ does not describe a real set.
+        # Only what changed. `deploy/images.yaml` names the full set by digest, so an
+        # unchanged image needs no rebuild and no tag minted for a commit it had
+        # nothing to do with.
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v7
@@ -298,8 +326,26 @@ jobs:
             # This commit's tag is the only correct reference here.
             echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
           else
-            digest=$(python3 -c "import json;print(json.load(open('deploy/images.lock'))['images']['base-serve'])")
-            echo "ref=${{ env.REGISTRY }}/ai-residency-base-serve@$digest" >> "$GITHUB_OUTPUT"
+            digest=$(cat deploy/base-image.digest)
+            ref="${{ env.REGISTRY }}/ai-residency-base-serve@$digest"
+            # Services are built for both architectures, so the base they build FROM
+            # has to carry both. A single-platform base fails the arm64 leg with
+            # "no match for platform in manifest", which names neither the base nor
+            # the manifest entry that chose it. Checked here, where the fix is
+            # obvious: rebuild the base, or push a commit that touches a shared input.
+            # `--raw` rather than `--format`: a Go template's doubled braces are
+            # ambiguous with the workflow expression syntax in this same file, and
+            # both this shell and the Actions parser try to read them.
+            platforms=$(docker buildx imagetools inspect --raw "$ref" \
+              | jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(",")')
+            echo "base platforms: $platforms"
+            for want in linux/amd64 linux/arm64; do
+              case ",$platforms," in
+                *",$want,"*) ;;
+                *) echo "::error::the pinned base-serve digest has no $want; it has $platforms"; exit 1 ;;
+              esac
+            done
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Image name
@@ -312,7 +358,7 @@ jobs:
           fi
 
       # `sha-<commit>` exists only for images this commit actually rebuilt, and that
-      # is now fine: `deploy/images.lock` names the set by digest, so an unchanged
+      # is now fine: `deploy/images.yaml` names the set by digest, so an unchanged
       # image needs no tag minted for a commit it had nothing to do with. The tag is
       # how the manifest step finds what was just built.
       # Built into the runner's own docker first, native amd64 only, so the next step
@@ -323,10 +369,15 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: services/${{ matrix.service }}/Dockerfile.serve
+          # One root Dockerfile for every backend, selected by --build-arg. The
+          # frontend is the exception: no torch base, no FastAPI app.
+          file: ${{ matrix.service == 'frontend'
+                    && 'services/frontend/Dockerfile.serve'
+                    || 'Dockerfile.serve' }}
           load: true
           platforms: linux/amd64
           build-args: |
+            SERVICE=${{ matrix.service }}
             ${{ matrix.service != 'frontend'
                 && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
@@ -387,22 +438,34 @@ jobs:
             exit 1
           fi
           docker run --rm --entrypoint python "$image" -c '
-          import client, components, projects, theme
+          from importlib import import_module
+          import client, components, projects, shared, theme
           assert projects.API_URLS and projects.PROJECTS
-          print("frontend modules import; backends wired:", len(projects.API_URLS))
+          # Every page resolves. app.py imports these by name at boot, so a view
+          # module that is missing or does not define render() is a container that
+          # starts and then fails on the first request for that page.
+          for service in projects.ALL_PAGES:
+              module = import_module(f"views.{service.replace(chr(45), chr(95))}")
+              assert callable(module.render), f"views/{service} has no render()"
+          print("frontend imports; pages wired:", len(projects.ALL_PAGES))
           '
 
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: services/${{ matrix.service }}/Dockerfile.serve
+          # One root Dockerfile for every backend, selected by --build-arg. The
+          # frontend is the exception: no torch base, no FastAPI app.
+          file: ${{ matrix.service == 'frontend'
+                    && 'services/frontend/Dockerfile.serve'
+                    || 'Dockerfile.serve' }}
           push: true
           # Both architectures -- see the note on the base image.
           platforms: linux/amd64,linux/arm64
           # The frontend builds FROM python:3.11-slim directly -- it has no ML
           # dependencies -- so it takes no base image.
           build-args: |
+            SERVICE=${{ matrix.service }}
             ${{ matrix.service != 'frontend'
                 && format('BASE_IMAGE={0}', steps.base.outputs.ref)
                 || '' }}
@@ -442,12 +505,14 @@ jobs:
       - name: Resolve digests and propagate
         run: |
           set -euo pipefail
-          rebuilt=$(echo '${{ needs.changes.outputs.services }}' | jq -r '.[]' | tr '\n' ' ')
+          # An array, so the service list stays word-split on purpose while
+          # everything else here keeps its quoting.
+          read -r -a rebuilt <<<"$(jq -r 'join(" ")' <<<'${{ needs.changes.outputs.services }}')"
           if [ '${{ needs.changes.outputs.shared }}' = 'true' ]; then
-            rebuilt="base-serve $rebuilt"
+            rebuilt=(base-serve "${rebuilt[@]}")
           fi
-          echo "rebuilt: ${rebuilt:-nothing}"
-          python3 deploy/pin_images.py --update $rebuilt --sha ${{ github.sha }}
+          echo "rebuilt: ${rebuilt[*]:-nothing}"
+          python3 deploy/pin_images.py --update "${rebuilt[@]}" --sha '${{ github.sha }}'
 
       - name: Commit
         run: |
@@ -458,10 +523,14 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/images.lock deploy/helm/ai-residency/values.yaml deploy/compose/docker-compose.yml
+          # `git add deploy/`, not a list of paths. It is three files now -- the
+          # manifest, the base digest and the compose env file -- and naming them was
+          # how one got left unstaged, producing a partial commit whose only symptom was
+          # the next run's `--check` failing on drift with no obvious cause.
+          git add deploy/
           git commit -m "Update the image manifest for ${GITHUB_SHA::7} [skip ci]"
           git push
-          echo "::notice::deploy/images.lock updated"
+          echo "::notice::deploy/images.yaml updated"
 
   # A published image is the artifact people actually run, so it is the thing worth
   # scanning -- a lockfile audit misses everything the base OS contributes.
@@ -494,10 +563,19 @@ jobs:
   # job-minutes a year.
   scan:
     name: Scan the published base image
-    needs: images-base
+    needs: [changes, images-base]
+    # The push arm needs the base to have actually been *rebuilt*, not merely for
+    # images-base to have reported success. Its build step is conditional on a shared
+    # input moving, so on a service-only push the job succeeds having pushed nothing
+    # and `sha-<commit>` is a tag that was never created -- Trivy then fails resolving
+    # the image, which `exit-code: 0` does not suppress because that only covers
+    # findings, not a pull error.
     if: >-
       always()
-      && (github.event_name == 'schedule' || needs.images-base.result == 'success')
+      && (
+        github.event_name == 'schedule'
+        || (needs.images-base.result == 'success' && needs.changes.outputs.shared == 'true')
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read

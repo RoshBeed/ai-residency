@@ -39,10 +39,23 @@ terraform plan     # review before spending anything
 terraform apply    # provisions a real, billable spot instance
 ```
 
-Or run `./quick-start.sh` for an interactive prompt-driven setup that writes `terraform.tfvars` for
-you. `./monitor.sh` shows instance status, GPU utilization, and setup/training logs over SSH.
-`./cleanup.sh` tears the instance down (also happens automatically on training completion or
-timeout — this is a backstop, not the normal path).
+Once it is up, `terraform output` prints the commands for everything else — there is nothing
+bespoke to learn:
+
+```bash
+terraform output session_command        # aws ssm start-session --target <id>
+terraform output training_logs_command  # the same, tailing cloud-init's output
+terraform output max_total_cost         # what the ceiling actually is
+
+terraform destroy    # tear it down by hand; the instance also terminates itself on
+                     # completion or timeout, so this is a backstop, not the normal path
+```
+
+This used to be three shell wrappers — `quick-start.sh`, `monitor.sh` and `cleanup.sh`, 778 lines
+between them — around `terraform init/plan/apply`, `aws ssm`, and `terraform destroy`. Terraform
+already prints a plan, prompts before spending anything, and fails clearly when credentials are
+missing; SSM already gives a shell. The wrappers added colour codes and a prompt, and a second
+place for the commands to go stale.
 
 ## Variables worth knowing
 
@@ -71,4 +84,5 @@ timeout — this is a backstop, not the normal path).
 
 No log file is written to a fixed path; `/var/log/cloud-init-output.log` (the standard place
 cloud-init captures a boot script's own output) has the setup steps, and `docker logs` on the
-training container has its own output — `monitor.sh` reads both.
+training container has its own. `terraform output training_logs_command` gives you the first over
+SSM; run `docker logs -f` in that session for the second.

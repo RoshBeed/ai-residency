@@ -13,16 +13,16 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from advantage import GAEAdvantage, ReturnCalculator, TDError
-from base_setup import BaseModelSetup
 from config import PPOConfig
-from experience_buffer import ExperienceBuffer
-from models import PolicyModel, RewardModel, SFTModel, ValueModel
-from ppo_trainer import PPOTrainer, SequenceGenerator
-from reward_kl import KLDivergence, RewardAdjuster
-from sa_pair import SAPair
-from token_attribution import TokenAttribution
-from training import PolicyLoss, PolicyRatio, ValueLoss
+from rlhf_ppo.advantage import GAEAdvantage, ReturnCalculator, TDError
+from rlhf_ppo.base_setup import BaseModelSetup
+from rlhf_ppo.buffer import ExperienceBuffer
+from rlhf_ppo.models import PolicyModel, RewardModel, SFTModel, ValueModel
+from rlhf_ppo.ppo import PPOTrainer, SequenceGenerator
+from rlhf_ppo.reward_kl import KLDivergence, RewardAdjuster
+from rlhf_ppo.token_attribution import TokenAttribution
+from rlhf_ppo.training import PolicyLoss, PolicyRatio, ValueLoss
+from rlhf_ppo.types import SAPair
 
 DEVICE = torch.device("cpu")
 
@@ -205,7 +205,7 @@ def test_generated_pairs_carry_the_ids_that_were_scored(
     never that re-encoding the text reproduces the ids, which is the assumption the
     old implementation made and the thing that was not true.
     """
-    from ppo_trainer.generator import SequenceGenerator
+    from rlhf_ppo.ppo.generator import SequenceGenerator
 
     model = base_setup.create_base_model()
     generator = SequenceGenerator(

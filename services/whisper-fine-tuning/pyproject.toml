@@ -18,7 +18,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning"
-Repository = "https://https://github.com/RoshBeed/ai-residency.git"
+Repository = "https://github.com/RoshBeed/ai-residency.git"
 "Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning/issues"
 
 [dependency-groups]
@@ -35,6 +35,12 @@ package = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+# The module `Dockerfile.train` runs. One root Dockerfile builds every training
+# image, so the one thing that genuinely differs per service is declared here,
+# beside the code it names, rather than in a table in the build tooling.
+[tool.ai-residency]
+train-module = "whisper_fine_tuning.training"
 
 [tool.uv.sources]
 ai-residency-common = { workspace = true }

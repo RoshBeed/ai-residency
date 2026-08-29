@@ -56,7 +56,7 @@ typecheck: ## Run mypy in strict mode, per member
 # two ViT services that use it.
 test: ## Run pytest, per member
 	@# deploy/ is not a workspace member, so the loop below never reaches it -- and
-	@# `deploy/images.lock` is what the cluster actually deploys, which makes it worth
+	@# `deploy/images.yaml` is what the cluster actually deploys, which makes it worth
 	@# more coverage than most packages here, not less.
 	@echo "--- pytest deploy"
 	@uv run pytest -q deploy/
@@ -134,13 +134,33 @@ local: ## Build one service natively for this machine: make local SERVICE=word-e
 	$(MAKE) build SERVICE=$(SERVICE)
 	@echo ""
 	@echo "Built natively for $$(docker version --format '{{.Server.Arch}}')."
-	@echo "Run it:  docker run --rm -p 8000:8000 $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG)"
+	@echo "Run it:  docker run --rm -p 8000:8000 $(REGISTRY)/$(IMAGE_STEM):$(IMAGE_TAG)"
+
+# The training entrypoint, read from the service's own pyproject.toml. One root
+# Dockerfile.train builds every training image, and this is the only value that
+# differs between them -- kept beside the code it names rather than in a table here.
+train_module = $(shell python3 -c "import tomllib;print(tomllib.load(open('services/$(1)/pyproject.toml','rb'))['tool']['ai-residency']['train-module'])")
+
+# One root Dockerfile per image kind, selected by --build-arg, rather than one per
+# service. The frontend is the exception in both directions: it has its own
+# Dockerfile.serve (no torch base, no FastAPI app) and no training image at all.
+SERVE_DOCKERFILE = $(if $(filter frontend,$(SERVICE)),services/frontend/Dockerfile.serve,Dockerfile.serve)
+
+# A Docker repository name matches [a-z0-9]+([._-][a-z0-9]+)*, so `ai-residency-_template`
+# is not one -- two separators in a row. `make build SERVICE=_template` had always failed
+# on "invalid reference format", which nothing noticed because CI never built the
+# template. It is in the check matrix now, and a template you cannot build is not the
+# "working one, not a skeleton" it is documented as, so the leading underscore is
+# dropped from the image name. Nothing publishes this image; it exists to prove the
+# path works for a service that does not exist yet.
+IMAGE_STEM = ai-residency-$(patsubst _%,%,$(SERVICE))$(if $(filter frontend,$(SERVICE)),,-serve)
 
 build: ## Build a service's images: make build SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make build SERVICE=<name>   ($(SERVICES))" && exit 1)
-	docker build -f services/$(SERVICE)/Dockerfile.serve \
+	docker build -f $(SERVE_DOCKERFILE) \
+		--build-arg SERVICE=$(SERVICE) \
 		$(if $(filter frontend,$(SERVICE)),,--build-arg BASE_IMAGE=$(BASE_IMAGE)) \
-		-t $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG) .
+		-t $(REGISTRY)/$(IMAGE_STEM):$(IMAGE_TAG) .
 	@# `if`, not `test -f ... && docker build ... || true`. Shell precedence applies
 	@# that trailing `|| true` to the whole && list, so a training image that failed
 	@# to build exited 0 and this target reported success -- which is exactly how a
@@ -150,20 +170,22 @@ build: ## Build a service's images: make build SERVICE=word-embeddings
 	@# emulated build that a laptop rarely wants, and CI and the GPU host are where
 	@# training images are actually built. A base that IS present and a build that
 	@# then breaks still fails, which is the case worth catching.
-	@if [ ! -f services/$(SERVICE)/Dockerfile.train ]; then \
-		echo "services/$(SERVICE) has no Dockerfile.train; skipping the training image"; \
+	@if [ "$(SERVICE)" = "frontend" ]; then \
+		echo "services/frontend has no training image; skipping"; \
 	elif ! docker image inspect $(BASE_TRAIN_IMAGE) >/dev/null 2>&1; then \
 		echo "$(BASE_TRAIN_IMAGE) is not built; skipping the training image (run 'make base-train' first)"; \
 	else \
-		docker build --platform $(TRAIN_PLATFORM) -f services/$(SERVICE)/Dockerfile.train \
+		docker build --platform $(TRAIN_PLATFORM) -f Dockerfile.train \
+			--build-arg SERVICE=$(SERVICE) \
+			--build-arg TRAIN_MODULE=$(call train_module,$(SERVICE)) \
 			--build-arg BASE_IMAGE=$(BASE_TRAIN_IMAGE) \
-			-t $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG) . ; \
+			-t $(REGISTRY)/ai-residency-$(patsubst _%,%,$(SERVICE))-train:$(IMAGE_TAG) . ; \
 	fi
 
 push: ## Push a service's images: make push SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make push SERVICE=<name>" && exit 1)
-	docker push $(REGISTRY)/ai-residency-$(SERVICE)$(if $(filter frontend,$(SERVICE)),,-serve):$(IMAGE_TAG)
-	-docker push $(REGISTRY)/ai-residency-$(SERVICE)-train:$(IMAGE_TAG)
+	docker push $(REGISTRY)/$(IMAGE_STEM):$(IMAGE_TAG)
+	-docker push $(REGISTRY)/ai-residency-$(patsubst _%,%,$(SERVICE))-train:$(IMAGE_TAG)
 
 ## --- Per-service pipelines -----------------------------------------------
 ## Training and serving differ per service -- word-embeddings has a corpus stage
