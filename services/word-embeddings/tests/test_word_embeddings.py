@@ -17,25 +17,8 @@ from fastapi.testclient import TestClient
 
 from config import Config
 from serving.api import app
-from word_embeddings.etl import TextProcessor
 from word_embeddings.model import build_word2vec
 from word_embeddings.train import train
-
-
-class TestTextNormalization:
-    """The replacement table used to be unreachable: an ASCII strip ran first and
-    deleted every character it matches, so nothing in it could ever fire."""
-
-    def test_currency_and_dashes_are_translated_not_dropped(self) -> None:
-        assert TextProcessor().normalize_text("cost: €20 – £15") == "cost: EUR20 - GBP15"
-
-    def test_math_symbols_are_translated(self) -> None:
-        processor = TextProcessor()
-        assert processor.normalize_text("5 × 3") == "5 x 3"
-        assert processor.normalize_text("a ≤ b") == "a <= b"
-
-    def test_unmapped_non_ascii_is_still_dropped(self) -> None:
-        assert "漢" not in TextProcessor().normalize_text("hello 漢 world")
 
 
 class TestCbowModel:

@@ -19,6 +19,16 @@ they now share. `model.py` is the file to read to understand the algorithm.
 Checkpoints written by the older implementations still load; see `compat.py`.
 """
 
+from word2vec.benchmarks import (
+    AnalogyQuestion,
+    Benchmarks,
+    SimilarityPair,
+    analogy_accuracy,
+    evaluate_embeddings,
+    parse_analogies,
+    parse_similarity_pairs,
+    similarity_score,
+)
 from word2vec.compat import LEGACY_KEY_MAPS, state_dict_from_legacy
 from word2vec.config import Word2VecConfig
 from word2vec.model import Word2Vec
@@ -28,12 +38,20 @@ from word2vec.sampling import NegativeSampler, unigram_distribution
 
 __all__ = [
     "LEGACY_KEY_MAPS",
+    "AnalogyQuestion",
     "Architecture",
+    "Benchmarks",
     "NegativeSampler",
     "Objective",
+    "SimilarityPair",
     "Word2Vec",
     "Word2VecConfig",
+    "analogy_accuracy",
+    "evaluate_embeddings",
     "nearest_words",
+    "parse_analogies",
+    "parse_similarity_pairs",
+    "similarity_score",
     "state_dict_from_legacy",
     "unigram_distribution",
     "valid_row_mask",

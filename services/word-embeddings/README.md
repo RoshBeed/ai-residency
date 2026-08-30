@@ -278,9 +278,9 @@ Nine of the fourteen Google analogy categories are syntactic: `gram3-comparative
 questions. Lemmatizing collapses `walk`, `walks` and `walked` onto one vector, which makes **55% of
 the analogy set unanswerable by construction**.
 
-An earlier version of this pipeline did lemmatize. That code still lives in
-`word_embeddings/etl.py`, building the Hacker News corpus the sibling content-scoring service
-consumes; nothing on this training path calls it.
+An earlier version of this pipeline did lemmatize, in an ETL stage that also pulled from a
+Hacker News Postgres mirror. That stage is gone: nothing on this training path called it, the
+mirror was a third party's host, and content-scoring owns its own ETL now.
 
 **Figure 8.** Tokenization and embedding lookup. Ids are assigned in descending frequency order, so
 "the 300 most frequent words" is the slice `[:300]`.
@@ -440,13 +440,13 @@ content-scoring project to consume frozen.
 **Figure 14.** Pipeline architecture.
 ```mermaid
 flowchart LR
-    data[("text8 corpus<br/>Hugging Face Hub")] --> etl["Vocabulary & encoding<br/>word_embeddings/corpus.py"]
-    etl --> cbow["CBOW / skip-gram training<br/>word_embeddings/train.py"]
+    data[("text8 corpus<br/>Hugging Face Hub")] --> vocab["Vocabulary & encoding<br/>word_embeddings/corpus.py"]
+    vocab --> cbow["CBOW / skip-gram training<br/>word_embeddings/train.py"]
     cbow --> eval["Intrinsic evaluation<br/>word_embeddings/benchmarks.py"]
     eval --> hub[("Hugging Face Hub<br/>cbow_model.pt")]
 
     style data fill:#e1f5fe,stroke:#01579b
-    style etl fill:#e1f5fe,stroke:#01579b
+    style vocab fill:#e1f5fe,stroke:#01579b
     style cbow fill:#f3e5f5,stroke:#4a148c
     style eval fill:#f3e5f5,stroke:#4a148c
     style hub fill:#e8f5e8,stroke:#1b5e20
@@ -463,7 +463,7 @@ sequenceDiagram
     participant tok as tokeniser
     participant cbow
 
-    Note over main,tok: Process 1 — python -m word_embeddings.etl
+    Note over main,tok: Process 1 — python -m word_embeddings.corpus
     activate main
     main->>+dp: download(data)
     dp-->>-main: data
@@ -491,10 +491,9 @@ word_embeddings/          The word-embedding package
 ├── data.py                Subsampling + the tensor batcher that feeds training
 ├── model.py               build_word2vec — this service's view of libs/word2vec
 ├── train.py               train — the epoch loop, tracking and checkpointing
-├── benchmarks.py          WordSim-353, SimLex-999 and Google-analogy scoring
+├── benchmarks.py          Fetches the benchmark files; scoring lives in libs/word2vec
 ├── evaluate.py            Score a saved checkpoint; t-SNE projection
-├── report.py              The figures in Section 6, drawn from the W&B runs
-└── etl.py                 The Hacker News corpus, for the sibling content-scoring service
+└── report.py              The figures in Section 6, drawn from the W&B runs
 config/__init__.py        Config(BaseConfig) — every hyperparameter and path in one dataclass
 serving/api.py            FastAPI app: loads the checkpoint, exposes /nearest and /analogy
 checkpoints/              Trained artifacts, under checkpoints/<architecture>/

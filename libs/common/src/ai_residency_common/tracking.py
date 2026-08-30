@@ -16,7 +16,7 @@ that a sweep sorts on.
 """
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from ai_residency_common.logging import get_logger
@@ -149,7 +149,11 @@ def log_table(
         return
     import wandb
 
-    _run.log({name: wandb.Table(columns=list(columns), data=rows)}, step=step)
+    # Copied into a fresh list rather than passed through. `wandb.Table` takes
+    # `list[Iterable[Any]]` and `list` is invariant, so a `list[list[Any]]` is not one --
+    # correct of mypy, and harmless here, since Table only iterates the rows.
+    data: list[Iterable[Any]] = list(rows)
+    _run.log({name: wandb.Table(columns=list(columns), data=data)}, step=step)
 
 
 def log_figure(name: str, figure: Any, *, step: int | None = None) -> None:

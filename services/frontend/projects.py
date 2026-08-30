@@ -135,9 +135,9 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "title": "Word Embeddings",
         "subtitle": "CBOW embeddings trained from scratch, negative sampling",
         "description": (
-            "Trains 128-dimensional word vectors from raw text with a "
-            "continuous bag-of-words architecture and negative sampling — no "
-            "pretrained embeddings, no HuggingFace model."
+            "Trains 300-dimensional word vectors from raw text with skip-gram and "
+            "CBOW architectures and negative sampling — no pretrained embeddings, "
+            "no HuggingFace model."
         ),
         "techniques": ["NLP", "Embeddings", "Representation Learning", "CBOW", "Skip-gram"],
         "papers": [
@@ -206,12 +206,12 @@ PROJECTS: dict[str, dict[str, Any]] = {
     "content-scoring": {
         "icon": "📝",
         "title": "Content Scoring",
-        "subtitle": "Regression head over frozen embeddings, predict an engagement score",
+        "subtitle": "Early vs late fusion of title text and post metadata, on 872k HN posts",
         "description": (
-            "Predicts an engagement score from a title, using word vectors frozen "
-            "from the word-embeddings project and a small regression head."
+            "Predicts a Hacker News post's score from its title and metadata, four ways: "
+            "text alone, metadata alone, early fusion and late fusion."
         ),
-        "techniques": ["NLP", "Embeddings", "Regression", "Transfer Learning"],
+        "techniques": ["NLP", "Embeddings", "Regression", "Transfer Learning", "Feature Fusion"],
         "papers": [
             (
                 "Mikolov et al.",
@@ -219,40 +219,59 @@ PROJECTS: dict[str, dict[str, Any]] = {
                 "https://arxiv.org/abs/1301.3781",
             ),
         ],
-        "datasets": [("HN Posts", "#")],
-        "model_links": [],
+        "datasets": [
+            ("HN Posts (872k)", "https://huggingface.co/datasets/roshbeed/ai-residency-hn-posts"),
+        ],
+        "model_links": [
+            (
+                "Predictors + extended vectors",
+                "https://huggingface.co/roshbeed/ai-residency-content-scoring",
+            ),
+        ],
         "stats": [
-            ("Labeled examples", "782 HN posts"),
-            ("Embedding dim", "128"),
-            ("Head", "128 → 64 → 1"),
-            ("Baseline", "predict-the-mean MSE"),
+            ("Posts", "872,554"),
+            ("Split", "time-based, 711k/93k/69k"),
+            ("Vocabulary", "71,290 → 86,438"),
+            ("Title OOV", "11.3% → 3.2%"),
         ],
         "intro": (
-            "Predicts an engagement score from a post's title, on top of word embeddings "
-            "trained from scratch in the sibling word-embeddings project. The vectors are "
-            "frozen — pulled from that project's Hugging Face repo — and only the regression "
-            "head is trained.\n\n"
-            "**Honest result.** With 782 labelled posts, the trained head does not clearly "
-            "beat the predict-the-mean baseline (test MSE 3,641 vs 3,596). The write-up "
-            "says so directly rather than dressing it up. What the pipeline demonstrates is "
-            "the transfer: frozen embeddings → averaged title vector → scalar head, the "
-            "same shape as a reward model, trained here on engagement counts rather than "
-            "human preferences.\n\n"
-            "**This page** calls the scoring API, which embeds each query word-by-word, "
-            "averages the vectors, and predicts a score — streamed live so each stage of "
-            "the inference pipeline is visible in real time."
+            "Predicts a Hacker News post's score from its title and the things you know "
+            "when you submit it — when, where it links, how the title is written, and how "
+            "the author's earlier posts did. Built on the word vectors trained from "
+            "scratch in the sibling word-embeddings project, with the vocabulary extended "
+            "onto 710k Hacker News titles: text8 has no `gpt-4`, no `kubernetes`, no "
+            "`postgres`, and adding them takes out-of-vocabulary tokens from 11.3% of a "
+            "title to 3.2%.\n\n"
+            "**The question is where the title and the metadata should meet.** Early "
+            "fusion concatenates everything and hands one MLP the lot, free to find any "
+            "interaction but obliged to discover the group structure itself. Late fusion "
+            "gives each group its own tower and joins them at the head. Both are compared "
+            "against the two ablations that make the comparison mean anything — text "
+            "alone, and metadata alone — and against TF-IDF + Ridge, which is the "
+            "baseline that decides whether any of it earned its keep.\n\n"
+            "**Split by time, not at random.** Scores drift and same-day posts share a "
+            "front page, so a random split lets a model see the future of its own test "
+            "set. Author history is computed on a strictly backward-looking window for "
+            "the same reason.\n\n"
+            "**This page** calls `/compare`, which runs all four architectures over the "
+            "post you type, and `/predict/stream`, which relays one architecture's "
+            "pipeline a stage at a time."
         ),
         "docs_path": "services/content-scoring/README.md",
         "diagrams": [
             (
                 "assets/word-embeddings/fig3-late-early-fusion.png",
-                "Late fusion vs early fusion — this project uses late fusion: average the word "
-                "vectors, then feed one vector to the regression head.",
+                "Early fusion versus late fusion — this service builds both and compares them "
+                "head to head, alongside the text-only and features-only ablations.",
             ),
         ],
         "model_specs": [
-            "**Scorer** — 128 → 128 → 64 → 1 MLP with ReLU and dropout 0.2. "
-            "~17K parameters trained on 782 labelled HN posts.",
+            "**Late fusion** (served) — five towers, one each for the pooled title, "
+            "temporal, domain, title-surface and author features, joined by a head MLP.",
+            "**Early fusion** — one MLP over the pooled title concatenated with every feature.",
+            "**Text only** and **Features only** — the ablations, same widths, same data.",
+            "**Word vectors** — 86,438 × 300 skip-gram, text8 continued on the Hacker News "
+            "title corpus; frozen for the published models.",
         ],
     },
     "vector-search-retrieval": {

@@ -215,6 +215,12 @@ services:
   train-content-scoring:
     profiles: [train]
     image: roshb/ai-residency-content-scoring-train:${TRAIN_IMAGE_TAG:-latest}
+    # The splits and the title corpus are derived from the Hub mirror rather than
+    # published, so without this mount every container run rebuilds them from an 85MB
+    # download. They are a cache, not state: deleting the directory costs a few minutes,
+    # not a re-training.
+    volumes:
+      - ../../services/content-scoring/data:/app/data
     environment:
       <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}

@@ -52,8 +52,6 @@ class Config(BaseConfig):
         text8_repo_id: Hub dataset the corpus is mirrored at.
         eval_dir: Local directory for the intrinsic-evaluation benchmark files.
         eval_repo_id: Hub dataset the benchmark files are mirrored at.
-        posts_file: Cleaned Hacker News posts, used by `etl.py` only.
-        hf_dataset_repo_id: Hub dataset holding that extract.
     """
 
     architecture: Architecture = "skipgram"
@@ -79,12 +77,6 @@ class Config(BaseConfig):
     text8_repo_id: str | None = "roshbeed/ai-residency-text8"
     eval_dir: Path = field(default_factory=lambda: Path("data/eval"))
     eval_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-eval"
-
-    # Not on this service's training path -- text8 is the corpus now. These belong to
-    # `etl.py`, which builds the Hacker News extract that `content-scoring` consumes
-    # from the Hub, and are kept so that stage still runs.
-    posts_file: Path = field(default_factory=lambda: Path("data/hn_data_cleaned.json"))
-    hf_dataset_repo_id: str | None = "roshbeed/ai-residency-word-embeddings-data"
 
     hf_repo_id: str | None = "roshbeed/ai-residency-word-embeddings"
     wandb_project: str | None = "ai-residency-word-embeddings"

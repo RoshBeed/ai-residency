@@ -1,205 +1,372 @@
-"""Train the content-score predictor over frozen CBOW embeddings.
+"""Training one fusion architecture, and streaming its evaluation to W&B as it goes.
 
-Freezes the vectors trained in the sibling word-embeddings repo (pulled from its
-Hugging Face repo), averages each post's title into one embedding, and trains a
-small MLP to predict its score. Early stopping matters: with 782 labelled posts the
-model overfits around epoch 5.
+The loop computes no metrics of its own. Everything charted here comes out of
+`evaluate.py`, which is also what `make evaluate` prints, so a number on a W&B chart and
+a number in the README cannot disagree.
 
-Run ``python -m content_scoring.train``.
+What is logged, and at what cadence:
+
+| when | what |
+|---|---|
+| every `eval_every` steps | `train/loss`, `train/step` |
+| step 0 | the untrained model's full block, and all four baselines |
+| every epoch | the val block, and the baselines re-logged unchanged |
+| every epoch | the slice table and the probe titles |
+| end of run | the test block, the ablation, and the intrinsic embedding scores |
+
+The baselines are re-logged every epoch on purpose. They are constants, so a single
+step-0 point would sit alone at the left edge of a chart nobody scrolls to; repeated,
+they draw as flat reference lines across the same axes as the curve they bound.
+
+The expensive parts are computed once. TF-IDF + Ridge takes about twenty seconds to fit
+on 710k titles, so it is fitted at step 0 and its predictions cached for the rest of the
+run; a sweep run should be dominated by training, not by its own evaluation.
 """
 
+import argparse
 import json
-from typing import Any
+import math
+import time
+from dataclasses import asdict
 
+import numpy as np
 import torch
-from torch import nn
-from torch.utils.data import DataLoader, random_split
+from torch import nn, optim
+from tqdm import tqdm
 
 from ai_residency_common import (
+    define_metrics,
     finish_tracking,
     get_device,
     get_logger,
     init_tracking,
+    load_checkpoint,
     log_metrics,
+    log_table,
     push_checkpoint,
-    resolve_checkpoint,
-    resolve_required,
     save_checkpoint,
     set_seed,
+    set_summary,
 )
 from config import Config
-from content_scoring.data import TitleScoreDataset, create_title_embeddings
-from content_scoring.embeddings import load_cbow_embeddings, load_cbow_vocabulary
-from content_scoring.evaluate import compute_baseline, evaluate_scorer
-from content_scoring.model import ScorePredictor
+from content_scoring.data import build_splits, iterate_batches
+from content_scoring.evaluate import (
+    baseline_predictions,
+    evaluate_predictions,
+    leave_one_group_out,
+    predict,
+    probe_table,
+    score_extended_embeddings,
+    slice_table,
+)
+from content_scoring.model import build_model, load_predictor_weights, predictor_state_dict
 
-__all__ = ["main", "train_scorer"]
+__all__ = ["train"]
 
 logger = get_logger(__name__)
 
+_HEADLINE_SLICES = (
+    ("title_oov", "high"),
+    ("domain", "rare"),
+    ("prefix", "show_hn"),
+    ("score_quartile", "q4"),
+)
+"""Slices promoted to scalars so they chart. The table carries all of them; these four
+are the ones worth watching move."""
 
-def _train_scorer_loop(
-    model: nn.Module,
-    train_loader: DataLoader[Any],
-    test_loader: DataLoader[Any],
-    config: Config,
-    *,
-    input_dim: int,
-    baseline_mse: float,
-) -> float:
-    """Train the predictor, publishing only the best checkpoint."""
+
+def train(config: Config) -> float:
+    """Train one architecture and return its best validation Spearman.
+
+    Args:
+        config: Supplies the architecture, the schedule and where things are written.
+
+    Returns:
+        The best `val_spearman` seen, which is what the sweep ranks on.
+
+    Raises:
+        FileNotFoundError: If the ETL or the vocabulary extension has not run.
+    """
+    set_seed(config.seed)
     device = get_device()
-    logger.info("Training on %s", device)
-    model = model.to(device)
 
+    if not config.embeddings_path.exists():
+        raise FileNotFoundError(
+            f"{config.embeddings_path} is missing. Run `make -C services/content-scoring "
+            "extend-vocab` first."
+        )
+    payload = load_checkpoint(config.embeddings_path)
+    matrix = payload["model_state_dict"]["in_embed.weight"]
+    word_to_index = payload["extra"]["word_to_index"]
+
+    splits = build_splits(config, word_to_index)
+    model = build_model(matrix, splits.spec.num_domains, config).to(device)
+    optimizer = optim.Adam(
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+    )
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
-    )
+
+    val_frame = splits.frames["val"]
+    val_actual = splits.tensors["val"][4].numpy().astype(np.float64)
 
     init_tracking(
         config.wandb_project,
-        config={"baseline_mse": baseline_mse, **vars(config)},
+        config={**asdict(config), "fusion": config.fusion},
+        run_name=f"{config.fusion}-seed{config.seed}",
+    )
+    define_metrics({"train/*": "train/step", "eval/*": "epoch", "baseline/*": "epoch"})
+
+    # Fitted once. Re-fitting per epoch would more than double a run and change nothing:
+    # a baseline that moved between epochs would not be a baseline.
+    logger.info("Fitting baselines on the training split")
+    baselines = {
+        name: evaluate_predictions(val_frame, predicted, val_actual)
+        for name, predicted in baseline_predictions(splits, "val").items()
+    }
+    baseline_scalars = {
+        f"baseline/{name}_{metric}": value
+        for name, metrics in baselines.items()
+        for metric, value in metrics.items()
+        if metric in ("spearman", "ndcg@10", "rmse")
+    }
+    for name, metrics in baselines.items():
+        logger.info(
+            "baseline %-14s spearman %.4f  ndcg@10 %.4f  rmse %.4f",
+            name,
+            metrics["spearman"],
+            metrics["ndcg@10"],
+            metrics["rmse"],
+        )
+
+    # Step 0: what an untrained model of this architecture scores. Without it there is
+    # no way to tell a real result from a plumbing bug that happens to return numbers.
+    untrained = evaluate_predictions(
+        val_frame, predict(model, splits.tensors["val"], device), val_actual
+    )
+    logger.info(
+        "untrained       spearman %.4f  ndcg@10 %.4f", untrained["spearman"], untrained["ndcg@10"]
+    )
+    log_metrics(
+        {
+            **{f"eval/{name}": value for name, value in untrained.items()},
+            **baseline_scalars,
+        },
+        step=0,
     )
 
-    best_loss = float("inf")
-    epochs_without_improvement = 0
+    best_score = float("-inf")
+    best_epoch = 0
+    best_state: dict[str, torch.Tensor] = {}
+    step = 0
+    started = time.monotonic()
 
     for epoch in range(1, config.num_epochs + 1):
         model.train()
-        epoch_loss = 0.0
-        examples_seen = 0
-
-        for embeddings, scores in train_loader:
-            embeddings, scores = embeddings.to(device), scores.to(device)
+        batches = iterate_batches(
+            splits.tensors["train"], config.batch_size, shuffle=True, device=device
+        )
+        running = 0.0
+        for tokens, mask, numeric, domain, target in tqdm(
+            batches, desc=f"{config.fusion} epoch {epoch}/{config.num_epochs}", leave=False
+        ):
+            predicted = model(tokens, mask, numeric, domain)
+            loss = criterion(predicted, target)
             optimizer.zero_grad()
-            loss = criterion(model(embeddings), scores)
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item() * len(embeddings)
-            examples_seen += len(embeddings)
+            running += float(loss.detach())
+            step += 1
+            if step % config.eval_every == 0:
+                log_metrics({"train/loss": float(loss.detach()), "train/step": step}, step=step)
 
-        train_loss = epoch_loss / examples_seen
-        test_loss = evaluate_scorer(model, test_loader, device)
-        scheduler.step(test_loss)
-        learning_rate = float(optimizer.param_groups[0]["lr"])
+        predicted_val = predict(model, splits.tensors["val"], device)
+        metrics = evaluate_predictions(val_frame, predicted_val, val_actual)
+        columns, rows = slice_table(val_frame, predicted_val, val_actual, splits, word_to_index)
+        headline = {
+            f"eval/slice/{family}_{bucket}": float(row[3])
+            for family, bucket in _HEADLINE_SLICES
+            for row in rows
+            if row[0] == family and row[1] == bucket
+        }
 
         log_metrics(
-            {"train_loss": train_loss, "test_loss": test_loss, "learning_rate": learning_rate},
+            {
+                **{f"eval/{name}": value for name, value in metrics.items()},
+                **headline,
+                **baseline_scalars,
+                "epoch": epoch,
+                "train/epoch_loss": running / max(len(batches), 1),
+            },
             step=epoch,
         )
+        log_table("eval/slices", columns, rows, step=epoch)
+        probe_columns, probe_rows = probe_table(model, splits, config, word_to_index)
+        log_table("eval/probes", probe_columns, probe_rows, step=epoch)
+
         logger.info(
-            "Epoch %d/%d  train_loss=%.4f  test_loss=%.4f  lr=%.6f",
+            "epoch %2d/%d  loss %.4f  val spearman %.4f  ndcg@10 %.4f  lift %.2f",
             epoch,
             config.num_epochs,
-            train_loss,
-            test_loss,
-            learning_rate,
+            running / max(len(batches), 1),
+            metrics["spearman"],
+            metrics["ndcg@10"],
+            metrics["top_decile_lift"],
         )
 
-        if test_loss < best_loss:
-            best_loss = test_loss
-            epochs_without_improvement = 0
-
-            save_checkpoint(
-                config.checkpoint_path,
-                model,
-                optimizer=optimizer,
-                epoch=epoch,
-                metrics={"train_loss": train_loss, "test_loss": test_loss},
-                extra={"input_dim": input_dim},
-            )
-
-            # Sidecar kept for the UI and README, which read it directly.
-            info: dict[str, Any] = {
-                "epoch": epoch,
-                "train_loss": train_loss,
-                "test_loss": test_loss,
-                "baseline_mse": baseline_mse,
-                "input_dim": input_dim,
-                "max_epochs": config.num_epochs,
-                "learning_rate": learning_rate,
-                "model_file": str(config.checkpoint_path),
+        if metrics["spearman"] > best_score:
+            best_score = metrics["spearman"]
+            best_epoch = epoch
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in predictor_state_dict(model).items()
             }
-            with config.info_path.open("w") as handle:
-                json.dump(info, handle, indent=2)
+        elif epoch - best_epoch >= config.patience:
+            logger.info("No improvement in %d epochs; stopping at %d", config.patience, epoch)
+            break
 
-            if config.hf_repo_id is not None:
-                push_checkpoint(config.hf_repo_id, config.checkpoint_path)
-        else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= config.patience:
-                logger.info("Early stopping after %d epochs", epoch)
-                break
+    if best_state:
+        load_predictor_weights(model, best_state)
+    else:
+        # Every epoch's Spearman was NaN, which means the model predicted one constant
+        # value for all 92,557 validation posts -- a collapse, not a bad fit. It happens
+        # in the high-learning-rate corner of the sweep space and is worth naming rather
+        # than leaving as an unexplained `-inf` in the sweep table.
+        #
+        # Reported as -1.0, the true floor of a rank correlation: finite, so W&B and the
+        # sweep table handle it, and still ranked last, which is where a collapsed run
+        # belongs.
+        best_score = -1.0
+        logger.warning(
+            "%s collapsed to a constant prediction at lr=%g, dropout=%g, layers=%d -- "
+            "no epoch produced a defined Spearman",
+            config.fusion,
+            config.learning_rate,
+            config.dropout,
+            config.num_layers,
+        )
+
+    test_frame = splits.frames["test"]
+    test_actual = splits.tensors["test"][4].numpy().astype(np.float64)
+    test_predicted = predict(model, splits.tensors["test"], device)
+    test_metrics = evaluate_predictions(test_frame, test_predicted, test_actual)
+    embed_metrics = score_extended_embeddings(config)
+
+    test_columns, test_rows = slice_table(
+        test_frame, test_predicted, test_actual, splits, word_to_index
+    )
+    log_table("test/slices", test_columns, test_rows)
+    ablation_columns, ablation_rows = leave_one_group_out(model, splits, "test")
+    if ablation_rows:
+        log_table("test/ablation", ablation_columns, ablation_rows)
+
+    # `set_summary`, not the last logged value: W&B otherwise summarises a run by where
+    # it finished rather than by how good it got, and the sweep table sorts on this.
+    set_summary(
+        {
+            "best/val_spearman": best_score,
+            "best/epoch": best_epoch,
+            # Recorded so the capacity comparison can be plotted against what the
+            # models actually cost rather than against a layer count. At equal
+            # width and depth late fusion has five branches and a head where early
+            # has one MLP, so "same hyperparameters" is not "same capacity" -- and
+            # a curve drawn against layers would quietly credit early fusion for
+            # being the smaller model.
+            "model/parameters": sum(p.numel() for p in model.parameters()),
+            "model/trainable_parameters": sum(
+                p.numel() for p in model.parameters() if p.requires_grad
+            ),
+            **{f"test/{name}": value for name, value in test_metrics.items()},
+            **{f"embed/{name}": value for name, value in embed_metrics.items()},
+            "runtime_minutes": (time.monotonic() - started) / 60,
+        }
+    )
+    logger.info(
+        "best epoch %d: val spearman %.4f | test spearman %.4f, ndcg@10 %.4f, lift %.2f",
+        best_epoch,
+        best_score,
+        test_metrics["spearman"],
+        test_metrics["ndcg@10"],
+        test_metrics["top_decile_lift"],
+    )
+    # NaN-filtered, because predict-the-mean has no ranking at all and therefore no
+    # Spearman. Left in, `max` picks whichever key it happens to visit first and the
+    # comparison against NaN is always False -- so the run reports "no" against a
+    # baseline it beat comfortably, which is the sort of line you believe.
+    ranked = {
+        name: metrics["spearman"]
+        for name, metrics in baselines.items()
+        if not math.isnan(metrics["spearman"])
+    }
+    strongest = max(ranked, key=lambda name: ranked[name])
+    logger.info(
+        "beat the strongest baseline, %s at %.4f? %s",
+        strongest,
+        ranked[strongest],
+        "yes" if best_score > ranked[strongest] else "no",
+    )
+
+    if config.save_checkpoints:
+        if not config.freeze_embeddings:
+            logger.warning(
+                "This run fine-tuned the word vectors, and the checkpoint does not carry "
+                "them. It is recorded as such and serving will refuse it. Publish a frozen "
+                "run, or extend the checkpoint format to save the tuned matrix."
+            )
+        config.predictor_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        save_checkpoint(
+            config.predictor_checkpoint,
+            model,
+            epoch=best_epoch,
+            metrics={"val_spearman": best_score, **test_metrics},
+            extra={
+                "fusion": config.fusion,
+                "feature_spec": asdict(splits.spec),
+                "num_domains": splits.spec.num_domains,
+                # Recorded so the loader can refuse it. The checkpoint deliberately
+                # omits the embedding table, which is correct while the table is frozen
+                # and shared -- and quietly wrong when a run fine-tuned it, because
+                # serving would then pair this head with the *base* vectors and answer
+                # 200 with numbers that have nothing to do with what was evaluated.
+                "embeddings_finetuned": not config.freeze_embeddings,
+                "config": asdict(config),
+            },
+            state_dict=predictor_state_dict(model),
+        )
+        config.info_path.write_text(
+            json.dumps(
+                {"fusion": config.fusion, "epoch": best_epoch, **test_metrics},
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        if config.hf_repo_id is not None:
+            push_checkpoint(config.hf_repo_id, config.predictor_checkpoint, private=False)
 
     finish_tracking()
-    logger.info(
-        "Best test loss %.4f against baseline %.4f (%s)",
-        best_loss,
-        baseline_mse,
-        "beats baseline" if best_loss < baseline_mse else "does NOT beat baseline",
-    )
-    return best_loss
-
-
-def train_scorer(config: Config) -> float:
-    """Train the score predictor over frozen CBOW embeddings and return best test loss."""
-    set_seed(config.seed)
-
-    # The frozen CBOW checkpoint (and the vocabulary inside it) come from the
-    # word-embeddings repo's Hugging Face repo unless a local copy is present.
-    cbow_path, cbow_source = resolve_required(config.cbow_checkpoint, config.cbow_repo_id)
-    logger.info("CBOW checkpoint from %s", cbow_source)
-    word_to_index = load_cbow_vocabulary(cbow_path)
-    embeddings = load_cbow_embeddings(cbow_path)
-    embedding_dim = int(embeddings.shape[1])
-
-    # The labelled posts are the one input that cannot be regenerated locally, so
-    # they come from a dataset repo rather than from git.
-    posts_path, _ = resolve_checkpoint(
-        config.posts_file, config.hf_dataset_repo_id, repo_type="dataset"
-    )
-    if posts_path is None:
-        raise FileNotFoundError(
-            f"{config.posts_file} not found locally or in {config.hf_dataset_repo_id}"
-        )
-
-    title_embeddings, scores = create_title_embeddings(posts_path, word_to_index, embeddings)
-    logger.info("Created embeddings for %d titles", len(title_embeddings))
-
-    with posts_path.open() as handle:
-        posts: list[dict[str, Any]] = json.load(handle)
-
-    dataset = TitleScoreDataset(title_embeddings, scores, posts)
-    train_size = int(0.8 * len(dataset))
-    test_size = len(dataset) - train_size
-    train_subset, test_subset = random_split(dataset, [train_size, test_size])
-    logger.info("Split into %d training and %d test examples", train_size, test_size)
-
-    baseline_mse = compute_baseline(dataset, train_subset, test_subset)
-
-    train_loader: DataLoader[Any] = DataLoader(
-        train_subset, batch_size=config.batch_size, shuffle=True
-    )
-    test_loader: DataLoader[Any] = DataLoader(test_subset, batch_size=config.batch_size)
-
-    model = ScorePredictor(input_dim=embedding_dim)
-    return _train_scorer_loop(
-        model,
-        train_loader,
-        test_loader,
-        config,
-        input_dim=embedding_dim,
-        baseline_mse=baseline_mse,
-    )
+    return best_score
 
 
 def main() -> None:
-    """Entry point: `python -m content_scoring.train`."""
-    train_scorer(Config())
+    """Train from the command line."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--fusion",
+        default=None,
+        choices=("text_only", "features_only", "early", "late"),
+        help="Override the configured architecture.",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Override the configured seed.")
+    arguments = parser.parse_args()
+
+    overrides = {}
+    if arguments.fusion:
+        overrides["fusion"] = arguments.fusion
+    if arguments.seed is not None:
+        overrides["seed"] = arguments.seed
+    train(Config(**overrides))
 
 
 if __name__ == "__main__":

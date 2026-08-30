@@ -1,0 +1,88 @@
+# Hyperparameter sweep for the Hacker News score predictor.
+#
+#   wandb sweep services/content-scoring/sweep.yaml   # prints a sweep id
+#   make -C services/content-scoring sweep SWEEP=<id> COUNT=<n>
+#
+# Structured after services/word-embeddings/sweep.yaml, which is where the four
+# non-obvious pieces below were paid for.
+#
+# Without this the sweep is created in whatever project the working directory suggests,
+# which is not the one `Config.wandb_project` names -- so the sweep's runs and every
+# non-sweep run of the same service end up in two different places.
+project: ai-residency-content-scoring
+program: python
+# `${env}` expands to `/usr/bin/env` and `${args_no_hyphens}` to `KEY=value ...`, and the
+# pair has to come *before* the program: that is what makes the sweep's parameters
+# environment variables rather than argv. With `${env}` alone the agent passes nothing at
+# all -- every run trains the defaults, reports a near-identical score, and the Bayes
+# search spends the night optimising noise.
+command:
+  - ${env}
+  - ${args_no_hyphens}
+  - ${program}
+  - -m
+  - content_scoring.train
+method: bayes
+metric:
+  # Loss *would* work here, unlike in word-embeddings: every run has the same target on
+  # the same data, so MSE is comparable across them. Spearman is used anyway because
+  # ranking is the actual task -- a model that predicts every score 20% low ranks
+  # perfectly and has an MSE that says it failed.
+  #
+  # `best/`, not `eval/`: W&B summarises a run by its last logged value, which for a run
+  # that ends past its best epoch ranks it by where it finished rather than by how good
+  # it got.
+  name: best/val_spearman
+  goal: maximize
+parameters:
+  # These names are the Config field names, uppercased and prefixed, because that is
+  # what BaseConfig reads from the environment. The agent exports them, so no
+  # sweep-specific plumbing is needed in the trainer at all.
+  #
+  # `fusion` is swept rather than run as four separate jobs, so the head-to-head comes
+  # out of one search with every other hyperparameter held comparable. It is a Literal
+  # field, which BaseConfig._coerce validates against the allowed set -- before that
+  # existed, a Literal simply could not be set from the environment and was silently
+  # excluded from every sweep.
+  AI_RESIDENCY_FUSION:
+    values: [text_only, features_only, early, late]
+  AI_RESIDENCY_LEARNING_RATE:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  AI_RESIDENCY_WEIGHT_DECAY:
+    distribution: log_uniform_values
+    min: 0.000001
+    max: 0.001
+  AI_RESIDENCY_HIDDEN_DIM:
+    values: [64, 128, 256]
+  AI_RESIDENCY_NUM_LAYERS:
+    values: [1, 2, 3]
+  AI_RESIDENCY_DROPOUT:
+    values: [0.0, 0.1, 0.2, 0.3]
+  AI_RESIDENCY_DOMAIN_EMBED_DIM:
+    values: [8, 16, 32]
+  AI_RESIDENCY_FREEZE_EMBEDDINGS:
+    values: ["true", "false"]
+
+  # Held fixed, deliberately.
+  #
+  # `num_epochs` and `batch_size` are fixed so every run takes about the same wall-clock
+  # time, which is what makes a COUNT budget mean anything.
+  #
+  # `vocab_min_count` and `min_domain_count` are not swept at all: both change the input
+  # representation rather than the model, so varying them would change what the test set
+  # even contains and make scores incomparable between runs -- the same trap as varying
+  # a vocabulary threshold in the word-vector sweep next door.
+  AI_RESIDENCY_NUM_EPOCHS:
+    value: 20
+  AI_RESIDENCY_BATCH_SIZE:
+    value: 1024
+
+  # Sweep runs neither save nor push. Sixty checkpoints exist only to produce one number
+  # each; the four the comparison table quotes come from `make train-all` afterwards, at
+  # the winning configuration with everything else held equal.
+  AI_RESIDENCY_SAVE_CHECKPOINTS:
+    value: "false"
+  AI_RESIDENCY_HF_REPO_ID:
+    value: ""

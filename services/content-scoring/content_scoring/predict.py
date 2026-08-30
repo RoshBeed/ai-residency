@@ -1,137 +1,207 @@
-"""Prediction: load the saved models and score new titles.
+"""Scoring a single post, the same way training scored a corpus.
 
-The prediction path is deliberately identical to how training built its inputs:
-average a title's word vectors (skipping words outside the vocabulary), then run
-that single vector through the scorer. A title with no known words yields a zero
-vector. The CBOW vectors come from the word-embeddings repo's checkpoint; the
-scorer is this repo's own.
+One post is a one-row frame here rather than a special path. That is deliberate: the
+feature code has fitted state -- domain vocabulary, scaling statistics, the author
+fallback -- and the only way to be sure a request is transformed exactly as the training
+corpus was is to send it through the same function with the same spec.
 
-Run ``python -m content_scoring.predict "your title here"`` from the command line;
-``serving/api.py`` wraps the same functions in an HTTP API.
+The spec travels inside the predictor checkpoint, so a served model cannot be paired
+with statistics from a different run.
 """
 
-import argparse
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 import torch
 
 from ai_residency_common import get_logger, load_checkpoint, resolve_required
-from config import Config
-from content_scoring.embeddings import load_cbow_embeddings, load_cbow_vocabulary
-from content_scoring.model import ScorePredictor
+from config import Config, Fusion
+from content_scoring.data import make_tensors
+from content_scoring.embeddings import ExtendedEmbeddings, load_extended_embeddings
+from content_scoring.etl import normalise_text, registered_domain, tokenise
+from content_scoring.features import FeatureSpec
+from content_scoring.model import ScorePredictor, build_model, load_predictor_weights
 
-__all__ = ["ModelState", "create_title_embedding", "load_models", "main", "predict_score"]
+__all__ = [
+    "LoadedPredictor",
+    "Post",
+    "load_embeddings",
+    "load_predictor",
+    "post_frame",
+    "score_post",
+]
 
 logger = get_logger(__name__)
 
 
 @dataclass
-class ModelState:
-    """Everything loaded once and reused across predictions.
+class Post:
+    """One post as a caller supplies it.
 
-    Held in one object rather than a set of module-level globals so the loaded and
-    not-yet-loaded states are distinguishable without a separate flag.
+    Attributes:
+        title: The headline.
+        url: Where it links, or empty for a text post.
+        posted_at: When it was submitted. Defaults to now at the API layer.
+        author: The submitter, used only to look up their history.
     """
 
-    predictor: ScorePredictor | None = None
-    embeddings: torch.Tensor | None = None
-    word_to_index: dict[str, int] = field(default_factory=dict)
-    embedding_dim: int = 0
-    cbow_source: str = "none"
-    predictor_source: str = "none"
-
-    @property
-    def is_loaded(self) -> bool:
-        """Whether the state is ready to score titles."""
-        return self.predictor is not None and self.embeddings is not None
+    title: str
+    url: str = ""
+    posted_at: pd.Timestamp | None = None
+    author: str = ""
 
 
-def create_title_embedding(
-    title: str,
-    word_to_index: dict[str, int],
-    embeddings: torch.Tensor,
-    embedding_dim: int,
-) -> torch.Tensor:
-    """Average a title's known word vectors into a single embedding.
+@dataclass
+class LoadedPredictor:
+    """A model and everything needed to feed it.
 
-    Words outside the vocabulary are skipped, matching how training built title
-    embeddings. A title with no known words yields a zero vector.
+    Attributes:
+        model: The scorer, in eval mode.
+        spec: The feature spec fitted during that model's training run.
+        embeddings: The extended vectors and vocabulary.
+        fusion: Which architecture this is.
+        source: Where the checkpoint came from -- `local` or `hub`.
     """
-    word_embeddings: list[np.ndarray[Any, Any]] = []
-    for word in title.lower().split():
-        index = word_to_index.get(word)
-        if index is None:
-            logger.debug("Word %r not in vocabulary", word)
-        elif index < embeddings.shape[0]:
-            word_embeddings.append(embeddings[index].cpu().numpy())
-        else:
-            logger.debug("Word %r index %d exceeds the embedding matrix", word, index)
 
-    if not word_embeddings:
-        logger.warning("No known words in %r; using a zero vector", title)
-        return torch.zeros(embedding_dim, dtype=torch.float32)
-
-    title_embedding = np.mean(word_embeddings, axis=0)
-    return torch.tensor(title_embedding, dtype=torch.float32)
+    model: ScorePredictor
+    spec: FeatureSpec
+    embeddings: ExtendedEmbeddings
+    fusion: Fusion
+    source: str
 
 
-def load_models(config: Config | None = None) -> ModelState:
-    """Populate a `ModelState` from the checkpoints, pulling from the Hub if absent.
+def post_frame(post: Post) -> pd.DataFrame:
+    """Turn one post into the frame shape the feature code expects.
 
-    Both artifacts are gitignored (the CBOW weights alone run to ~800MB), so on any
-    host that did not train them there is nothing on disk and they are pulled from
-    the Hub instead. The CBOW checkpoint comes from the word-embeddings repo; the
-    scorer checkpoint is this repo's own.
+    Args:
+        post: The post.
+
+    Returns:
+        A one-row frame with every column `build_features` reads.
+
+    The author's history cannot be looked up at serving time without a store of past
+    posts, so a request gets the corpus mean and `author_is_first` set. That is honest:
+    the model is told "an author we know nothing about", which is what is true.
     """
-    config = config or Config()
-    state = ModelState()
-
-    cbow_path, state.cbow_source = resolve_required(config.cbow_checkpoint, config.cbow_repo_id)
-    state.word_to_index = load_cbow_vocabulary(cbow_path)
-    state.embeddings = load_cbow_embeddings(cbow_path)
-    state.embedding_dim = int(state.embeddings.shape[1])
-
-    predictor_path, state.predictor_source = resolve_required(
-        config.checkpoint_path, config.hf_repo_id
+    timestamp = post.posted_at if post.posted_at is not None else pd.Timestamp.now(tz="UTC")
+    title = normalise_text(post.title)
+    return pd.DataFrame(
+        {
+            "id": [0],
+            "title": [title],
+            "tokens": [tokenise(title)],
+            "url": [post.url],
+            "domain": [registered_domain(post.url)],
+            "score": [1],
+            "time": [int(timestamp.timestamp())],
+            "posted_at": [timestamp],
+            "author": [post.author or ""],
+            "comments": [0],
+        }
     )
-    payload = load_checkpoint(predictor_path)
-    input_dim = int(payload.get("extra", {}).get("input_dim", state.embedding_dim))
-    predictor = ScorePredictor(input_dim=input_dim)
-    predictor.load_state_dict(payload["model_state_dict"])
-    predictor.eval()
-    state.predictor = predictor
-
-    logger.info("Loaded models; vocabulary holds %d words", len(state.word_to_index))
-    return state
 
 
-def predict_score(state: ModelState, title: str) -> float:
-    """Score one title with the loaded models."""
-    predictor = state.predictor
-    embeddings = state.embeddings
-    if predictor is None or embeddings is None:
-        raise RuntimeError("Models not loaded")
-    title_vector = create_title_embedding(
-        title, state.word_to_index, embeddings, state.embedding_dim
+def load_embeddings(config: Config) -> ExtendedEmbeddings:
+    """Resolve and load the extended word vectors.
+
+    Args:
+        config: Supplies the path and the repo.
+
+    Returns:
+        The matrix and its vocabulary.
+
+    Raises:
+        FileNotFoundError: If they are neither local nor on the Hub.
+
+    Separate from `load_predictor` so a caller holding several architectures loads the
+    matrix once. It is 104MB and identical for all four; the API serves all four.
+    """
+    path, source = resolve_required(
+        config.embeddings_path,
+        config.hf_repo_id,
+        rebuild_hint="Build it with `make -C services/content-scoring extend-vocab`.",
     )
-    with torch.no_grad():
-        score = float(predictor(title_vector).item())
-    logger.info("Predicted %.2f for %r", score, title)
-    return score
+    logger.info("Extended embeddings from %s", source)
+    return load_extended_embeddings(path)
 
 
-def main() -> None:
-    """Entry point: `python -m content_scoring.predict "title"`."""
-    parser = argparse.ArgumentParser(description="Predict a content score from a title")
-    parser.add_argument("title", help="The post title to score")
-    args = parser.parse_args()
+def load_predictor(config: Config, embeddings: ExtendedEmbeddings | None = None) -> LoadedPredictor:
+    """Resolve and load one architecture, with its embeddings and feature spec.
 
-    state = load_models()
-    score = predict_score(state, args.title)
-    print(f"Predicted score for {args.title!r}: {score:.2f}")
+    Args:
+        config: Supplies `fusion` and the repos to pull from.
+        embeddings: Already-loaded vectors to share. Loaded here when omitted.
+
+    Returns:
+        The loaded predictor.
+
+    Raises:
+        FileNotFoundError: If the embeddings or the checkpoint are missing everywhere.
+    """
+    embeddings = embeddings if embeddings is not None else load_embeddings(config)
+
+    checkpoint_path, source = resolve_required(
+        config.predictor_checkpoint,
+        config.hf_repo_id,
+        rebuild_hint="Train it with `make -C services/content-scoring train`.",
+    )
+    payload = load_checkpoint(checkpoint_path)
+    if payload["extra"].get("embeddings_finetuned"):
+        raise RuntimeError(
+            f"{checkpoint_path} was trained with fine-tuned word vectors, which it does "
+            "not carry. Serving it against the base vectors would answer 200 with numbers "
+            "unrelated to what was evaluated. Retrain with freeze_embeddings=true."
+        )
+    stored = payload["extra"]["feature_spec"]
+    # Rebuilt field by field rather than by `FeatureSpec(**stored)`: `asdict` turned the
+    # two arrays into nested lists on the way in, and a spec whose `means` is a list
+    # broadcasts differently from one whose `means` is an array -- quietly, and only on
+    # some shapes.
+    spec = FeatureSpec(
+        domain_to_index=dict(stored["domain_to_index"]),
+        means=np.asarray(stored["means"], dtype=np.float64),
+        stds=np.asarray(stored["stds"], dtype=np.float64),
+        epoch_start=int(stored["epoch_start"]),
+        epoch_span_days=float(stored["epoch_span_days"]),
+        global_author_mean=float(stored["global_author_mean"]),
+    )
+    model = build_model(embeddings.matrix, spec.num_domains, config)
+    load_predictor_weights(model, payload["model_state_dict"])
+    logger.info("Loaded %s predictor from %s", config.fusion, source)
+    return LoadedPredictor(
+        model=model.to(config.device).eval(),
+        spec=spec,
+        embeddings=embeddings,
+        fusion=config.fusion,
+        source=source,
+    )
 
 
-if __name__ == "__main__":
-    main()
+@torch.no_grad()
+def score_post(loaded: LoadedPredictor, post: Post, config: Config) -> tuple[float, list[bool]]:
+    """Predict a post's score.
+
+    Args:
+        loaded: A loaded predictor.
+        post: The post.
+        config: Supplies `max_title_tokens` and the device.
+
+    Returns:
+        `(predicted_score, known)` where the score is on the raw upvote scale and
+        `known` marks which of the title's tokens the vocabulary contains.
+
+    The prediction is made in `log1p` space, as trained, and only then converted back.
+    Training on the raw scale would let a handful of 5,000-point posts dominate the loss.
+    """
+    frame = post_frame(post)
+    tokens, mask, numeric, domain, _ = make_tensors(
+        frame, loaded.spec, loaded.embeddings.word_to_index, config
+    )
+    device = config.device
+    predicted = loaded.model(
+        tokens.to(device), mask.to(device), numeric.to(device), domain.to(device)
+    )
+    log_score = float(predicted.reshape(-1)[0].cpu())
+    known = [token in loaded.embeddings.word_to_index for token in frame["tokens"].iloc[0]]
+    return float(np.expm1(log_score)), known

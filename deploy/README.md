@@ -278,8 +278,8 @@ Per-repo caveats worth knowing before you rent anything:
 
 | Repo | Caveat |
 |---|---|
-| `word-embeddings` | `train` works from data on the Hub -- text8 and the benchmark sets are fetched on first use. `train-corpus`, which builds the Hacker News corpus for content-scoring, needs a Postgres mirror that is not publicly reachable. |
-| `content-scoring` | Trains only the regression head; pulls the frozen CBOW vectors from the word-embeddings Hub checkpoint. |
+| `word-embeddings` | `train` works from data on the Hub -- text8 and the benchmark sets are fetched on first use. |
+| `content-scoring` | Four stages, in order: `etl` (fetches the Hacker News mirror and builds the splits), `extend-vocab` (adds the corpus's words to the word-embeddings vectors), `train`, `evaluate`. Every input is a public Hub repo, so the whole chain runs with no credentials; `data/` is a derived cache and is safe to delete. |
 | `vector-search-retrieval` | Needs Redis for serving (not for training). `make serve` is the HTTP service; `make query` is an interactive CLI. |
 | `vit-classifier` / `vit-seq2seq` | Separate epoch caps — the classifier reads `AI_RESIDENCY_CLASSIFIER_EPOCHS`, not `AI_RESIDENCY_NUM_EPOCHS`. |
 | `multimodal-captioning` | `make train` overwrites a **committed** adapter. Set `AI_RESIDENCY_CHECKPOINT_NAME` to something else. Pins itself to CPU: MPS training here was non-reproducible. |

@@ -21,22 +21,10 @@ dependencies = [
     "wandb>=0.23.0",
     "tqdm>=4.67.0",
     "matplotlib>=3.10.0",
-    "nltk>=3.10.0",
-    "requests>=2.32.0",
     "fastapi>=0.120.0",
     "uvicorn>=0.38.0",
     "transformers>=4.57.0",
     "huggingface_hub>=0.36.0",
-]
-
-# The Hacker News corpus stage only. `etl.py` reads a Postgres mirror to build the
-# vocabulary, which happens in the training image; `serving/api.py` never imports it,
-# so shipping the driver in the serving image was ~15MB and a C extension that no
-# running backend loads. `make train-corpus` and Dockerfile.train install this group.
-[project.optional-dependencies]
-corpus = [
-    "psycopg2-binary>=2.9.10",
-    "python-dotenv>=1.1.0",
 ]
 
 [project.urls]
@@ -46,12 +34,6 @@ Repository = "https://github.com/RoshBeed/ai-residency.git"
 [dependency-groups]
 dev = [
     "httpx>=0.27",
-    # Named here as well as in the `corpus` extra, and the two mean different things:
-    # the extra is what the training image installs to *run* the corpus stage, this is
-    # what the checkout needs to type-check `etl.py`, which imports psycopg2 at module
-    # scope. Dev groups are never installed into an image, which is the point -- the
-    # serving image does not get the driver.
-    "psycopg2-binary>=2.9.10",
     "mypy>=1.11",
     "pytest>=8.0",
     "ruff>=0.6",

@@ -68,10 +68,15 @@ ignore = ["N812"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# These two modules *are* unicode-to-ASCII replacement tables. RUF001/RUF003 read
-# the lookalike characters they exist to map as mistakes.
-"services/word-embeddings/word_embeddings/etl.py" = ["RUF001", "RUF003"]
-"services/word-embeddings/tests/test_word_embeddings.py" = ["RUF001"]
+# `etl.py` *is* a unicode-to-ASCII replacement table, and its test exercises it.
+# RUF001/RUF003 read the lookalike characters they exist to map as mistakes.
+"services/content-scoring/content_scoring/etl.py" = ["RUF001", "RUF003"]
+"services/content-scoring/tests/test_content_scoring.py" = ["RUF001"]
+# The eval harness reports Spearman's rho and writes it as such -- in prose and on axis
+# labels. RUF001/RUF002 read the greek letter as a typo for a latin p.
+"services/content-scoring/content_scoring/evaluate.py" = ["RUF002"]
+"services/content-scoring/content_scoring/train.py" = ["RUF002"]
+"services/content-scoring/content_scoring/report.py" = ["RUF001", "RUF002"]
 
 # Walkthrough notebooks introduce imports beside the markdown cell that explains
 # them, rather than all at the top. Their printed output is prose, so it uses real

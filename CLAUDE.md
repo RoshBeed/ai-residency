@@ -57,14 +57,19 @@ made that worse. It is one `rlhf_ppo` package now, laid out by PPO stage. The ei
 services already did this.
 
 **Vocabulary building is deliberately not shared, and that was checked rather than assumed.**
-`word-embeddings/etl.py` (947 lines) and `vector-search-retrieval/cbow/train_tokenizer.py`
-(117) both end in a word→id mapping, which looks like the same duplication word2vec was. It
-is not. The first normalises real-world Unicode, pulls from a Hacker News Postgres mirror and
-a Wikipedia dump, merges corpora and lemmatises; the second lowercases text8, which is already
-ASCII, and counts. The genuinely common part is about twenty lines — a `Counter`, a sort, and
-a reserved `<PAD>` at id 0 — and extracting that would buy less than the indirection costs.
-Two implementations of *the same algorithm* is a library; two pipelines that happen to end in
-a dict is not.
+`content-scoring/etl.py`, `word-embeddings/corpus.py` and
+`vector-search-retrieval/cbow/train_tokenizer.py` all end in a word→id mapping, which looks
+like the same duplication word2vec was. It is not. The first normalises real-world Unicode out
+of Hacker News titles and keeps `gpt-4` and `c++` whole; the second lowercases text8, which is
+already ASCII, and counts; the third does the same for a different consumer. The genuinely
+common part is about twenty lines — a `Counter`, a sort by frequency — and extracting that
+would buy less than the indirection costs. Two implementations of *the same algorithm* is a
+library; two pipelines that happen to end in a dict is not.
+
+What *did* become a library is scoring: `word2vec.benchmarks` holds WordSim-353, SimLex-999
+and the Google analogy scorers, because two services measure embeddings now —
+`word-embeddings` trains them and `content-scoring` extends the vocabulary onto a new corpus
+and has to show it did not damage them doing so.
 
 **CI's path filter is `dorny/paths-filter`, and its filter list is checked against the
 workspace.** The diff was the part that kept being subtly wrong: resolving a base SHA
@@ -147,10 +152,21 @@ are expected, not a defect, and a service that starts, reports `checkpoint_loade
 answers 503 honestly is *passing*. Verify wiring, not accuracy, and don't propose training runs as
 the next step.
 
-`word-embeddings` is the exception and is now trained for real, on text8, scored against
-WordSim-353, SimLex-999 and the Google analogy set with published word2vec-on-text8 numbers beside
-them. Changing it means keeping those numbers true: `make -C services/word-embeddings evaluate`
-reports them from a checkpoint, and the README quotes them.
+`word-embeddings` and `content-scoring` are the exceptions and are trained for real.
+
+`word-embeddings` is trained on text8 and scored against WordSim-353, SimLex-999 and the Google
+analogy set with published word2vec-on-text8 numbers beside them. Changing it means keeping those
+numbers true: `make -C services/word-embeddings evaluate` reports them from a checkpoint, and the
+README quotes them.
+
+`content-scoring` is trained on 872,554 Hacker News posts, split by time, with four fusion
+architectures compared against four baselines. Same rule: `make -C services/content-scoring
+evaluate` is the single source of every number in its README, and the trainer streams the same
+harness to W&B rather than computing its own metrics — so a chart and the table cannot disagree.
+Its data path is credential-free end to end (`make etl && make extend-vocab && make train &&
+make evaluate` on a clean machine), and the one published data artifact is the raw mirror at
+`roshbeed/ai-residency-hn-posts`; splits and the title corpus are a local derived cache, never
+uploaded.
 
 The lesson generalises even for the services still in the default phase. Four separate defects in
 that trainer were invisible to every structural check -- the tests passed, the API answered, the
@@ -394,7 +410,7 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
 publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
 Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
-Security, which a private repo does not have). 330 tests.
+Security, which a private repo does not have). 380 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.

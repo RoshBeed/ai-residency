@@ -5,8 +5,14 @@ description = "word2vec written from scratch: CBOW and skip-gram, with negative-
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "RoshBeed" }]
+# scipy is here for one function: `spearmanr` in `benchmarks.py`. Spearman is Pearson
+# on ranks and could be hand-rolled in six lines, but scipy's tie handling is what the
+# published WordSim-353 and SimLex-999 numbers in the word-embeddings README were
+# measured with, and a reimplementation that disagreed on ties would silently move
+# them.
 dependencies = [
     "torch>=2.0",
+    "scipy>=1.14",
 ]
 
 # Its own dev group, like every other member. Without one, `uv sync --package

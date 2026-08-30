@@ -60,8 +60,8 @@ RUN uv sync --frozen --no-dev --no-install-project \
 
 COPY services/${SERVICE} services/${SERVICE}
 # `--all-extras`: a service's optional dependencies are the ones only its data or
-# training stages need -- word-embeddings' Postgres driver for the corpus build, for
-# instance. The serving image installs none of them; this one installs all of them.
+# training stages need. The serving image installs none of them; this one installs all
+# of them.
 RUN uv sync --frozen --no-dev --all-extras \
       --no-install-package torch \
       --no-install-package torchvision \

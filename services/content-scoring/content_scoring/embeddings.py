@@ -1,69 +1,73 @@
-"""Load the frozen CBOW embeddings this repo's scoring head consumes.
+"""Loading the extended word vectors this service's models read.
 
-The word vectors are trained in the sibling `word-embeddings` service
-repo and published to the Hugging Face Hub; this repo pulls them back down and reads
-the vocabulary out of the checkpoint alongside the weights. The vocabulary travels
-inside the checkpoint so the mapping cannot drift from the matrix it indexes.
+The base vectors are trained in the sibling `word-embeddings` service on text8;
+`vocab.py` extends that vocabulary onto the Hacker News title corpus and publishes the
+result as `hn_embeddings.pt`. This module is how everything downstream gets it back.
+
+The vocabulary travels inside the checkpoint alongside the matrix, so the mapping cannot
+drift from the rows it indexes. That is not defensive style -- this repo shipped a
+version where the corpus was encoded with word ids while the checkpoint saved lemma ids,
+and every neighbour the service returned for months was read out of the wrong index
+space.
 """
 
 from pathlib import Path
 
 import torch
 
-from ai_residency_common import get_logger
+from ai_residency_common import get_logger, load_checkpoint
 
-__all__ = ["load_cbow_embeddings", "load_cbow_vocabulary"]
+__all__ = ["ExtendedEmbeddings", "load_extended_embeddings"]
 
 logger = get_logger(__name__)
 
 
-def load_cbow_embeddings(model_path: str | Path) -> torch.Tensor:
-    """Load the frozen input-embedding matrix from a CBOW checkpoint.
+class ExtendedEmbeddings:
+    """The extended matrix and the vocabulary that indexes it.
 
-    Args:
-        model_path: Path to the checkpoint saved by the word-embeddings repo's
-            `train`.
-
-    Returns:
-        The `in_embed` weight matrix, shape `(vocab_size, embed_size)`, on CPU.
+    Attributes:
+        matrix: `(vocab_size, embed_size)` word vectors on CPU.
+        word_to_index: Word to row.
+        num_pretrained: Rows inherited from text8; anything above came from Hacker News.
     """
-    logger.info("Loading CBOW embeddings from %s", model_path)
-    # map_location='cpu': checkpoints trained on MPS carry mps:0 tensor metadata and
-    # fail to deserialise on a CPU-only host unless loaded onto the CPU explicitly.
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-    embeddings: torch.Tensor = checkpoint["model_state_dict"]["in_embed.weight"]
-    embeddings = embeddings.cpu()
-    logger.info("Loaded embeddings with shape %s", tuple(embeddings.shape))
-    return embeddings
+
+    def __init__(
+        self, matrix: torch.Tensor, word_to_index: dict[str, int], num_pretrained: int
+    ) -> None:
+        self.matrix = matrix
+        self.word_to_index = word_to_index
+        self.num_pretrained = num_pretrained
+
+    @property
+    def embed_size(self) -> int:
+        """Width of one word vector."""
+        return int(self.matrix.shape[1])
 
 
-def load_cbow_vocabulary(model_path: str | Path) -> dict[str, int]:
-    """Load the vocabulary a CBOW checkpoint's embedding rows are indexed by.
+def load_extended_embeddings(path: str | Path) -> ExtendedEmbeddings:
+    """Load the extended embedding checkpoint.
 
     Args:
-        model_path: Path to the same checkpoint passed to `load_cbow_embeddings`.
+        path: Path to `hn_embeddings.pt`.
 
     Returns:
-        The `word_to_index` mapping stored in the checkpoint's `extra`, falling back
-        to `word_to_lemma_index` for checkpoints written before the two were
-        untangled.
+        The matrix, its vocabulary and how much of it is inherited.
 
     Raises:
-        KeyError: If the checkpoint carries no vocabulary at all.
-
-    The fallback exists because the word-embeddings service used to save a mapping
-    from words to *lemma* ids while training the matrix on *word* ids -- two
-    different index spaces -- so the vectors this function returned were being looked
-    up through the wrong mapping. A checkpoint from before the fix still loads, and
-    still scores badly; retraining is what fixes it.
+        KeyError: If the checkpoint carries no vocabulary, which makes the matrix
+            unreadable rather than merely undocumented.
     """
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-    extra = checkpoint["extra"]
-    for key in ("word_to_index", "word_to_lemma_index"):
-        if key in extra:
-            vocabulary: dict[str, int] = extra[key]
-            if key != "word_to_index":
-                logger.warning("Checkpoint predates the vocabulary fix; ids may not index its rows")
-            logger.info("Loaded vocabulary with %d words", len(vocabulary))
-            return vocabulary
-    raise KeyError("checkpoint carries no vocabulary")
+    payload = load_checkpoint(path)
+    extra = payload["extra"]
+    if "word_to_index" not in extra:
+        raise KeyError(f"{path} carries no vocabulary; the matrix cannot be indexed")
+    matrix = payload["model_state_dict"]["in_embed.weight"].cpu()
+    word_to_index: dict[str, int] = extra["word_to_index"]
+    logger.info(
+        "Loaded %d x %d extended embeddings (%d from text8, %d from Hacker News)",
+        matrix.shape[0],
+        matrix.shape[1],
+        extra.get("num_pretrained", 0),
+        matrix.shape[0] - extra.get("num_pretrained", 0),
+    )
+    return ExtendedEmbeddings(matrix, word_to_index, int(extra.get("num_pretrained", 0)))
