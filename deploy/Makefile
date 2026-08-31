@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status watch index-retrieval load-images pin-images local-up local-cluster \
+.PHONY: pull up down logs status index-retrieval load-images pin-images local-up local-cluster \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -144,16 +144,7 @@ pin-images: ## Regenerate compose/images.env from deploy/images.yaml
 	uv run python pin_images.py
 	@uv run python pin_images.py --check
 
-# `--no-up` because `watch` resolves depends_on and does not take `--no-deps`: the
-# frontend depends on all nine backends, so watching it without this pulls every
-# published image first -- and on Apple Silicon that fails outright, since the pinned
-# digests are amd64-only.
-watch: ## Sync source into a running stack, no rebuild: make watch SERVICES="content-scoring"
-	@test -n "$(SERVICES)" || (echo 'Usage: make watch SERVICES="content-scoring"   (run `make local-up` first)' && exit 1)
-	@echo "Watching $(SERVICES) and the frontend. Edit source; containers restart. Ctrl-C to stop."
-	$(COMPOSE) watch --no-up $(SERVICES) frontend
-
-local-up: ## Build natively and run with the UI: make local-up SERVICES="word-embeddings"
+local-up: ## Build, run and watch one service with the UI: make local-up SERVICES="content-scoring"
 	@test -n "$(SERVICES)" || (echo 'Usage: make local-up SERVICES="word-embeddings"' && exit 1)
 	@# `--env-file /dev/null`, so none of the `${<SERVICE>_REF}` variables are set and
 	@# every image falls back to the `:latest` tag `make local` produces. Otherwise
@@ -173,7 +164,22 @@ local-up: ## Build natively and run with the UI: make local-up SERVICES="word-em
 	AI_RESIDENCY_PAGES="$(SERVICES)" $(COMPOSE_LOCAL) \
 		up -d --no-deps --force-recreate frontend $(SUBSET)
 	@echo ""
-	@echo "Built here and running. UI: http://localhost:8500"
+	@echo "Running. UI: http://localhost:8500"
+	@echo ""
+	@# Watching by default, because the alternative is rebuilding a container to see a
+	@# one-line change. `--no-up`: watch resolves depends_on and takes no --no-deps, so
+	@# the frontend -- which depends on all nine backends -- would pull every published
+	@# image first, and on Apple Silicon that fails outright against amd64-only digests.
+	@#
+	@# WATCH=no leaves the stack up and returns, for anything that is not a dev loop.
+	@if [ "$(WATCH)" = "no" ]; then \
+		echo "Started detached. Stop it with: make down"; \
+	else \
+		echo "Watching source. Edit and the container restarts; Ctrl-C to stop watching."; \
+		echo "(the stack keeps running afterwards -- 'make down' stops it)"; \
+		echo ""; \
+		AI_RESIDENCY_PAGES="$(SERVICES)" $(COMPOSE_LOCAL) watch --no-up $(SERVICES) frontend; \
+	fi
 
 # Every service in the workspace, derived here rather than inherited. The root
 # Makefile defines a TARGETS variable and does not export it, so referring to it from
