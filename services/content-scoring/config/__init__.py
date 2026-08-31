@@ -66,6 +66,7 @@ class Config(BaseConfig):
         eval_every: Steps between `train/*` log points.
         save_checkpoints: Sweep runs set this false. Two dozen runs writing a
             checkpoint each is disk nobody reads.
+        promote: Whether a winning seed may replace the served checkpoint.
         max_title_tokens: Titles are truncated to this many tokens. The 99.9th
             percentile is well under it; the bound exists so a pathological title
             cannot size a batch.
@@ -107,6 +108,9 @@ class Config(BaseConfig):
     learning_rate: float = 3.737e-4
     eval_every: int = 100
     save_checkpoints: bool = True
+    # False for the objective A/B runs: they exist to be compared, not served,
+    # and must not overwrite the checkpoint the API is loading.
+    promote: bool = True
     max_title_tokens: int = 32
 
     embedding_repo_id: str | None = "roshbeed/ai-residency-word-embeddings"
@@ -150,8 +154,23 @@ class Config(BaseConfig):
     def predictor_checkpoint(self) -> Path:
         """Where this run's checkpoint is written.
 
-        Named after the fusion architecture, so the four do not overwrite each other
-        and the comparison can be re-scored from disk without retraining.
+        Named after the architecture, the objective **and the seed**. Without the seed,
+        three seeds overwrite one path, `make evaluate` scores whichever ran last, and a
+        table that says "three seeds" reports one -- which is exactly what happened here,
+        and it hid a seed spread large enough to erase the gap between two architectures.
+
+        The objective is in the name because the two are different models: comparing them
+        requires both sets on disk at once, and sharing a filename made that impossible.
+        """
+        return self.checkpoint_dir / self.fusion / f"{self.fusion}_{self.objective}_s{self.seed}.pt"
+
+    @property
+    def served_checkpoint(self) -> Path:
+        """The seed promoted for serving: whichever scored best on validation.
+
+        Separate from `predictor_checkpoint` so the thing that ships is a deliberate
+        choice rather than an accident of loop order, and so the Hub carries one file per
+        architecture instead of one per run.
         """
         return self.checkpoint_dir / self.fusion / f"{self.fusion}_predictor.pt"
 
@@ -162,8 +181,22 @@ class Config(BaseConfig):
 
     @property
     def info_path(self) -> Path:
-        """Full path to the checkpoint's JSON sidecar."""
+        """Full path to this run's JSON sidecar."""
         return self.predictor_checkpoint.with_suffix(".json")
+
+    @property
+    def served_info_path(self) -> Path:
+        """Sidecar for the promoted checkpoint, which records which seed won."""
+        return self.served_checkpoint.with_suffix(".json")
+
+    def seed_checkpoints(self) -> list[Path]:
+        """Every seed trained for this architecture *under this objective*.
+
+        Scoped to the objective so an aggregate never silently averages two different
+        models -- the mistake this whole path exists to prevent.
+        """
+        directory = self.checkpoint_dir / self.fusion
+        return sorted(directory.glob(f"{self.fusion}_{self.objective}_s*.pt"))
 
     def split_path(self, split: str) -> Path:
         """Local path of one derived split.

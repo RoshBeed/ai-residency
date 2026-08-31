@@ -506,7 +506,7 @@ def slice_table(
                     name,
                     count,
                     round(_spearman(predicted[mask], actual[mask]), 4),
-                    round(float(np.expm1(actual[mask]).mean()), 2),
+                    round(float(actual[mask].mean()), 2),
                 ]
             )
     return ["family", "bucket", "n", "spearman", "mean_score"], rows
@@ -657,18 +657,35 @@ def load_predictor(config: Config, splits: Splits, word_to_index: dict[str, int]
     model = build_model(matrix, splits.spec.num_domains, config)
 
     path, _ = resolve_checkpoint(
-        config.predictor_checkpoint,
+        config.served_checkpoint,
         config.hf_repo_id,
-        filename=config.predictor_checkpoint.name,
+        filename=config.served_checkpoint.name,
     )
     if path is None:
         raise FileNotFoundError(
-            f"No checkpoint for fusion={config.fusion} at {config.predictor_checkpoint} "
+            f"No checkpoint for fusion={config.fusion} at {config.served_checkpoint} "
             f"or in {config.hf_repo_id}."
         )
     load_predictor_weights(model, load_checkpoint(path)["model_state_dict"])
     del word_to_index
     return model.to(config.device).eval()
+
+
+def aggregate(values: list[float]) -> tuple[float, float]:
+    """Mean and full spread of a metric across seeds.
+
+    Args:
+        values: One value per seed.
+
+    Returns:
+        `(mean, max - min)`. The full range rather than a standard deviation: three
+        points do not support a variance estimate, and the range is what a reader needs
+        to decide whether a gap between two architectures is real.
+    """
+    finite = [v for v in values if v == v]
+    if not finite:
+        return float("nan"), float("nan")
+    return float(np.mean(finite)), float(max(finite) - min(finite))
 
 
 def main() -> None:
@@ -700,6 +717,7 @@ def main() -> None:
     actual = splits.frames[arguments.split]["score"].to_numpy(dtype=np.float64)
 
     report: dict[str, dict[str, float]] = {}
+    spreads: dict[str, dict[str, tuple[float, float]]] = {}
     for name, predicted in baseline_predictions(splits, arguments.split).items():
         report[name] = evaluate_predictions(frame, predicted, actual)
 
@@ -719,6 +737,23 @@ def main() -> None:
             continue
         predicted = predict(model, splits.tensors[arguments.split], device, variant.objective)
         report[fusion] = evaluate_predictions(frame, predicted, actual)
+        # Every seed, not just the promoted one. A single run cannot say whether a gap
+        # between two architectures is bigger than the noise between two seeds of one.
+        per_seed: dict[str, list[float]] = {}
+        for seed_path in variant.seed_checkpoints():
+            seed_model = build_model(matrix, splits.spec.num_domains, variant)
+            load_predictor_weights(seed_model, load_checkpoint(seed_path)["model_state_dict"])
+            seed_scores = predict(
+                seed_model.to(device).eval(),
+                splits.tensors[arguments.split],
+                device,
+                variant.objective,
+            )
+            for name, value in evaluate_predictions(frame, seed_scores, actual).items():
+                per_seed.setdefault(name, []).append(value)
+        if per_seed:
+            spreads[fusion] = {name: aggregate(vals) for name, vals in per_seed.items()}
+            report[fusion] = {name: mean for name, (mean, _) in spreads[fusion].items()}
         if fusion == "late":
             slices = slice_table(frame, predicted, actual, splits, word_to_index)
             ablation = leave_one_group_out(model, splits, arguments.split)
@@ -734,7 +769,7 @@ def main() -> None:
         "%s split, %d posts, %d actual upvotes", arguments.split, len(frame), int(actual.sum())
     )
     logger.info(
-        "%-16s%9s%9s%9s%9s%10s%10s%8s",
+        "%-16s%9s%9s%9s%9s%10s%10s%-9s%8s",
         "model",
         "MAE",
         "medAE",
@@ -742,11 +777,14 @@ def main() -> None:
         "max",
         "total",
         "spearman",
+        " (spread)",
         "PR-AUC",
     )
     for name, metrics in report.items():
+        spread = spreads.get(name, {})
+        seeds = f" ±{spread['spearman'][1]:.4f}" if "spearman" in spread else ""
         logger.info(
-            "%-16s%9.2f%9.2f%9.2f%9.0f%9.0f%%%10.4f%8.3f",
+            "%-16s%9.2f%9.2f%9.2f%9.0f%9.0f%%%10.4f%-9s%8.3f",
             name,
             metrics["mae"],
             metrics["mdae"],
@@ -754,6 +792,7 @@ def main() -> None:
             metrics["max_predicted"],
             100 * metrics["total_ratio"],
             metrics["spearman"],
+            seeds,
             metrics.get("viral_pr_auc", float("nan")),
         )
     logger.info(

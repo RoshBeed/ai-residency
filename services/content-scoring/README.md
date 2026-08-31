@@ -38,35 +38,41 @@ asks where the text and the metadata should meet.
 ## 1. Results
 
 Held-out test period, 69,275 posts from June to August 2026 carrying 1,309,690 upvotes between
-them, never seen during training or tuning. Three seeds per architecture, every hyperparameter held
-equal.
+them, never seen during training or tuning. **Every row is the mean of three seeds, with the full
+seed spread beside it**; every hyperparameter is held equal across architectures.
 
 **Predicting the count**, which is what the service is for:
 
-| model | mean predicted | max predicted | total upvotes | median abs error |
-|---|---|---|---|---|
-| *actual* | *18.91* | *3,158* | *100%* | — |
-| predict the mean | 19.15 | 19 | 101% | 16.15 |
-| TF-IDF + Ridge | 21.44 | 453 | 113% | 13.00 |
-| text only | 20.57 | 343 | 109% | 15.77 |
-| features only | 19.07 | 830 | 101% | 12.81 |
-| early fusion | 15.08 | 792 | 80% | 8.91 |
-| **late fusion** (served) | **15.21** | **1,242** | **80%** | **7.01** |
+| model | MAE | median AE | mean pred | max pred | total |
+|---|---|---|---|---|---|
+| *actual* | — | — | *18.91* | *3,158* | *100%* |
+| predict the mean | 27.72 | 16.15 | 19.15 | 19 | 101% |
+| TF-IDF + Ridge | 30.27 | 13.00 | 21.44 | 453 | 113% |
+| text only | 27.53 | 15.10 | 19.50 | 265 | 103% |
+| features only | 26.99 | 13.14 | 19.28 | 562 | 102% |
+| early fusion | 24.71 | 10.00 | 16.55 | 651 | 88% |
+| **late fusion** (served) | **24.24** | **7.49** | 15.99 | **1,286** | 85% |
 
-**Ranking the posts**, which is what it is also useful for:
+**Ranking the posts**:
 
-| model | Spearman ρ | PR-AUC on `score ≥ 100` |
-|---|---|---|
-| TF-IDF + Ridge | 0.124 | 0.072 |
-| text only | 0.159 | 0.072 |
-| features only | 0.219 | 0.085 |
-| early fusion | 0.257 | 0.093 |
-| **late fusion** (served) | **0.269** | **0.099** |
+| model | Spearman ρ | seed spread | PR-AUC on `score ≥ 100` |
+|---|---|---|---|
+| TF-IDF + Ridge | 0.124 | — | 0.072 |
+| text only | 0.161 | ±0.021 | 0.071 |
+| features only | 0.220 | ±0.016 | 0.083 |
+| early fusion | 0.260 | ±0.016 | 0.093 |
+| **late fusion** (served) | **0.280** | ±0.020 | **0.097** |
 
 Fusing the title with the metadata halves the median error against predicting the mean — 16.15 to
-7.01 — and takes the model's ceiling from 19 upvotes to 1,242. Both ablations are far behind both
-fusion models on every column, so the title and the metadata are carrying different information
-rather than the same signal twice.
+7.49 — and takes the model's ceiling from 19 upvotes to 1,286. Both ablations trail both fusion
+models on every column, so the title and the metadata carry different information rather than the
+same signal twice.
+
+**Early and late fusion are not separable here.** The gap is 0.019 and the seed spreads are 0.016
+and 0.020. Under the previous `log_mse` objective the same gap was five times its spread and I
+called it real; under the objective this service actually ships, it is inside the noise. A loss
+dominated by a few thousand-point posts is simply noisier — which batch a viral post lands in
+matters — and that shows up as seed variance three to five times larger.
 
 ### The service returns two numbers
 
@@ -102,39 +108,64 @@ the front page. There is no configuration of this model that predicts 400 for a 
 is right more often than not, because the post itself does not determine the answer — see
 [§1.6](#16-what-the-ceiling-actually-is).
 
-### Why MAE is worse than the version that could not predict upvotes
+### The two objectives, measured against each other
 
-The previous objective, squared error on `log1p(score)`, scores a **better MAE** — 16.95 against
-23.58 — while predicting 19% of the upvotes that happened and never exceeding 63 for any post.
+Both trained under identical code, features, seeds and promotion logic — the only difference is the
+loss. Late fusion, three seeds each:
 
-That is not a contradiction, it is the median/mean split. Absolute error is minimised by the
-conditional **median**, which on this data is 3. Total upvotes is matched by the conditional
-**mean**, which is 19. They are six times apart, so no single number optimises both, and an
-objective can look excellent on MAE precisely *because* it is predicting a median and calling it a
-score.
+| | `log_mse` | **`poisson`** (shipped) | actual |
+|---|---|---|---|
+| median abs error | **1.36** | 7.49 | — |
+| MAE | **16.96** | 24.24 | — |
+| mean predicted | 3.39 | **15.99** | 18.91 |
+| max predicted | 80 | **1,286** | 3,158 |
+| total upvotes | 18% | **85%** | 100% |
+| Spearman ρ | **0.367** ±0.0009 | 0.280 ±0.0202 | — |
+| PR-AUC on `score ≥ 100` | 0.089 | **0.097** | — |
 
-This service optimises the mean, because "how many upvotes will this get" asks for an expectation.
-`AI_RESIDENCY_OBJECTIVE=log_mse` restores the other choice; it ranks better (ρ 0.366 against 0.269)
-and cannot predict a count. Sections 1.1 to 1.6 below study ranking and were measured under it.
+**They are not better and worse versions of one thing; they answer different questions.**
 
-### The result the comparison was built for
+`log_mse` fits the conditional **median**, which on this data is 3. That gives it a median absolute
+error of **1.36 upvotes** — genuinely excellent if the question is "what will this post most likely
+score". It also caps out at 80 upvotes across 69,275 posts and accounts for 18% of the upvotes that
+happened, so it cannot answer "how much attention will this get".
 
-Each modality alone lands near 0.27–0.32. Together they reach 0.37. The title and the metadata
-carry substantially different information rather than the same signal twice — which is the claim
-the two ablations exist to test, and it would have been unfalsifiable without them.
+`poisson` fits the conditional **mean**, which is 19. It recovers 85% of the total, reaches 1,286
+on its best guess, and finds front-page posts better. Its median error is five times worse, because
+predicting 8 for a post that scores 3 is the price of being able to predict 400 for one that scores
+500.
 
-The seed spread is 0.002–0.004, so those gaps are real: fusion beats the stronger ablation by 0.05,
-and that is fourteen times the noise.
+This service ships `poisson`, because "predict the upvotes" asks for the count and a model that
+never exceeds 80 is not answering it. `AI_RESIDENCY_OBJECTIVE=log_mse` is one environment variable
+away if the median is what you want.
 
-**Both fusion models beat TF-IDF + Ridge by about 0.12**, which is the number that says the neural
-work earned its keep. Not every result here is flattering, though — see the honest reading below.
+**One more difference worth naming: `log_mse` is twenty times more stable across seeds** — ±0.0009
+against ±0.0202 on late fusion. A loss dominated by a handful of thousand-point posts depends on
+which batch those posts land in. That instability is why the early-versus-late comparison holds
+under one objective and dissolves under the other.
 
-### Late fusion wins, but only where capacity is scarce
+### Where the fusion advantage is, and is not
+
+Fusing beats either ablation by a margin far larger than the seed noise: late fusion reaches ρ 0.280
+against 0.220 for metadata alone and 0.161 for the title alone, with spreads of 0.016–0.021. That is
+the claim the two ablations exist to test, and it holds — the title and the metadata carry different
+information.
+
+**The choice between early and late fusion does not survive the same test.** 0.260 against 0.280,
+with overlapping spreads. It is one architecture ahead of another by less than the distance between
+two seeds of either.
+
+Both fusion models beat TF-IDF + Ridge by about 0.15, which is what says the neural work earned its
+keep on ranking. On predicting a count, TF-IDF + Ridge has the *worst* MAE of anything tested (30.27)
+while over-predicting the total by 13% — a reminder that the two questions rank models differently.
+
+### The architecture comparison, under the ranking objective
 
 *Everything from here to the end of §1.6 was measured under `log_mse`, the ranking-optimised
 objective, because these are questions about ranking and rank correlation is the metric that
-separates the answers. The shipped model uses `poisson`; the architectural conclusions carry over,
-the absolute numbers are not comparable to §1's table.*
+separates the answers. The shipped model uses `poisson`; the architectural conclusions are about
+the architectures, but the absolute numbers are not comparable to §1's table — and, as above, the
+early-versus-late ordering does not carry over.*
 
 Late fusion leads by 0.0095 at the tuned configuration, about five times the seed spread. But that
 configuration is one hidden layer per branch, and depth is exactly the axis the two architectures

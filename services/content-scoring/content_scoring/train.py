@@ -26,6 +26,7 @@ run; a sweep run should be dominated by training, not by its own evaluation.
 import argparse
 import json
 import math
+import shutil
 import time
 from dataclasses import asdict
 
@@ -354,17 +355,63 @@ def train(config: Config) -> float:
         )
         config.info_path.write_text(
             json.dumps(
-                {"fusion": config.fusion, "epoch": best_epoch, **test_metrics},
+                {
+                    "fusion": config.fusion,
+                    "seed": config.seed,
+                    "objective": config.objective,
+                    "epoch": best_epoch,
+                    "val_spearman": best_score,
+                    **test_metrics,
+                },
                 indent=2,
                 default=str,
             ),
             encoding="utf-8",
         )
-        if config.hf_repo_id is not None:
-            push_checkpoint(config.hf_repo_id, config.predictor_checkpoint, private=False)
+        _promote(config, best_score)
 
     finish_tracking()
     return best_score
+
+
+def _promote(config: Config, val_spearman: float) -> None:
+    """Copy this run to the served path if it is the best seed so far, and push it.
+
+    Args:
+        config: Supplies the seed path, the served path and the Hub repo.
+        val_spearman: This run's validation score.
+
+    Seeds train in separate processes, so "best so far" is read from the promoted run's
+    sidecar rather than held in memory. There was no notion of promotion before: every
+    seed wrote one path, the last one won by running last, and the number the write-up
+    quoted was whichever that happened to be.
+    """
+    if not config.promote:
+        logger.info("promotion disabled; seed %d stays a comparison run", config.seed)
+        return
+
+    incumbent = -float("inf")
+    if config.served_info_path.exists():
+        with config.served_info_path.open(encoding="utf-8") as handle:
+            stored = json.load(handle)
+        # Only comparable within one objective; a `log_mse` incumbent must not block a
+        # `poisson` run, since their validation scores are not on the same scale.
+        if stored.get("objective") == config.objective:
+            incumbent = float(stored.get("val_spearman", -float("inf")))
+    if val_spearman <= incumbent:
+        logger.info(
+            "seed %d scored %.4f, behind the promoted %.4f; keeping the incumbent",
+            config.seed,
+            val_spearman,
+            incumbent,
+        )
+        return
+
+    shutil.copyfile(config.predictor_checkpoint, config.served_checkpoint)
+    shutil.copyfile(config.info_path, config.served_info_path)
+    logger.info("promoted seed %d (val %.4f)", config.seed, val_spearman)
+    if config.hf_repo_id is not None:
+        push_checkpoint(config.hf_repo_id, config.served_checkpoint, private=False)
 
 
 def main() -> None:
