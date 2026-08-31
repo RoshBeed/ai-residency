@@ -148,7 +148,13 @@ local: ## Build one service natively for this machine: make local SERVICE=word-e
 # The training entrypoint, read from the service's own pyproject.toml. One root
 # Dockerfile.train builds every training image, and this is the only value that
 # differs between them -- kept beside the code it names rather than in a table here.
-train_module = $(shell python3 -c "import tomllib;print(tomllib.load(open('services/$(1)/pyproject.toml','rb'))['tool']['ai-residency']['train-module'])")
+# `.get` rather than indexing. Make expands this when it prepares the recipe line, not
+# when the shell reaches it, so it runs even for `frontend` -- which is inside a branch
+# that never uses the result and is the one service with no `[tool.ai-residency]` block.
+# Indexing there raised a KeyError and printed a Python traceback in the middle of a
+# build that then succeeded, which reads exactly like a failure and is not one.
+# `deploy/test_workspace.py` is what fails a service that genuinely forgot to declare it.
+train_module = $(shell python3 -c "import tomllib;print(tomllib.load(open('services/$(1)/pyproject.toml','rb')).get('tool',{}).get('ai-residency',{}).get('train-module',''))")
 
 # One root Dockerfile per image kind, selected by --build-arg, rather than one per
 # service. The frontend is the exception in both directions: it has its own
