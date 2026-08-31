@@ -47,6 +47,19 @@ x-backend-healthcheck: &backend-healthcheck
 # Both optional. The model and dataset repos are public, so a stack started with
 # neither still pulls what it needs and serves; HF_TOKEN is for pushing, and without
 # WANDB_API_KEY a training run logs offline.
+# Everything a host-side `make check` leaves inside a service directory. Without these
+# in the ignore list, one lint run looks like 33 source changes and restarts the
+# container -- and the container, running as UID 1000, cannot delete mypy's locked
+# SQLite files, so the sync then fails outright with a wall of "Permission denied".
+x-watch-ignore: &watch-ignore
+  - .venv/
+  - __pycache__/
+  - .mypy_cache/
+  - .ruff_cache/
+  - .pytest_cache/
+  - "*.pyc"
+  - .DS_Store
+
 x-hub-credentials: &hub-credentials
   HF_TOKEN: ${HF_TOKEN:-}
   WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -83,10 +96,24 @@ services:
         - action: sync+restart
           path: ../../services/content-scoring
           target: /app/services/content-scoring
-          ignore: [data/, checkpoints/, wandb/, assets/, .venv/, __pycache__/]
+          ignore:
+            # Derived and large: the splits, the checkpoints and the run logs are all
+            # rebuilt or re-pulled, and none of them is source.
+            - data/
+            - checkpoints/
+            - checkpoints_logmse/
+            - wandb/
+            - assets/
+            - .venv/
+            - __pycache__/
+            - .mypy_cache/
+            - .ruff_cache/
+            - .pytest_cache/
+            - "*.pyc"
         - action: sync+restart
           path: ../../libs
           target: /app/libs
+          ignore: *watch-ignore
 
   # --- Redis, for the retrieval service's HNSW index ---
   redis:
@@ -192,7 +219,7 @@ services:
         - action: sync+restart
           path: ../../services/frontend
           target: /app/services/frontend
-          ignore: [.venv/, __pycache__/]
+          ignore: *watch-ignore
     depends_on:
       - word-embeddings
       - content-scoring
