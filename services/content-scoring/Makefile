@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: etl etl-verify mirror extend-vocab train train-all evaluate evaluate-untrained sweep report predict serve test help
+.PHONY: etl etl-verify mirror extend-vocab train train-all capacity evaluate evaluate-untrained sweep report onnx predict serve test help
 
 # The pipeline, in order: etl -> extend-vocab -> train -> evaluate. Every stage reads
 # public repos, so the whole chain runs on a clean machine with no credentials. A token
@@ -76,6 +76,15 @@ sweep: ## Run a W&B sweep agent: make sweep SWEEP=<id> [COUNT=60] [HOURS=n]
 report: ## Write the write-up figures to assets/
 	uv run python -m content_scoring.evaluate --json assets/evaluation.json
 	uv run python -m content_scoring.report --report assets/evaluation.json
+
+# Netron renders an ONNX graph; `uvx netron <file>` runs it without installing anything.
+# Exported with small embedding tables by default -- the real ones are 86,438 x 300 and
+# draw as the same single Gather node, but add 104MB that makes the file slow to open.
+# `--real-shapes` uses the true sizes.
+onnx: ## Export each architecture to ONNX for Netron: make onnx
+	uv run python -m content_scoring.export_onnx
+	@echo ""
+	@echo "  uvx netron services/content-scoring/assets/onnx/late.onnx"
 
 predict: ## Score one post: make predict TITLE="..." [URL="..."]
 	@test -n "$(TITLE)" || (echo 'Usage: make predict TITLE="Show HN: my thing" [URL="https://..."]' && exit 1)

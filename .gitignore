@@ -61,3 +61,7 @@ services/speech-emotion-recognition/datasets/
 
 # setuptools build metadata
 *.egg-info/
+
+# Netron exports: regenerable with `make -C services/<name> onnx`, and 2.8MB of binary
+# that no README renders.
+services/*/assets/onnx/

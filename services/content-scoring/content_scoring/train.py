@@ -29,6 +29,7 @@ import math
 import shutil
 import time
 from dataclasses import asdict
+from typing import get_args
 
 import numpy as np
 import torch
@@ -49,7 +50,7 @@ from ai_residency_common import (
     set_seed,
     set_summary,
 )
-from config import Config
+from config import Config, Fusion
 from content_scoring.data import build_splits, iterate_batches
 from content_scoring.evaluate import (
     baseline_predictions,
@@ -220,7 +221,7 @@ def train(config: Config) -> float:
         log_table("eval/probes", probe_columns, probe_rows, step=epoch)
 
         logger.info(
-            "epoch %2d/%d  loss %.4f  val spearman %.4f  ndcg@10 %.4f  lift %.2f",
+            "epoch %2d/%d  loss %.4f  val rho %.4f  ndcg@10 %.4f  lift %.2f",
             epoch,
             config.num_epochs,
             running / max(len(batches), 1),
@@ -302,9 +303,10 @@ def train(config: Config) -> float:
         }
     )
     logger.info(
-        "best epoch %d: val spearman %.4f | test spearman %.4f, ndcg@10 %.4f, lift %.2f",
+        "best epoch %d: best val %s %.4f | test spearman %.4f, ndcg@10 %.4f, lift %.2f",
         best_epoch,
-        best_score,
+        config.selection_metric,
+        abs(best_score),
         test_metrics["spearman"],
         test_metrics["ndcg@10"],
         test_metrics["top_decile_lift"],
@@ -428,10 +430,14 @@ def _promote(config: Config, selection_score: float) -> None:
 def main() -> None:
     """Train from the command line."""
     parser = argparse.ArgumentParser(description=__doc__)
+    # Derived from the type, not written out again. The literal list here fell behind
+    # when a fifth architecture was added, and argparse rejected it instantly -- so three
+    # runs of a nine-run comparison failed in under a second each and the sweep looked
+    # like it had merely finished early.
     parser.add_argument(
         "--fusion",
         default=None,
-        choices=("text_only", "features_only", "early", "late"),
+        choices=get_args(Fusion),
         help="Override the configured architecture.",
     )
     parser.add_argument("--seed", type=int, default=None, help="Override the configured seed.")
