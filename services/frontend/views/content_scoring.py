@@ -12,7 +12,7 @@ import streamlit as st
 
 from client import call
 from components import render_probability_bars, render_stats, render_word_trace
-from shared import service_page, show
+from shared import service_page
 
 SERVICE = "content-scoring"
 
@@ -49,6 +49,67 @@ HOUR_SWAPS = {"03:00 UTC": 3, "09:00 UTC": 9, "15:00 UTC": 15, "21:00 UTC": 21}
 PREFIX_SWAPS = ("Show HN: ", "Ask HN: ", "")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _everything(title: str, url: str, author: str, moment: str) -> dict[str, Any]:
+    """Every call the three tabs need, made once.
+
+    Args:
+        title: The post title.
+        url: Where it links, or empty.
+        author: The submitter, or empty.
+        moment: When it was posted, ISO-8601. A string rather than a datetime so the
+            cache key is hashable.
+
+    Returns:
+        `{"score", "compare", "domains", "hours", "prefixes"}`.
+
+    Cached and computed up front rather than behind a button per tab. Three tabs each
+    with its own button means three clicks to see one post, and a Streamlit button is
+    False on the next rerun -- so changing the hour would blank the results the previous
+    click produced. With this, switching tabs is instant and every input change refreshes
+    all three views together.
+
+    The TTL matters during development: `make local-up` restarts the container on every
+    edit, and a permanent cache would keep serving answers from the model that was
+    running before the change.
+    """
+    when = datetime.fromisoformat(moment)
+    base = _score(title, url, author, when)
+    stripped = title
+    for prefix in ("Show HN: ", "Ask HN: ", "Tell HN: "):
+        stripped = stripped.replace(prefix, "")
+    return {
+        "score": base,
+        "compare": (
+            call(
+                SERVICE,
+                "/compare",
+                {"title": title, "url": url, "author": author, "posted_at": moment},
+            ).data
+        ),
+        "domains": [
+            (name, _predicted(_score(title, swap, author, when)))
+            for name, swap in DOMAIN_SWAPS.items()
+        ],
+        "hours": [
+            (name, _predicted(_score(title, url, author, when.replace(hour=hour))))
+            for name, hour in HOUR_SWAPS.items()
+        ],
+        "prefixes": [
+            (
+                f"{prefix or 'no prefix'}{stripped[:34]}…",
+                _predicted(_score(prefix + stripped, url, author, when)),
+            )
+            for prefix in PREFIX_SWAPS
+        ],
+    }
+
+
+def _predicted(data: dict[str, Any] | None) -> float:
+    """The expected count from a response, or zero if the backend refused it."""
+    return float((data or {}).get("predicted_score", 0.0))
+
+
 def _score(
     title: str, url: str, author: str, when: datetime | None = None
 ) -> dict[str, Any] | None:
@@ -76,16 +137,10 @@ def _delta_table(rows: list[tuple[str, float]], baseline: float) -> None:
         st.markdown(f"`{value:>6.1f}`  {arrow} {change:+.1f} &nbsp; {name}", unsafe_allow_html=True)
 
 
-def _render_score(title: str, url: str, author: str, when: datetime) -> None:
+def _render_score(data: dict[str, Any] | None) -> None:
     """Tab one: what does this post score, and how sure is that."""
-    data = show(
-        call(
-            SERVICE,
-            "/predict",
-            {"title": title, "url": url, "author": author, "posted_at": when.isoformat()},
-        )
-    )
     if not data:
+        st.info("The backend did not answer.")
         return
 
     left, right = st.columns(2)
@@ -119,56 +174,21 @@ def _render_score(title: str, url: str, author: str, when: datetime) -> None:
     st.markdown(render_word_trace(data["word_trace"]), unsafe_allow_html=True)
 
 
-def _render_what_moves_it(title: str, url: str, author: str, when: datetime) -> None:
+def _render_what_moves_it(bundle: dict[str, Any]) -> None:
     """Tab two: change one thing at a time and watch the prediction move."""
-    baseline = _score(title, url, author, when)
-    if baseline is None:
+    base = _predicted(bundle["score"])
+    if base == 0.0:
         st.info("The backend did not answer.")
         return
-    base = float(baseline["predicted_score"])
     st.markdown(f"Your post as typed scores **{base:.1f} upvotes**. Now change one thing:")
 
-    st.markdown("**Where it links**")
-    _delta_table(
-        [
-            (name, float((_score(title, swap, author, when) or {}).get("predicted_score", 0.0)))
-            for name, swap in DOMAIN_SWAPS.items()
-        ],
-        base,
-    )
-
-    st.markdown("**When it is posted**")
-    _delta_table(
-        [
-            (
-                name,
-                float(
-                    (_score(title, url, author, when.replace(hour=hour)) or {}).get(
-                        "predicted_score", 0.0
-                    )
-                ),
-            )
-            for name, hour in HOUR_SWAPS.items()
-        ],
-        base,
-    )
-
-    st.markdown("**How the title opens**")
-    stripped = title
-    for prefix in ("Show HN: ", "Ask HN: ", "Tell HN: "):
-        stripped = stripped.replace(prefix, "")
-    _delta_table(
-        [
-            (
-                f"{prefix or 'no prefix'}{stripped[:34]}…",
-                float(
-                    (_score(prefix + stripped, url, author, when) or {}).get("predicted_score", 0.0)
-                ),
-            )
-            for prefix in PREFIX_SWAPS
-        ],
-        base,
-    )
+    for heading, key in (
+        ("Where it links", "domains"),
+        ("When it is posted", "hours"),
+        ("How the title opens", "prefixes"),
+    ):
+        st.markdown(f"**{heading}**")
+        _delta_table(bundle[key], base)
 
     st.caption(
         "Across the whole test set, removing the timestamp branch costs the model more accuracy "
@@ -179,16 +199,10 @@ def _render_what_moves_it(title: str, url: str, author: str, when: datetime) -> 
     )
 
 
-def _render_architectures(title: str, url: str, author: str, when: datetime) -> None:
+def _render_architectures(data: dict[str, Any] | None) -> None:
     """Tab three: the four models on one post."""
-    data = show(
-        call(
-            SERVICE,
-            "/compare",
-            {"title": title, "url": url, "author": author, "posted_at": when.isoformat()},
-        )
-    )
-    if not data or not data["predictions"]:
+    if not data or not data.get("predictions"):
+        st.info("The backend did not answer.")
         return
 
     predictions: dict[str, float] = data["predictions"]
@@ -231,21 +245,24 @@ def render() -> None:
         with right:
             author = st.text_input("Author", value="")
 
+        if not title:
+            st.info("Type a title to score it.")
+            return
+
         when = (datetime.now(UTC) - timedelta(days=1)).replace(
             hour=hour, minute=0, second=0, microsecond=0
         )
+        with st.spinner("Scoring…"):
+            bundle = _everything(title, url, author, when.isoformat())
 
         score_tab, moves_tab, models_tab = st.tabs(
             ["Score it", "What moves the number", "Four architectures"]
         )
         with score_tab:
-            if st.button("Predict", type="primary", key="predict") and title:
-                _render_score(title, url, author, when)
+            _render_score(bundle["score"])
         with moves_tab:
-            st.markdown("Hold the title fixed and change one thing at a time.")
-            if st.button("Run the comparison", type="primary", key="moves") and title:
-                _render_what_moves_it(title, url, author, when)
+            st.markdown("The same title, with one thing changed at a time.")
+            _render_what_moves_it(bundle)
         with models_tab:
             st.markdown("The same post through all four models.")
-            if st.button("Compare", type="primary", key="compare") and title:
-                _render_architectures(title, url, author, when)
+            _render_architectures(bundle["compare"])
