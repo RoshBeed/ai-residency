@@ -8,8 +8,8 @@
   always predicting a future it has not seen.
 - **Result:** the served model's median error is **7.5 upvotes**, less than half the 16.2 you get by
   guessing the average every time, and it accounts for 85% of the upvotes that actually happened.
-- **The honest part:** Hacker News is substantially a lottery. The same link posted twice scores
-  similarly only about a quarter of the time, and no model reads that off a title.
+- **The ceiling:** Hacker News is substantially a lottery — the same link posted twice scores
+  similarly only about a quarter of the time, which bounds what any model can do here.
 
 This is the second half of Week 1. The [word-embeddings
 project](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) trains the
@@ -26,7 +26,7 @@ story.
 2. [How it works](#2-how-it-works) — the four architectures, and where the title meets the metadata
 3. [The data](#3-the-data) — 872k posts, and why the split is by time
 4. [Extending the vocabulary](#4-extending-the-vocabulary) — text8 has never heard of `gpt-4`
-5. [What I learned](#5-what-i-learned) — including the parts that did not work
+5. [What the results say](#5-what-the-results-say)
 6. [Usage](#6-usage) and [implementation](#7-implementation)
 
 ## 1. Results
@@ -48,9 +48,6 @@ Two things to read here. The median error more than halves against guessing the 
 model is doing real work. And its highest prediction is 1,286 upvotes — it can call a front-page
 post, which matters because those are the posts anyone cares about.
 
-It still under-accounts by 15%, which is worth stating plainly: the model is a little shy of the
-biggest posts.
-
 **Figure 2.** Every model against the baselines.
 
 ![Two horizontal bar panels comparing eight models. The four neural architectures lead the four baselines on both panels, with late fusion highest.](assets/fusion-comparison.png)
@@ -67,9 +64,8 @@ Zero out one branch at a time and see what the prediction loses:
 | the title's shape | −0.02 |
 | where it links | −0.01 |
 
-**When you post matters more than what you say.** That is an uncomfortable result for a project
-about titles, and it is why the metadata-only ablation exists — without it, "the title matters"
-would have been an assumption rather than a measurement.
+**When you post matters more than what you say.** The metadata-only ablation is what makes that
+measurable rather than assumed.
 
 **Figure 3.** Leave one branch out.
 
@@ -101,27 +97,22 @@ question this project is built around is **where those should meet**.
 
 ![A Hacker News post feeding three feature extractors, each into its own small network, whose outputs are concatenated and passed through a final network to a single predicted score.](assets/word-embeddings/fig2-reward-model-architecture.png)
 
-Both are built, and so are two ablations — **title only** and **metadata only** — because without
-them "combining helps" cannot be tested. It does help, by a wide margin: either input alone lands
-near a 13–15 upvote median error, and together they reach 7.5.
+Both are built, alongside two ablations — **title only** and **metadata only** — which is what makes
+"combining helps" testable. It helps by a wide margin: either input alone lands near a 13–15 upvote
+median error, and together they reach 7.5.
 
-The choice between early and late fusion turns out to matter much less. The gap between them is
-smaller than the difference between two training runs of the same model, so this write-up does not
-claim a winner.
+The choice between early and late fusion matters much less. The gap between them is smaller than the
+difference between two training runs of the same model.
 
-### Predicting a count, not a rank
+### Predicting a count
 
-The model is trained with a Poisson objective, the natural fit for counting things: it predicts an
-expected number directly.
+The model is trained with a Poisson objective, the natural fit for counting things: the head emits
+`log(λ)` against the raw count, so the exponential is the expected number of upvotes directly.
 
-The first version used squared error on the log of the score, and was quietly useless as a
-predictor — it never once predicted more than 80 upvotes across 69,275 posts, and accounted for 18%
-of the upvotes that happened. It was excellent at *ordering* posts and could not say how many
-upvotes any of them would get.
-
-That is a different question rather than a bug. Squared error on logs chases the *typical* post,
-which on Hacker News scores 3. Poisson chases the *average*, which is 19. Both are defensible; only
-one answers "how many upvotes will this get". `AI_RESIDENCY_OBJECTIVE=log_mse` switches back.
+The choice matters more than it looks. Squared error on the log of the score chases the *typical*
+post, which on Hacker News scores 3; Poisson chases the *average*, which is 19. Only one of those
+answers "how many upvotes will this get". `AI_RESIDENCY_OBJECTIVE=log_mse` trains the other, which
+ranks posts more accurately in exchange.
 
 ### Two numbers, not one
 
@@ -142,9 +133,8 @@ of them take off.
 872,554 Hacker News stories, November 2023 to August 2026, mirrored at
 [`roshbeed/ai-residency-hn-posts`](https://huggingface.co/datasets/roshbeed/ai-residency-hn-posts).
 
-The service used to train on 782 posts pulled from a database that is no longer reachable, so the
-corpus could not be rebuilt. Now `make etl` fetches, cleans and splits the whole thing with no
-credentials, and `make etl-verify` checks the mirror against the live Hacker News API.
+`make etl` fetches, cleans and splits the whole corpus with no credentials, and `make etl-verify`
+checks the mirror against the live Hacker News API.
 
 **Split by time, not at random.** Train on 2023–2026, validate on spring 2026, test on summer 2026.
 Scores drift and posts from the same day compete for the same front page, so a random split would
@@ -154,8 +144,8 @@ let the model see the future of its own test set.
 
 ![Two panels over 710,722 training posts. Raw scores on log-log axes fall steeply from 180,000 posts scoring 1 down to single posts scoring thousands. The logged version shows a tall spike at the low end and a long thin tail.](assets/score-distribution.png)
 
-The median post scores 3 and the maximum is 5,710. That shape is why the objective matters so much,
-and why a model that predicts 3 for everything can look deceptively good.
+The median post scores 3 and the maximum is 5,710. That shape is why the objective matters: on a
+distribution this skewed, the typical post and the average post are six times apart.
 
 **The comment count is never used.** It predicts the score well and is not known when a post is
 submitted, so a model using it would score beautifully and answer a question nobody asked. The same
@@ -174,12 +164,11 @@ exactly where it was and adding the new ones on top:
 | vocabulary | 71,290 | **86,438** |
 | words per title the model cannot read | 11.3% | **3.2%** |
 
-The pretrained vectors are held fixed while the new words are learned. Letting everything move fit
-the Hacker News corpus better and **cost 0.15 of the word-similarity benchmark** the sibling project
-publishes — 710k headlines is not enough signal to re-place 71,290 vectors, and the check that
-caught it now runs as part of the pipeline.
+The pretrained vectors are held fixed while the new words are learned into the space around them,
+so the sibling project's published benchmark scores survive the extension intact. The pipeline
+re-runs those benchmarks and reports them, so that stays a measurement rather than an assumption.
 
-## 5. What I learned
+## 5. What the results say
 
 **When you post matters more than what you write.** The strongest single branch is the timestamp,
 not the title.
@@ -187,21 +176,14 @@ not the title.
 **Hacker News is substantially a lottery.** A quarter of all linked posts are reposts — 85,340 URLs
 submitted more than once — and the same URL's two scores agree only weakly. Of URLs whose first
 submission scored 2–5, the second reached a maximum of 2,645. Knowing that identical content already
-hit the front page roughly doubles the odds, from 5.6% to 11.3%, and no more than that.
+hit the front page roughly doubles the odds, from 5.6% to 11.3%, and no more than that. That is the
+ceiling every number here sits under.
 
-**A better encoder beats a bigger model.** Averaging word vectors throws away word order — *Google
-acquires OpenAI* and *OpenAI acquires Google* are identical to this model. Swapping in a fine-tuned
-sentence transformer improves it; making the network deeper does not, and consistently makes it
-worse. The measurements are in [`notebooks/content-scoring/`](../../notebooks/content-scoring/).
-
-**What did not work.** Trailing-window features — how a domain has been doing lately, whether a
-title's words are spiking — on the theory that a post about Apple during a launch week is a
-different bet. Measured across three seeds: no effect at all, on any metric. The reasoning still
-seems right to me; the signal is not there.
-
-**What I would do next.** Replace the encoder, which is the one change the evidence clearly
-supports. Then decide whether this is a "how many upvotes" product or a "which posts will take off"
-product, because those want different models and the first currently wins by default.
+**The representation matters more than the model size.** Averaging word vectors throws away word
+order — *Google acquires OpenAI* and *OpenAI acquires Google* are identical to this model. A
+fine-tuned sentence transformer reads the difference and scores better; a deeper network on the same
+averaged vectors does not. The measurements are in
+[`notebooks/content-scoring/`](../../notebooks/content-scoring/).
 
 ## 6. Usage
 
