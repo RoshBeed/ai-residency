@@ -144,8 +144,11 @@ def load_predictor(config: Config, embeddings: ExtendedEmbeddings | None = None)
     """
     embeddings = embeddings if embeddings is not None else load_embeddings(config)
 
+    # The promoted checkpoint, not this seed's. `predictor_checkpoint` is scoped to an
+    # objective and a seed so a comparison can hold several at once; serving wants the
+    # one that won, which is the only one published to the Hub.
     checkpoint_path, source = resolve_required(
-        config.predictor_checkpoint,
+        config.served_checkpoint,
         config.hf_repo_id,
         rebuild_hint="Train it with `make -C services/content-scoring train`.",
     )

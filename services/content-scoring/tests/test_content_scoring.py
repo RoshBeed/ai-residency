@@ -497,6 +497,25 @@ class TestConfig:
         paths = {Config(fusion=fusion).predictor_checkpoint for fusion in fusions}
         assert len(paths) == 4
 
+    def test_serving_loads_the_promoted_checkpoint_not_a_seed(self) -> None:
+        """The two paths diverged when checkpoints became seed-scoped, and serving
+        followed the wrong one: it asked the Hub for `late_poisson_s42.pt`, got a 404 for
+        every architecture, and reported an honest 503 that looked like a missing model
+        rather than a wrong filename."""
+        import inspect
+
+        from content_scoring import predict as predict_module
+
+        source = inspect.getsource(predict_module.load_predictor)
+        assert "served_checkpoint" in source
+        assert "config.predictor_checkpoint" not in source
+
+    def test_the_promoted_path_carries_no_seed_or_objective(self) -> None:
+        """It is the name published to the Hub, so it must be stable across runs."""
+        served = Config(fusion="late", seed=99, objective="poisson").served_checkpoint.name
+        assert "99" not in served and "poisson" not in served
+        assert served == "late_predictor.pt"
+
     def test_the_embedding_matrix_is_shared_across_architectures(self) -> None:
         assert Config(fusion="early").embeddings_path == Config(fusion="late").embeddings_path
 
