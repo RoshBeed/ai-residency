@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build local push train serve clean help \
+        base base-train build build-serve run-serve stop-serve local push train serve clean help \
         up down status local-up local-cluster
 
 # Every member of the workspace. Derived from the directory listing, so a new
@@ -181,6 +181,61 @@ build: ## Build a service's images: make build SERVICE=word-embeddings
 			--build-arg BASE_IMAGE=$(BASE_TRAIN_IMAGE) \
 			-t $(REGISTRY)/ai-residency-$(patsubst _%,%,$(SERVICE))-train:$(IMAGE_TAG) . ; \
 	fi
+
+# Everything needed to run one service and its UI, and nothing else. Three things this
+# gets right that the individual targets leave to the caller:
+#
+#   * `base` first. Without it `build` tries to *pull* local/ai-residency-base-serve,
+#     which does not exist in any registry, and fails with "pull access denied" -- an
+#     auth error that is really a missing local image.
+#   * `REGISTRY=local`. The default is the published name, so a plain `make build`
+#     silently shadows whatever was pulled from Docker Hub and you can no longer tell
+#     which image is running.
+#   * the frontend, which is a separate service and easy to forget until the page says
+#     the backend is not ready.
+#
+# The training image is skipped: it is a ~9GB CUDA build that serving never needs.
+build-serve: ## Build one service + the UI, ready to run: make build-serve SERVICE=content-scoring
+	@test -n "$(SERVICE)" || (echo "Usage: make build-serve SERVICE=<name>   ($(SERVICES))" && exit 1)
+	@test "$(SERVICE)" != "frontend" || (echo "build-serve takes a backend; the UI is built for you" && exit 1)
+	$(MAKE) base REGISTRY=local
+	$(MAKE) build SERVICE=$(SERVICE) REGISTRY=local
+	$(MAKE) build SERVICE=frontend REGISTRY=local
+	@echo ""
+	@echo "Built. Run them with:"
+	@echo ""
+	@echo "  make run-serve SERVICE=$(SERVICE)"
+
+run-serve: ## Run a locally built service + UI: make run-serve SERVICE=content-scoring
+	@test -n "$(SERVICE)" || (echo "Usage: make run-serve SERVICE=<name>   ($(SERVICES))" && exit 1)
+	@# Checked before `docker run`, which would otherwise try to *pull* an image that
+	@# exists in no registry and fail with "pull access denied" -- an auth error that is
+	@# really "you have not built this yet". Same misleading failure as a missing base.
+	@docker image inspect local/$(IMAGE_STEM) >/dev/null 2>&1 \
+		|| (echo "local/$(IMAGE_STEM) is not built. Run: make build-serve SERVICE=$(SERVICE)" && exit 1)
+	@docker image inspect local/ai-residency-frontend >/dev/null 2>&1 \
+		|| (echo "local/ai-residency-frontend is not built. Run: make build-serve SERVICE=$(SERVICE)" && exit 1)
+	@# Removed first so the target is safe to run twice; `docker run` errors on a name
+	@# that is already taken, which is the most common way this goes wrong.
+	-@docker rm -f $(SERVICE) frontend >/dev/null 2>&1
+	-@docker network create ai-residency-local >/dev/null 2>&1
+	docker run --rm -d --name $(SERVICE) --network ai-residency-local -p 8000:8000 \
+		local/$(IMAGE_STEM)
+	@# The container name, not localhost: inside the frontend container localhost is the
+	@# frontend, so the page would report "backend isn't ready" and look exactly like a
+	@# backend that is down.
+	docker run --rm -d --name frontend --network ai-residency-local -p 8501:8501 \
+		-e AI_RESIDENCY_PAGES=$(SERVICE) \
+		-e $(shell echo $(SERVICE) | tr 'a-z-' 'A-Z_')_API_URL=http://$(SERVICE):8000 \
+		local/ai-residency-frontend
+	@echo "waiting for $(SERVICE) to pull its checkpoints..."
+	@curl -fsS --retry 90 --retry-delay 2 --retry-all-errors http://localhost:8000/ready >/dev/null \
+		&& echo "" && echo "  UI:      http://localhost:8501" && echo "  Backend: http://localhost:8000/docs"
+
+stop-serve: ## Stop what run-serve started
+	-@docker rm -f $(SERVICE) frontend >/dev/null 2>&1
+	-@docker network rm ai-residency-local >/dev/null 2>&1
+	@echo "stopped"
 
 push: ## Push a service's images: make push SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make push SERVICE=<name>" && exit 1)
