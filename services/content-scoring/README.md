@@ -9,7 +9,13 @@
   builds it both run from scratch with no credentials.
 - **The vocabulary:** the sibling project's text8 vectors extended onto the Hacker News title
   corpus. Out-of-vocabulary tokens fall from **11.3%** of a title to **3.2%**.
-- **Result today:** see [Results](#1-results).
+- **Result today:** late fusion, test Spearman **0.368** against TF-IDF + Ridge at 0.246. Fusing
+  the title with the metadata is worth 0.05; the choice between early and late fusion is worth 0.01.
+- **The honest ceiling:** the same URL posted to Hacker News twice predicts itself at only ρ 0.26,
+  so a large share of a score is timing and luck rather than content. And a fine-tuned transformer
+  encoder beats this service's mean-pooled word vectors by +0.017 ρ and +19% on finding front-page
+  posts — the representation, not the architecture, is what binds. See
+  [§1.6](#16-what-the-ceiling-actually-is).
 
 This is the second half of Week 1. The [word-embeddings
 project](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) trains the
@@ -18,13 +24,15 @@ asks where the text and the metadata should meet.
 
 ## Contents
 
-1. [Results](#1-results) — the comparison, the slices, what the features contribute
-2. [The data](#2-the-data) — where it comes from and why the split is by time
-3. [Extending the vocabulary](#3-extending-the-vocabulary) — text8 has never heard of `gpt-4`
-4. [The four architectures](#4-the-four-architectures) — early, late, and the two ablations
-5. [Evaluation](#5-evaluation) — what is measured, and against what floor
-6. [Usage](#6-usage) — run it, sweep it, deploy it
-7. [Implementation](#7-implementation) — the file map
+1. [Results](#1-results) — the comparison, the slices, and what the ceiling actually is
+2. [What I would do next](#2-what-i-would-do-next)
+3. [What I would not claim](#3-what-i-would-not-claim)
+4. [The data](#4-the-data) — where it comes from and why the split is by time
+5. [Extending the vocabulary](#5-extending-the-vocabulary) — text8 has never heard of `gpt-4`
+6. [The four architectures](#6-the-four-architectures) — early, late, and the two ablations
+7. [Evaluation](#7-evaluation) — what is measured, and against what floor
+8. [Usage](#8-usage) — run it, sweep it, deploy it
+9. [Implementation](#9-implementation) — the file map
 
 ## 1. Results
 
@@ -92,9 +100,32 @@ story. What the depth axis is really measuring here is how gracefully each archi
 parameters it does not need — and a structure that partitions its input tolerates that worse than
 one flat MLP.
 
+This is a statement about *this* representation, not about capacity in general. Scaling the depth
+of an MLP over mean-pooled word vectors does nothing; scaling the **encoder** turns out to do a
+great deal, which §1.6 gets to.
+
 So: late fusion is what ships, and the architectural advantage it has is real but narrow and
 confined to the small-model regime. On this dataset the interesting finding is not which fusion
 wins; it is that fusing at all is worth 0.05 while the choice between the two is worth 0.01.
+
+### Checking the textbook claims
+
+The diagram in Section 6 is course material, and this service is in a position to test
+most of what it asserts rather than repeat it.
+
+| claim | verdict |
+|---|---|
+| **Late:** specific modality processing | **Holds, and it is worth something.** Late fusion leads at one layer, 0.3683 against 0.3605, about four times the seed spread. |
+| **Late:** independent specialised training | **Not what we built.** The five branches are trained jointly under one loss; nothing here is trained separately. The claim describes a setup this project does not use. |
+| **Late:** requires separate data | **Does not apply.** All five branches read the same rows of the same frame. This is a cost of fusing genuinely separate datasets, not of late fusion as such. |
+| **Late:** may miss modality interactions | **Holds — the clearest result on this page.** Late fusion cannot mix text with metadata below its head. Early fusion, which can, overtakes it as depth rises and leads by 0.0147 at four layers. |
+| **Early:** simple single training dataset | Holds, trivially, and equally for both here. |
+| **Early:** captures modality interactions | **Consistent with the evidence**, inferred rather than shown directly: early fusion's advantage appears exactly where interaction modelling becomes possible. |
+| **Early:** easy with state-of-the-art models | **Untested.** No pretrained backbone is involved. |
+| **Early:** requires very complex models | **Contradicted.** Early fusion's *best* result is its **smallest** configuration -- 0.3605 at 93k parameters, one layer -- and every increase in capacity made it worse. It is also four times smaller than late fusion at matched width and depth. A weak version survives: early needs three layers before it *beats* late. The strong version, that it needs a complex model to work at all, is not what happened. |
+
+Two of the eight are untestable here and one describes a different setup, which is worth
+saying plainly rather than quietly scoring six out of eight.
 
 ### What the model is actually using
 
@@ -137,30 +168,131 @@ Three things worth naming:
   tokens score 0.37, those with more than a quarter unknown score 0.25. The gap is what the
   extension narrows, and it is why the OOV slice is in the harness at all.
 
-### What I would not claim
+### The predictions are compressed
 
-The published checkpoint for each architecture is the last of its three seeds, not the best — the
-table above reports the mean and spread across all three, which is the honest summary, but the
-served weights are one draw from that distribution rather than a cherry-picked one.
+**The service reports them as if they were not.** Asking the
+running API for four very different posts returns 2.1 to 4.5 upvotes. The *ordering* is right, which
+is what ρ measures and what the task asks. The magnitudes are not: on the test period the model
+predicts 3.55 upvotes on average against an actual 18.91, and **19% of the upvotes that actually
+happened**. Its highest prediction anywhere is 63, against an actual maximum of 3,158.
+
+That is a property of the target, not a tuning failure. Squared error on `log1p` fits the
+conditional mean *of the log*, and `expm1` of that is close to a geometric mean. Duan's smearing
+correction pulls the total back to 76% and makes the median error *worse*, because it inflates every
+prediction uniformly. `AI_RESIDENCY_OBJECTIVE=poisson` is the principled fix — Poisson NLL with a log
+link predicts the expected count directly — and §1.6 shows what it costs.
+
+### 1.6 What the ceiling actually is
+
+Everything above compares architectures over one fixed representation: a mean of static word
+vectors. That turns out to be the binding constraint, and finding out took several experiments that
+each corrected the previous conclusion. They are in
+[`notebooks/content-scoring/`](../../notebooks/content-scoring/).
+
+### How much of this is luck
+
+A quarter of all linked posts are **reposts** — 85,340 URLs submitted more than once. Identical
+content, different outcome:
+
+| | |
+|---|---|
+| Spearman between the 1st and 2nd posting of the same URL | **0.260** |
+| this service's late-fusion model, on unseen posts | 0.366 |
+
+**The same content posted twice predicts itself worse than the model predicts a post it has never
+seen.** The model can beat that bound because it also knows *when*, *who* and *where*, which two
+submissions of one URL do not hold fixed. But the residual is real: of URLs whose first submission
+scored 2–5, the second's median was 3 and its maximum was **2,645**. Knowing the same content
+already reached the front page moves the odds only from 5.6% to 11.3%.
+
+So a large part of a Hacker News score is not in the post. Any number on this page should be read
+against that.
+
+### A better encoder is worth more than a better architecture
+
+| model | train rows | test ρ | viral ROC-AUC | PR-AUC |
+|---|---|---|---|---|
+| this service (word2vec + metadata) | 710k | 0.366 | 0.678 | 0.090 |
+| MiniLM-22M, **frozen** | 710k | 0.364 | 0.669 | 0.079 |
+| MiniLM-22M, **fine-tuned** | 710k | **0.383** | 0.721 | 0.107 |
+| Qwen2.5-0.5B + LoRA | 300k | 0.379 | **0.736** | **0.117** |
+
+Mean-pooling static vectors throws away word order and context: *Google acquires OpenAI* and *OpenAI
+acquires Google* are the same vector to the shipped model. Recovering that is worth **+0.017 ρ** and
+**+19% PR-AUC**, and a 0.5B model with LoRA reaches the best tail detection measured while training
+on **fewer than half** the rows.
+
+Two cautions that took a wrong turn each to learn. A *frozen* encoder buys almost nothing (0.364);
+the gain is in adapting it, so testing frozen-only understates the text side badly. And comparing a
+300k-row transformer against a 710k-row baseline flatters the baseline — matched at 300k, this
+service scores 0.3495 against MiniLM's 0.3700.
+
+Scale is not the whole story either: Qwen-0.5B and MiniLM-22M land within 0.004 of each other on
+title-only text. Representation quality beat parameter count by twenty times the margin that
+parameter count beat itself.
+
+### Ranking the mass and finding the outliers are different jobs
+
+Three objectives, same architecture, three seeds each:
+
+| objective | test ρ | PR-AUC on `score ≥ 100` |
+|---|---|---|
+| `log_mse` (shipped) | **0.366** | 0.090 |
+| `poisson` | 0.283 | 0.096 |
+| binary classifier on `score ≥ 100` | 0.207 | **0.106** |
+
+The classifier finds front-page posts best and cannot rank at all; the regressor ranks best and finds
+them worst. **No single output does both**, because three quarters of Hacker News posts sit between 1
+and 5 upvotes and nothing separates a 2 from a 4. Which of these a service should train is a product
+question — "rank my feed" and "flag the ones that will take off" are different products — and this
+one currently answers the first.
+
+### What did not work
+
+**The momentum features.** Trailing-window statistics over the corpus — a domain's mean score over
+the previous 30 days, and whether a title's words are spiking this week — on the theory that a post
+about Apple during a launch is a different bet from the same post a month later. The corpus is a
+record of what the world is paying attention to, so no external knowledge should be needed.
+
+Measured over three seeds: **ρ 0.3655 with them, 0.3655 without.** Identical on every metric.
+`domain_recent_mean` correlates +0.169 with the target on its own, but adds nothing the domain
+embedding and the drift term were not already carrying; `token_burst` correlates −0.025, which is
+nothing at all. They were removed. The reasoning still seems right to me and the implementation is
+causal and was tested; it simply is not where the signal is.
+
+**More capacity, in three forms.** Depth (0.368 → 0.343 from one layer to four), gradient-boosting
+leaves (0.307 → 0.302 from 31 to 255), and a boosted-tree ensemble in place of the MLP entirely
+(0.307 against 0.317 on identical features). None helped. Capacity over a fixed weak representation
+is not the constraint; the representation is.
+
+## 2. What I would do next
+
+1. **Replace the encoder.** Fine-tuned MiniLM is worth +0.017 ρ and +19% PR-AUC, and it is a
+   contained change: the pooling step is already isolated behind `ScorePredictor.pool_title`.
+2. **Decide which product this is.** If it is "find the front-pagers", train the classifier and
+   report PR-AUC as the headline. The current framing optimises the other one by default rather
+   than by choice.
+3. **Calibrate, if the upvote number is kept.** Isotonic regression on the validation split maps the
+   compressed predictions back onto the score distribution without touching the ranking. `poisson`
+   fixes the mean but cannot narrow a conditional distribution this wide.
+4. **Retrain on a cadence.** Every model tested loses about 0.04 ρ between validation (March–May)
+   and test (June–August). The world moves; a model tuned on spring is measurably worse by summer.
+
+## 3. What I would not claim
+
+The published checkpoint for each architecture is the last of its three seeds, not the best. The
+table reports the mean and spread across all three, which is the honest summary, but the served
+weights are one draw from that distribution.
 
 `NDCG@10` separates the architectures far less than Spearman does (0.106 for both fusion models).
-Ranking the top ten of a given day is a harder and noisier problem than ranking the whole period,
-and I would not use it to choose between architectures on this evidence.
+Ranking the top ten of a given day is harder and noisier than ranking the whole period, and I would
+not choose between architectures on it.
 
-**The predictions are compressed, and the service reports them as if they were not.** Asking the
-running API for four very different posts returns 2.1 to 4.5 upvotes — a clickbait Medium link at
-2.1, an `Ask HN` at 3.9, an arXiv paper at 3.6. The *ordering* is right, which is what ρ = 0.37
-measures and what the task asks. The magnitudes are not: an MSE on `log1p` against a distribution
-with a median of 3 and a maximum of 5,710 pulls almost everything toward the middle, so the model
-essentially never predicts a front-page score.
+The Qwen result is LoRA rank 16 on attention projections only — 1.3M trainable parameters. It says
+cheap adaptation of a 0.5B model beats this service; it does not say what a full fine-tune of a
+larger model would do, and I did not test that.
 
-That makes "predicted score" a slightly dishonest label on the API and the UI. It is a *ranking*,
-presented in upvote units because upvotes are the unit people think in. The right fix is to
-calibrate the output — isotonic regression on the validation split would map the compressed
-predictions back onto the score distribution without touching the ranking — and until that exists
-the number should be read as "this post ranks like a 2" rather than "this post will get 2 upvotes".
-
-## 2. The data
+## 4. The data
 
 872,554 Hacker News stories from **4 November 2023 to 9 August 2026**, carrying `id`, `title`,
 `url`, `score`, `time`, `author` and `comments`.
@@ -233,7 +365,7 @@ draws a spike that reads as a mode the data does not have.
 known when a post is submitted. A model using it would score beautifully offline and answer a
 question nobody asked.
 
-## 3. Extending the vocabulary
+## 5. Extending the vocabulary
 
 text8 is lowercase, alphabetic Wikipedia from 2006. It has no `gpt-4`, no `kubernetes`, no
 `postgres`, no `llm` — and those are most of what a Hacker News title is about. Scoring a title
@@ -292,7 +424,7 @@ cannot. Coverage rose from 99.30% to 99.60% as the added vocabulary made three m
 scoreable, so the two numbers are over slightly different sets. Reporting coverage beside every
 correlation is what makes that visible rather than mysterious.
 
-## 4. The four architectures
+## 6. The four architectures
 
 All four see the same inputs, the same target and the same widths. The only thing that differs is
 where the title and the metadata meet.
@@ -353,7 +485,7 @@ Val and test rows legitimately see train-era history — that is information a r
 have had. What they cannot see is the future, and there is a test that appends a 5,000-point post
 and asserts the earlier rows' features are unchanged.
 
-## 5. Evaluation
+## 7. Evaluation
 
 `make evaluate` is the single source of every number in this section. `train.py` calls the same
 harness each epoch and streams all of it to W&B alongside the loss, so a chart and this table
@@ -385,7 +517,7 @@ trained model gives you no way to tell a real score from a bug.
 bucket, `Show HN` / `Ask HN` / plain, weekday, and title OOV fraction. That last one is what says
 whether extending the vocabulary helped the titles it was built for or merely added rows.
 
-## 6. Usage
+## 8. Usage
 
 ```bash
 make -C services/content-scoring etl            # fetch the mirror, build the splits
@@ -430,7 +562,7 @@ curl -s localhost:8000/compare -H 'content-type: application/json' \
 `/predict` scores with one architecture; `/compare` runs all four over the same post; and
 `/predict/stream` relays the pipeline a stage at a time, which is what the Streamlit page shows.
 
-## 7. Implementation
+## 9. Implementation
 
 ```
 content_scoring/

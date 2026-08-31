@@ -19,7 +19,19 @@ from typing import Literal
 
 from ai_residency_common import BaseConfig
 
-__all__ = ["Config", "Fusion"]
+__all__ = ["Config", "Fusion", "Objective"]
+
+Objective = Literal["poisson", "log_mse"]
+"""What the head is trained to predict.
+
+* `poisson` -- Poisson negative log-likelihood with a log link. The model emits
+  `log(lambda)` and `exp` of it *is* the expected upvote count, so there is no
+  back-transform to be biased. This is what a count target asks for.
+* `log_mse` -- squared error on `log1p(score)`. Ranks well and is what the first version
+  of this service did, but `expm1` of a conditional mean-of-logs is close to a geometric
+  mean, which on a distribution with a median of 3 and a maximum of 5,710 lands about
+  five times low. Kept because that gap is a result worth showing rather than hiding.
+"""
 
 Fusion = Literal["text_only", "features_only", "early", "late"]
 """How the title and the metadata features reach the regression head.
@@ -41,6 +53,7 @@ class Config(BaseConfig):
 
     Attributes:
         fusion: Which architecture to build. See `Fusion`.
+        objective: What the head predicts. See `Objective`.
         hidden_dim: Width of every branch MLP and of the fusion head.
         num_layers: Hidden layers per branch MLP.
         dropout: Dropout between hidden layers.
@@ -80,6 +93,7 @@ class Config(BaseConfig):
     """
 
     fusion: Fusion = "late"
+    objective: Objective = "poisson"
     hidden_dim: int = 256
     num_layers: int = 1
     dropout: float = 0.0

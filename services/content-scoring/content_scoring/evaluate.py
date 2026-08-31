@@ -38,20 +38,23 @@ import torch
 from scipy.stats import spearmanr
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import Ridge
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
-from config import Config, Fusion
+from config import Config, Fusion, Objective
 from content_scoring.data import PostBatch, Splits, iterate_batches
 from content_scoring.model import ScorePredictor, build_model, load_predictor_weights
 
 __all__ = [
     "PROBE_TITLES",
+    "VIRAL_THRESHOLD",
     "baseline_predictions",
     "evaluate_predictions",
     "leave_one_group_out",
     "predict",
     "score_extended_embeddings",
     "slice_table",
+    "to_upvotes",
 ]
 
 logger = get_logger(__name__)
@@ -159,98 +162,223 @@ def _per_day_ranking(frame: pd.DataFrame, predicted: np.ndarray, k: int = 10) ->
 def evaluate_predictions(
     frame: pd.DataFrame, predicted: np.ndarray, actual: np.ndarray
 ) -> dict[str, float]:
-    """The headline metric block for one set of predictions.
+    """The headline metric block, in upvotes.
 
     Args:
         frame: The split the predictions belong to.
-        predicted: Predicted `log1p(score)`.
-        actual: True `log1p(score)`.
+        predicted: Predicted **upvotes**.
+        actual: True **upvotes**.
 
     Returns:
-        Spearman, RMSE, MAE, R², top-decile lift and the per-day ranking metrics.
+        Accuracy on the upvote scale, ranking quality, and calibration.
 
-    Top-decile lift is the mean *raw* score of the posts the model ranks in its top ten
-    percent, over the mean raw score of everything. It is the number that answers "if I
-    only read what this thing recommends, how much better do I do", and it is the one a
-    reader who skips the rest of the table will remember.
+    Three families, because "predict the score" and "rank the posts" are different
+    questions and a model can be good at one while useless at the other -- which is
+    exactly what the first version of this service was.
+
+    * **Accuracy in upvotes**: `mae`, `rmse`, and `mdae`, the median absolute error.
+      The median is the one to read: with a handful of 3,000-point posts in the split,
+      a mean error is mostly a report on how the tail went.
+    * **Calibration**: `total_ratio` -- predicted upvotes over actual, summed across the
+      split. A model that ranks perfectly but predicts a fifth of the traffic scores 0.2
+      here, and nothing else in this block would have caught that.
+    * **Ranking**: Spearman, per-day NDCG@10 and precision@10, top-decile lift. These
+      are invariant to any monotone rescaling, which is why they cannot see a
+      calibration failure and why the block needs the rows above them.
     """
+    predicted = np.maximum(predicted, 0.0)
+    log_predicted, log_actual = np.log1p(predicted), np.log1p(actual)
     residual = predicted - actual
-    variance = float(np.var(actual))
-    raw = np.expm1(actual)
+    log_residual = log_predicted - log_actual
+    variance = float(np.var(log_actual))
     cutoff = max(1, len(predicted) // 10)
-    top = raw[np.argsort(-predicted)[:cutoff]]
-    overall = float(raw.mean())
+    top = actual[np.argsort(-predicted)[:cutoff]]
+    overall = float(actual.mean())
+    total = float(actual.sum())
 
     metrics = {
+        "mae": float(np.abs(residual).mean()),
+        "rmse": float(np.sqrt((residual**2).mean())),
+        "mdae": float(np.median(np.abs(residual))),
+        "total_ratio": float(predicted.sum() / total) if total > 0 else float("nan"),
+        "mean_predicted": float(predicted.mean()),
+        "max_predicted": float(predicted.max()),
+        "log_rmse": float(np.sqrt((log_residual**2).mean())),
+        "r2": float(1 - np.mean(log_residual**2) / variance) if variance > 0 else float("nan"),
         "spearman": _spearman(predicted, actual),
-        "rmse": float(np.sqrt(np.mean(residual**2))),
-        "mae": float(np.mean(np.abs(residual))),
-        "r2": float(1 - np.mean(residual**2) / variance) if variance > 0 else float("nan"),
         "top_decile_lift": float(top.mean() / overall) if overall > 0 else float("nan"),
     }
     metrics.update(_per_day_ranking(frame, predicted))
+    metrics.update(_tail_metrics(predicted, actual))
     return metrics
 
 
+VIRAL_THRESHOLD = 100
+"""What counts as reaching the front page. 4.2% of the test period clears it."""
+
+
+def _tail_metrics(predicted: np.ndarray, actual: np.ndarray) -> dict[str, float]:
+    """How well the ranking finds the posts that go viral.
+
+    Args:
+        predicted: Predicted upvotes.
+        actual: True upvotes.
+
+    Returns:
+        `viral_roc_auc`, `viral_pr_auc` and `viral_lift@1pct`.
+
+    Every other metric on this page can be satisfied by predicting near the middle for
+    everything, because three quarters of Hacker News posts *are* near the middle. These
+    cannot: they score only the model's ability to pick out the 4.2% of posts that reach
+    100 upvotes, which is the part of the problem anyone actually cares about and the
+    part a mean-seeking loss is least pushed to solve.
+
+    `pr_auc` against the base rate is the number to read -- ROC-AUC looks respectable at
+    0.68 on a 4% positive class while the precision it implies is still poor.
+    """
+    labels = (actual >= VIRAL_THRESHOLD).astype(int)
+    base = float(labels.mean())
+    if labels.sum() < 30 or base in (0.0, 1.0):
+        return {}
+    cutoff = max(1, len(predicted) // 100)
+    top = labels[np.argsort(-predicted)[:cutoff]]
+    return {
+        "viral_base_rate": base,
+        "viral_roc_auc": float(roc_auc_score(labels, predicted)),
+        "viral_pr_auc": float(average_precision_score(labels, predicted)),
+        "viral_lift@1pct": float(top.mean() / base),
+    }
+
+
+def calibration_table(
+    predicted: np.ndarray, actual: np.ndarray, bins: int = 10
+) -> tuple[list[str], list[list[Any]]]:
+    """Predicted against actual upvotes, by predicted decile.
+
+    Args:
+        predicted: Predicted upvotes.
+        actual: True upvotes.
+        bins: How many quantile buckets.
+
+    Returns:
+        `(columns, rows)` for `log_table`.
+
+    The figure that would have caught the original bug on day one: a well-calibrated
+    model has `mean predicted` tracking `mean actual` down every row, and a model that
+    ranks well but predicts the wrong magnitudes has two columns that diverge while
+    every ranking metric on the page looks healthy.
+    """
+    order = np.argsort(predicted)
+    edges = np.linspace(0, len(order), bins + 1).astype(int)
+    rows: list[list[Any]] = []
+    for index in range(bins):
+        chunk = order[edges[index] : edges[index + 1]]
+        if len(chunk) == 0:
+            continue
+        rows.append(
+            [
+                index + 1,
+                len(chunk),
+                round(float(predicted[chunk].mean()), 2),
+                round(float(actual[chunk].mean()), 2),
+                round(float(np.median(actual[chunk])), 1),
+            ]
+        )
+    return ["decile", "n", "mean_predicted", "mean_actual", "median_actual"], rows
+
+
 def baseline_predictions(splits: Splits, split: str) -> dict[str, np.ndarray]:
-    """Every baseline's predictions on one split.
+    """Every baseline's predicted upvotes on one split.
 
     Args:
         splits: The loaded splits; the training one fits each baseline.
         split: Which split to predict.
 
     Returns:
-        Baseline name to its predictions, in `log1p` space.
+        Baseline name to predicted upvotes.
 
-    All five are fitted on the training split only. The TF-IDF vectoriser is capped at
-    200k features and fitted once -- it takes about twenty seconds on 710k titles, which
-    is why the trainer caches it rather than rebuilding it every epoch.
+    All five are fitted on the training split only, and every one predicts the **mean
+    upvote count** of its group rather than a mean of logs. That distinction is the
+    whole point of this rewrite: a baseline that predicted the geometric mean would be
+    biased low in the same way the first model was, and would flatter it.
     """
     train = splits.frames["train"]
-    target_frame = splits.frames[split]
-    train_target = np.log1p(train["score"].to_numpy(dtype=np.float64))
-    global_mean = float(train_target.mean())
-    count = len(target_frame)
+    target = splits.frames[split]
+    upvotes = train["score"].to_numpy(dtype=np.float64)
+    global_mean = float(upvotes.mean())
+    count = len(target)
 
     hour_means = (
-        pd.Series(train_target, index=train["posted_at"].dt.hour.to_numpy()).groupby(level=0).mean()
+        pd.Series(upvotes, index=train["posted_at"].dt.hour.to_numpy()).groupby(level=0).mean()
     )
-    domain_means = pd.Series(train_target, index=train["domain"].to_numpy()).groupby(level=0).mean()
+    domain_means = pd.Series(upvotes, index=train["domain"].to_numpy()).groupby(level=0).mean()
 
     predictions = {
         "global_mean": np.full(count, global_mean),
-        "hour_mean": target_frame["posted_at"]
+        "hour_mean": target["posted_at"]
         .dt.hour.map(hour_means)
         .fillna(global_mean)
         .to_numpy(dtype=np.float64),
-        "domain_mean": target_frame["domain"]
+        "domain_mean": target["domain"]
         .map(domain_means)
         .fillna(global_mean)
         .to_numpy(dtype=np.float64),
     }
 
+    # Ridge on log1p and back through expm1 would inherit exactly the retransformation
+    # bias this rewrite exists to remove, so the baseline is fitted on the raw count.
+    # It is a worse fit in squared error and an honest comparison in upvotes.
     vectoriser = TfidfVectorizer(
         ngram_range=(1, 2), min_df=3, max_features=200_000, sublinear_tf=True
     )
     matrix = vectoriser.fit_transform(train["title"])
     ridge = Ridge(alpha=1.0, solver="sparse_cg")
-    ridge.fit(matrix, train_target)
-    predictions["tfidf_ridge"] = ridge.predict(vectoriser.transform(target_frame["title"]))
+    ridge.fit(matrix, upvotes)
+    predictions["tfidf_ridge"] = np.maximum(
+        ridge.predict(vectoriser.transform(target["title"])), 0.0
+    )
     return predictions
 
 
+def to_upvotes(output: np.ndarray, objective: Objective) -> np.ndarray:
+    """Turn a model's raw output into expected upvotes.
+
+    Args:
+        output: What the head emitted.
+        objective: How it was trained.
+
+    Returns:
+        Predicted upvotes, on the scale the task actually asks about.
+
+    This is the step the first version of this service got wrong. Under `log_mse` the
+    head fits the conditional mean *of the log*, and `expm1` of that is close to a
+    geometric mean -- on a distribution with a median of 3 and a maximum of 5,710 it
+    lands about five times low. Under `poisson` the head emits `log(lambda)` and the
+    exponential is the expected count directly, with no biased step in between.
+    """
+    clipped = np.clip(output, -20, 20)
+    upvotes: np.ndarray = np.exp(clipped) if objective == "poisson" else np.expm1(clipped)
+    return upvotes
+
+
 @torch.no_grad()
-def predict(model: ScorePredictor, batch: PostBatch, device: torch.device) -> np.ndarray:
-    """Run a model over a whole split.
+def predict(
+    model: ScorePredictor,
+    batch: PostBatch,
+    device: torch.device,
+    objective: Objective = "poisson",
+) -> np.ndarray:
+    """Run a model over a whole split and return predicted upvotes.
 
     Args:
         model: A built scorer.
         batch: The split's tensors.
         device: Where to run.
+        objective: How the model was trained, which decides the output transform.
 
     Returns:
-        Predictions aligned to the split's row order -- `iterate_batches` is called
-        without shuffling, which is what keeps that alignment true.
+        Predicted upvotes, aligned to the split's row order -- `iterate_batches` is
+        called without shuffling, which is what keeps that alignment true.
     """
     model.eval()
     outputs = [
@@ -259,7 +387,7 @@ def predict(model: ScorePredictor, batch: PostBatch, device: torch.device) -> np
             batch, 4096, shuffle=False, device=device
         )
     ]
-    return torch.cat(outputs).numpy().astype(np.float64)
+    return to_upvotes(torch.cat(outputs).numpy().astype(np.float64), objective)
 
 
 def _slice_masks(
@@ -389,10 +517,10 @@ def probe_table(
         }
     )
     batch = make_tensors(frame, splits.spec, word_to_index, config)
-    predicted = predict(model, batch, config.device)
+    predicted = predict(model, batch, config.device, config.objective)
     order = np.argsort(-predicted)
     rows = [
-        [frame["title"].iloc[i], frame["domain"].iloc[i], round(float(np.expm1(predicted[i])), 1)]
+        [frame["title"].iloc[i], frame["domain"].iloc[i], round(float(predicted[i]), 1)]
         for i in order
     ]
     return ["title", "domain", "predicted_score"], rows
@@ -430,13 +558,14 @@ def leave_one_group_out(
         return ["group", "spearman", "delta"], []
 
     device = next(model.parameters()).device
-    actual = splits.tensors[split][4].numpy().astype(np.float64)
-    full = _spearman(predict(model, splits.tensors[split], device), actual)
+    actual = splits.frames[split]["score"].to_numpy(dtype=np.float64)
+    objective = model.config.objective
+    full = _spearman(predict(model, splits.tensors[split], device, objective), actual)
 
     rows: list[list[Any]] = [["(none)", round(full, 4), 0.0]]
     for name in model.branches:
         model.disabled = {name}
-        ablated = _spearman(predict(model, splits.tensors[split], device), actual)
+        ablated = _spearman(predict(model, splits.tensors[split], device, objective), actual)
         rows.append([name, round(ablated, 4), round(ablated - full, 4)])
     model.disabled = set()
     return ["group", "spearman", "delta"], rows
@@ -541,7 +670,7 @@ def main() -> None:
     splits = build_splits(config, word_to_index)
 
     frame = splits.frames[arguments.split]
-    actual = splits.tensors[arguments.split][4].numpy().astype(np.float64)
+    actual = splits.frames[arguments.split]["score"].to_numpy(dtype=np.float64)
 
     report: dict[str, dict[str, float]] = {}
     for name, predicted in baseline_predictions(splits, arguments.split).items():
@@ -561,7 +690,7 @@ def main() -> None:
         except FileNotFoundError as error:
             logger.warning("%s: %s", fusion, error)
             continue
-        predicted = predict(model, splits.tensors[arguments.split], device)
+        predicted = predict(model, splits.tensors[arguments.split], device, variant.objective)
         report[fusion] = evaluate_predictions(frame, predicted, actual)
         if fusion == "late":
             slices = slice_table(frame, predicted, actual, splits, word_to_index)

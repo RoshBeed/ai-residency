@@ -163,6 +163,14 @@ README quotes them.
 architectures compared against four baselines. Same rule: `make -C services/content-scoring
 evaluate` is the single source of every number in its README, and the trainer streams the same
 harness to W&B rather than computing its own metrics — so a chart and the table cannot disagree.
+
+**Its ceiling is the representation, not the architecture, and that took four wrong turns to
+establish.** A mean of static word vectors throws away word order; a fine-tuned MiniLM beats the
+shipped model by +0.017 ρ and +19% on finding front-page posts, and a LoRA-adapted Qwen-0.5B beats
+it on fewer than half the rows. Capacity over the *fixed* representation does nothing — depth,
+boosting leaves and a boosted-tree ensemble all failed to help — which is a much narrower claim than
+"capacity does not help" and was stated too broadly more than once before the encoder was tested.
+The probes are in `notebooks/content-scoring/`; the write-up's §1.6 carries the numbers.
 Its data path is credential-free end to end (`make etl && make extend-vocab && make train &&
 make evaluate` on a clean machine), and the one published data artifact is the raw mirror at
 `roshbeed/ai-residency-hn-posts`; splits and the title corpus are a local derived cache, never
@@ -435,5 +443,9 @@ Open:
   shared input rebuilds the base multi-arch and the `lock` job replaces it, so it self-heals; the
   `images` job now fails with a named error rather than "no match for platform in manifest" if a
   service-only push ever meets a single-platform base.
+- `content-scoring` ships a `log_mse` objective, which ranks well and predicts about a fifth of the
+  upvotes that actually happen. `poisson` is implemented and predicts the count directly; a binary
+  head on `score >= 100` finds front-page posts best and cannot rank at all. Which of the three is
+  right is a product question the service has not been asked.
 - The eleven predecessor repos are archived on GitHub. `backup/pre-squash-2026-08-23` tags the
   pre-history-rewrite tip; delete it once the current history is settled.

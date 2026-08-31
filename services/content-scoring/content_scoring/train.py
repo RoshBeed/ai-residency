@@ -106,10 +106,19 @@ def train(config: Config) -> float:
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
-    criterion = nn.MSELoss()
+    # Poisson NLL with a log link: the head emits log(lambda) and is scored against the
+    # raw count, so `exp` of it is the expected upvote count with no back-transform to be
+    # biased. `log_mse` is the older path -- it ranks just as well and predicts about a
+    # fifth of the upvotes, which is the comparison the README makes.
+    criterion: nn.Module = (
+        nn.PoissonNLLLoss(log_input=True, full=False)
+        if config.objective == "poisson"
+        else nn.MSELoss()
+    )
 
     val_frame = splits.frames["val"]
-    val_actual = splits.tensors["val"][4].numpy().astype(np.float64)
+    # Upvotes, not log1p(upvotes). Every metric is on the scale the task asks about.
+    val_actual = val_frame["score"].to_numpy(dtype=np.float64)
 
     init_tracking(
         config.wandb_project,
@@ -143,7 +152,7 @@ def train(config: Config) -> float:
     # Step 0: what an untrained model of this architecture scores. Without it there is
     # no way to tell a real result from a plumbing bug that happens to return numbers.
     untrained = evaluate_predictions(
-        val_frame, predict(model, splits.tensors["val"], device), val_actual
+        val_frame, predict(model, splits.tensors["val"], device, config.objective), val_actual
     )
     logger.info(
         "untrained       spearman %.4f  ndcg@10 %.4f", untrained["spearman"], untrained["ndcg@10"]
@@ -168,10 +177,12 @@ def train(config: Config) -> float:
             splits.tensors["train"], config.batch_size, shuffle=True, device=device
         )
         running = 0.0
-        for tokens, mask, numeric, domain, target in tqdm(
+        for tokens, mask, numeric, domain, log_target in tqdm(
             batches, desc=f"{config.fusion} epoch {epoch}/{config.num_epochs}", leave=False
         ):
             predicted = model(tokens, mask, numeric, domain)
+            # The batcher carries log1p(score); Poisson wants the count itself.
+            target = torch.expm1(log_target) if config.objective == "poisson" else log_target
             loss = criterion(predicted, target)
             optimizer.zero_grad()
             loss.backward()
@@ -181,7 +192,7 @@ def train(config: Config) -> float:
             if step % config.eval_every == 0:
                 log_metrics({"train/loss": float(loss.detach()), "train/step": step}, step=step)
 
-        predicted_val = predict(model, splits.tensors["val"], device)
+        predicted_val = predict(model, splits.tensors["val"], device, config.objective)
         metrics = evaluate_predictions(val_frame, predicted_val, val_actual)
         columns, rows = slice_table(val_frame, predicted_val, val_actual, splits, word_to_index)
         headline = {
@@ -248,8 +259,8 @@ def train(config: Config) -> float:
         )
 
     test_frame = splits.frames["test"]
-    test_actual = splits.tensors["test"][4].numpy().astype(np.float64)
-    test_predicted = predict(model, splits.tensors["test"], device)
+    test_actual = test_frame["score"].to_numpy(dtype=np.float64)
+    test_predicted = predict(model, splits.tensors["test"], device, config.objective)
     test_metrics = evaluate_predictions(test_frame, test_predicted, test_actual)
     embed_metrics = score_extended_embeddings(config)
 
@@ -330,6 +341,7 @@ def train(config: Config) -> float:
                 # serving would then pair this head with the *base* vectors and answer
                 # 200 with numbers that have nothing to do with what was evaluated.
                 "embeddings_finetuned": not config.freeze_embeddings,
+                "objective": config.objective,
                 "config": asdict(config),
             },
             state_dict=predictor_state_dict(model),
