@@ -24,16 +24,16 @@ command:
   - content_scoring.train
 method: bayes
 metric:
-  # Loss *would* work here, unlike in word-embeddings: every run has the same target on
-  # the same data, so MSE is comparable across them. Spearman is used anyway because
-  # ranking is the actual task -- a model that predicts every score 20% low ranks
-  # perfectly and has an MSE that says it failed.
+  # Mean absolute error in upvotes, because the service predicts a count. It swept on
+  # Spearman for its first sixty runs, which tuned the shipped hyperparameters for
+  # ranking while the objective underneath had moved to predicting counts -- the two do
+  # not agree, and a model can win one while losing the other badly.
   #
   # `best/`, not `eval/`: W&B summarises a run by its last logged value, which for a run
   # that ends past its best epoch ranks it by where it finished rather than by how good
   # it got.
-  name: best/val_spearman
-  goal: maximize
+  name: best/val_mae
+  goal: minimize
 parameters:
   # These names are the Config field names, uppercased and prefixed, because that is
   # what BaseConfig reads from the environment. The agent exports them, so no
@@ -76,6 +76,11 @@ parameters:
   # a vocabulary threshold in the word-vector sweep next door.
   AI_RESIDENCY_NUM_EPOCHS:
     value: 20
+  # Held fixed so every run is scored the way the service is: on the count it predicts.
+  AI_RESIDENCY_OBJECTIVE:
+    value: poisson
+  AI_RESIDENCY_SELECTION_METRIC:
+    value: mae
   AI_RESIDENCY_BATCH_SIZE:
     value: 1024
 
@@ -83,6 +88,8 @@ parameters:
   # each; the four the comparison table quotes come from `make train-all` afterwards, at
   # the winning configuration with everything else held equal.
   AI_RESIDENCY_SAVE_CHECKPOINTS:
+    value: "false"
+  AI_RESIDENCY_PROMOTE:
     value: "false"
   AI_RESIDENCY_HF_REPO_ID:
     value: ""

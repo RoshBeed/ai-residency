@@ -84,7 +84,8 @@ def train(config: Config) -> float:
         config: Supplies the architecture, the schedule and where things are written.
 
     Returns:
-        The best `val_spearman` seen, which is what the sweep ranks on.
+        The best validation score under `config.selection_metric`, oriented so higher is
+        better. This is what the sweep ranks on.
 
     Raises:
         FileNotFoundError: If the ETL or the vocabulary extension has not run.
@@ -228,8 +229,12 @@ def train(config: Config) -> float:
             metrics["top_decile_lift"],
         )
 
-        if metrics["spearman"] > best_score:
-            best_score = metrics["spearman"]
+        # Lower is better for MAE, so it is negated and the same comparison works for
+        # both. Selecting on rank while training a count objective optimises a metric the
+        # service no longer reports first.
+        current = -metrics["mae"] if config.selection_metric == "mae" else metrics["spearman"]
+        if current > best_score:
+            best_score = current
             best_epoch = epoch
             best_state = {
                 key: value.detach().cpu().clone()
@@ -278,7 +283,8 @@ def train(config: Config) -> float:
     # it finished rather than by how good it got, and the sweep table sorts on this.
     set_summary(
         {
-            "best/val_spearman": best_score,
+            f"best/val_{config.selection_metric}": abs(best_score),
+            "best/val_selection": best_score,
             "best/epoch": best_epoch,
             # Recorded so the capacity comparison can be plotted against what the
             # models actually cost rather than against a layer count. At equal
@@ -332,7 +338,7 @@ def train(config: Config) -> float:
             config.predictor_checkpoint,
             model,
             epoch=best_epoch,
-            metrics={"val_spearman": best_score, **test_metrics},
+            metrics={"val_selection": best_score, **test_metrics},
             extra={
                 "fusion": config.fusion,
                 "feature_spec": asdict(splits.spec),
@@ -360,7 +366,8 @@ def train(config: Config) -> float:
                     "seed": config.seed,
                     "objective": config.objective,
                     "epoch": best_epoch,
-                    "val_spearman": best_score,
+                    "val_selection": best_score,
+                    "selection_metric": config.selection_metric,
                     **test_metrics,
                 },
                 indent=2,
@@ -374,12 +381,13 @@ def train(config: Config) -> float:
     return best_score
 
 
-def _promote(config: Config, val_spearman: float) -> None:
+def _promote(config: Config, selection_score: float) -> None:
     """Copy this run to the served path if it is the best seed so far, and push it.
 
     Args:
         config: Supplies the seed path, the served path and the Hub repo.
-        val_spearman: This run's validation score.
+        selection_score: This run's validation score under `config.selection_metric`,
+            already oriented so that higher is better.
 
     Seeds train in separate processes, so "best so far" is read from the promoted run's
     sidecar rather than held in memory. There was no notion of promotion before: every
@@ -396,20 +404,23 @@ def _promote(config: Config, val_spearman: float) -> None:
             stored = json.load(handle)
         # Only comparable within one objective; a `log_mse` incumbent must not block a
         # `poisson` run, since their validation scores are not on the same scale.
-        if stored.get("objective") == config.objective:
-            incumbent = float(stored.get("val_spearman", -float("inf")))
-    if val_spearman <= incumbent:
+        if (
+            stored.get("objective") == config.objective
+            and stored.get("selection_metric") == config.selection_metric
+        ):
+            incumbent = float(stored.get("val_selection", -float("inf")))
+    if selection_score <= incumbent:
         logger.info(
             "seed %d scored %.4f, behind the promoted %.4f; keeping the incumbent",
             config.seed,
-            val_spearman,
+            selection_score,
             incumbent,
         )
         return
 
     shutil.copyfile(config.predictor_checkpoint, config.served_checkpoint)
     shutil.copyfile(config.info_path, config.served_info_path)
-    logger.info("promoted seed %d (val %.4f)", config.seed, val_spearman)
+    logger.info("promoted seed %d (val %.4f)", config.seed, selection_score)
     if config.hf_repo_id is not None:
         push_checkpoint(config.hf_repo_id, config.served_checkpoint, private=False)
 

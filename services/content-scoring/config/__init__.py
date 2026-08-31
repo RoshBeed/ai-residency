@@ -19,7 +19,7 @@ from typing import Literal
 
 from ai_residency_common import BaseConfig
 
-__all__ = ["Config", "Fusion", "Objective"]
+__all__ = ["Config", "Fusion", "Objective", "Selection"]
 
 Objective = Literal["poisson", "log_mse"]
 """What the head is trained to predict.
@@ -31,6 +31,14 @@ Objective = Literal["poisson", "log_mse"]
   of this service did, but `expm1` of a conditional mean-of-logs is close to a geometric
   mean, which on a distribution with a median of 3 and a maximum of 5,710 lands about
   five times low. Kept because that gap is a result worth showing rather than hiding.
+"""
+
+Selection = Literal["mae", "spearman"]
+"""Which validation metric picks the best epoch, and what a sweep optimises.
+
+`mae` for a service that predicts counts; `spearman` for one that ranks. Selecting on
+rank while training a count objective is how the shipped hyperparameters came to be tuned
+for a question the service had stopped asking.
 """
 
 Fusion = Literal["text_only", "features_only", "early", "late"]
@@ -54,6 +62,7 @@ class Config(BaseConfig):
     Attributes:
         fusion: Which architecture to build. See `Fusion`.
         objective: What the head predicts. See `Objective`.
+        selection_metric: Which validation metric picks the best epoch. See `Selection`.
         hidden_dim: Width of every branch MLP and of the fusion head.
         num_layers: Hidden layers per branch MLP.
         dropout: Dropout between hidden layers.
@@ -95,6 +104,7 @@ class Config(BaseConfig):
 
     fusion: Fusion = "late"
     objective: Objective = "poisson"
+    selection_metric: Selection = "mae"
     hidden_dim: int = 256
     num_layers: int = 1
     dropout: float = 0.0
