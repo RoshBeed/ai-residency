@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build local push train serve clean help \
+        base base-train build local push train serve watch clean help \
         up down status local-up local-cluster
 
 # Every member of the workspace. Derived from the directory listing, so a new
@@ -124,7 +124,8 @@ down: ## Stop the deployment
 status: ## Show what is running
 local-up: ## Build natively and run one service with the UI: make local-up SERVICES="content-scoring"
 local-cluster: ## Build, load and install into the local Kubernetes cluster
-up down status local-up local-cluster:
+watch: ## Sync source into a running stack without rebuilding: make watch SERVICES="content-scoring"
+up down status watch local-up local-cluster:
 	@# `origin`, not a bare `$(if $(SERVICES),...)`: this Makefile already defines
 	@# SERVICES as every service in the workspace, so a plain check is always true and
 	@# would forward the whole list -- _template included -- to a target expecting the

@@ -1,4 +1,4 @@
-.PHONY: pull up down logs status index-retrieval load-images pin-images local-up local-cluster \
+.PHONY: pull up down logs status watch index-retrieval load-images pin-images local-up local-cluster \
         helm-install helm-upgrade helm-uninstall helm-status helm-train helm-train-logs \
         helm-index-retrieval help
 .DEFAULT_GOAL := help
@@ -143,6 +143,15 @@ pin-images: ## Regenerate compose/images.env from deploy/images.yaml
 	@# this is for regenerating after editing it by hand.
 	uv run python pin_images.py
 	@uv run python pin_images.py --check
+
+# `--no-up` because `watch` resolves depends_on and does not take `--no-deps`: the
+# frontend depends on all nine backends, so watching it without this pulls every
+# published image first -- and on Apple Silicon that fails outright, since the pinned
+# digests are amd64-only.
+watch: ## Sync source into a running stack, no rebuild: make watch SERVICES="content-scoring"
+	@test -n "$(SERVICES)" || (echo 'Usage: make watch SERVICES="content-scoring"   (run `make local-up` first)' && exit 1)
+	@echo "Watching $(SERVICES) and the frontend. Edit source; containers restart. Ctrl-C to stop."
+	$(COMPOSE) watch --no-up $(SERVICES) frontend
 
 local-up: ## Build natively and run with the UI: make local-up SERVICES="word-embeddings"
 	@test -n "$(SERVICES)" || (echo 'Usage: make local-up SERVICES="word-embeddings"' && exit 1)

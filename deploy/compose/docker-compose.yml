@@ -68,6 +68,25 @@ services:
       - "8007:8000"
     healthcheck: *backend-healthcheck
     environment: *hub-credentials
+    # `docker compose watch` -- edit the source and the container picks it up without a
+    # rebuild. `sync+restart` rather than plain `sync`, because `python -m serving.api`
+    # runs uvicorn without `--reload`: a synced file would sit in the container unread
+    # until something else restarted it, which looks like an edit that did nothing.
+    #
+    # Source only. `action: rebuild` needs a `build:` context and these services are
+    # image-only by design -- compose pulls what CI published rather than building it --
+    # so a dependency change means `make local-up SERVICES="content-scoring"` again. A
+    # synced pyproject.toml would change nothing anyway: the environment was installed at
+    # build time.
+    develop:
+      watch:
+        - action: sync+restart
+          path: ../../services/content-scoring
+          target: /app/services/content-scoring
+          ignore: [data/, checkpoints/, wandb/, assets/, .venv/, __pycache__/]
+        - action: sync+restart
+          path: ../../libs
+          target: /app/libs
 
   # --- Redis, for the retrieval service's HNSW index ---
   redis:
@@ -162,6 +181,18 @@ services:
 
   frontend:
     image: roshb/ai-residency-frontend${FRONTEND_REF:-:latest}
+    # Streamlit watches its own files, but only offers a rerun prompt unless runOnSave is
+    # set, and that lives in the image's CMD. Restarting is two seconds and needs no
+    # production change.
+    # `docker compose watch frontend` pulls every backend first, because watch resolves
+    # depends_on and does not take --no-deps. Use `--no-up` when the stack is already
+    # running: `docker compose watch --no-up frontend content-scoring`.
+    develop:
+      watch:
+        - action: sync+restart
+          path: ../../services/frontend
+          target: /app/services/frontend
+          ignore: [.venv/, __pycache__/]
     depends_on:
       - word-embeddings
       - content-scoring
