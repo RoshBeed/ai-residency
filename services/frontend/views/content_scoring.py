@@ -250,6 +250,18 @@ def _render_architectures(data: dict[str, Any] | None) -> None:
             )
         st.markdown("\n".join(rows))
 
+    chosen = st.selectbox(
+        "Show the wiring for", list(predictions), format_func=lambda n: ARCHITECTURES.get(n, n)
+    )
+    graph = (details.get(chosen) or {}).get("graph")
+    if graph:
+        st.graphviz_chart(graph, width="stretch")
+        st.caption(
+            f"Generated from the running {ARCHITECTURES.get(chosen, chosen)} model. "
+            "`make -C services/content-scoring onnx` writes the full computation graph "
+            "for [Netron](https://netron.app) if you want every operator."
+        )
+
     st.caption(
         "Read off the running models, not written down beside them. **Early fusion and "
         "block-diagonal are the honest pair**: identical input, hidden width, depth and head, "

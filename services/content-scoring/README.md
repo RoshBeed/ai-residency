@@ -134,6 +134,32 @@ question this project is built around is **where those should meet**.
 
 ![A Hacker News post feeding three feature extractors, each into its own small network, whose outputs are concatenated and passed through a final network to a single predicted score.](assets/word-embeddings/fig2-reward-model-architecture.png)
 
+**Figure 6a.** The three fusion wirings, generated from the built models.
+
+```mermaid
+flowchart LR
+  subgraph E["early — one dense layer"]
+    ei["title 300<br/>+ metadata 29"] --> el["329 → 256"] --> es(("score"))
+  end
+  subgraph B["block-diagonal — same layer, no crosstalk"]
+    bt["title 300"] --> bt1["→ 233"] --> bc(( ))
+    bm["metadata 29"] --> bm1["→ 23"] --> bc --> bs(("score"))
+  end
+  subgraph L["late — a tower each, then a second layer"]
+    lt["title 300"] --> lt1["→ 256"] --> lh["1280 → 256"]
+    lm["metadata 29"] --> lm1["4 towers → 1024"] --> lh --> ls(("score"))
+  end
+```
+
+Early and block-diagonal are the controlled pair: identical input, hidden width, depth and
+head, differing only in whether the title and the metadata are wired to each other. Block-diagonal
+is the smaller of the two, because it *is* early fusion with weights removed. Late fusion is not
+that comparison — it carries five times the hidden units and an extra layer.
+
+`make -C services/content-scoring onnx` exports all five to ONNX; open one with
+[Netron](https://netron.app) to see every operator. The demo page draws the same wiring live from
+whichever model you select.
+
 Both are built, alongside two ablations — **title only** and **metadata only** — which is what makes
 "combining helps" testable. It helps by a wide margin: either input alone lands near a 13–15 upvote
 median error, and together they reach 7.5.

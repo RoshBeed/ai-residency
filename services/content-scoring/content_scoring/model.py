@@ -48,6 +48,7 @@ __all__ = [
     "TextOnlyScorer",
     "build_model",
     "describe",
+    "graph_dot",
     "load_predictor_weights",
     "predictor_state_dict",
 ]
@@ -456,6 +457,103 @@ def describe(model: ScorePredictor) -> dict[str, object]:
         "first_layer": " | ".join(first) or "—",
         "connectivity": "dense" if len(first) == 1 else f"{len(first)} separate blocks",
     }
+
+
+def graph_dot(model: ScorePredictor) -> str:
+    """The model's structure as Graphviz DOT, for rendering in the UI.
+
+    Args:
+        model: A built scorer.
+
+    Returns:
+        A DOT digraph: inputs on the left, layers in the middle, the score on the right.
+
+    Built from the model's own modules, the same way `describe` is, so a diagram cannot
+    drift from the network it claims to show. `make onnx` writes the full computation
+    graph for Netron; this is the shape a reader needs while looking at four predictions.
+    """
+    inputs = {
+        "text": ("title", model.embed_size),
+        "temporal": ("when posted", GROUP_SLICES["temporal"].stop - GROUP_SLICES["temporal"].start),
+        "domain": ("where it links", 1 + model.config.domain_embed_dim),
+        "title_surface": (
+            "title shape",
+            GROUP_SLICES["title_surface"].stop - GROUP_SLICES["title_surface"].start,
+        ),
+        "author": ("author history", GROUP_SLICES["author"].stop - GROUP_SLICES["author"].start),
+    }
+    box = "style=filled fontcolor=white fillcolor="
+    lines = [
+        "digraph {",
+        "  rankdir=LR;",
+        "  node [shape=box style=rounded fontname=Helvetica fontsize=10];",
+        '  edge [color="#898781"];',
+        f'  score [label="expected\\nupvotes" shape=oval {box}"#eb6834"];',
+    ]
+
+    blocks = getattr(model, "blocks", None) or getattr(model, "branches", None)
+    if blocks is None:
+        # One dense layer over whatever this architecture takes.
+        used = [k for k in inputs if _uses(model, k)]
+        width = _first_width(model.branch)
+        for key in used:
+            label, size = inputs[key]
+            lines.append(f'  {key} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];')
+            lines.append(f"  {key} -> dense;")
+        total = sum(inputs[k][1] for k in used)
+        lines.append(f'  dense [label="one dense layer\\n{total} → {width}" {box}"#2a78d6"];')
+        lines.append("  dense -> score;")
+    else:
+        joined = "concat" if hasattr(model, "rest") else "head"
+        for key, module in blocks.items():
+            label, size = inputs[key]
+            out = _first_width(module) or size
+            lines.append(f'  {key} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];')
+            lines.append(f'  {key}_l [label="{size} → {out}" {box}"#2a78d6"];')
+            lines.append(f"  {key} -> {key}_l -> {joined};")
+        width = sum(_first_width(m) for m in blocks.values())
+        if hasattr(model, "rest"):
+            lines.append(f'  concat [label="concat\\n{width}" shape=point width=0.12];')
+            lines.append("  concat -> score;")
+        else:
+            head_in, head_out = _linear_shape(model.head)
+            lines.append(f'  head [label="second layer\\n{head_in} → {head_out}" {box}"#4a3aa7"];')
+            lines.append("  head -> score;")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _first_width(module: object) -> int:
+    """Output width of a BranchMLP's first Linear, or 0 if it has no layers.
+
+    `nn.Module` attribute access is typed `Tensor | Module`, so every read of
+    `branch.network[0].out_features` needs narrowing. Done once here rather than at each
+    of the five call sites.
+    """
+    network = getattr(module, "network", None)
+    if not isinstance(network, nn.Sequential) or len(network) == 0:
+        return 0
+    layer = network[0]
+    return layer.out_features if isinstance(layer, nn.Linear) else 0
+
+
+def _linear_shape(module: object) -> tuple[int, int]:
+    """`(in_features, out_features)` of a Sequential's first Linear."""
+    if isinstance(module, nn.Sequential) and len(module) and isinstance(module[0], nn.Linear):
+        return module[0].in_features, module[0].out_features
+    if isinstance(module, nn.Linear):
+        return module.in_features, module.out_features
+    return 0, 0
+
+
+def _uses(model: ScorePredictor, group: str) -> bool:
+    """Whether an architecture reads a given input at all."""
+    fusion = model.config.fusion
+    if fusion == "text_only":
+        return group == "text"
+    if fusion == "features_only":
+        return group != "text"
+    return True
 
 
 def predictor_state_dict(model: ScorePredictor) -> dict[str, torch.Tensor]:

@@ -411,7 +411,12 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
   em-dash use. Never cut the *why* behind a technique — that reasoning is the point.
 - Real numbers only, always next to their baseline. Cite papers; course material needs no citation.
 - Explain a shared thing once, in the library that owns it, and link to it.
-- Validate every Mermaid block: `npx -y @mermaid-js/mermaid-cli -i b.mmd -o b.svg`.
+- Validate every Mermaid block: `npx -y @mermaid-js/mermaid-cli -i b.mmd -o b.svg`. On a Mac the
+  bundled Chromium fails to launch; point it at the installed browser instead:
+  `echo '{"executablePath":"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}' > p.json`
+  then add `-p p.json`. Extract the block with a fence-aware regex -- a `sed` range that stops at
+  the first `\`\`\`` swallows the prose after it and reports a parse error in text that is not
+  part of the diagram.
 
 ## State
 

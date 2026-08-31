@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from ai_residency_common import add_health_routes, format_sse, get_logger, retrying, run_app
 from config import Config, Fusion
-from content_scoring.model import describe
+from content_scoring.model import describe, graph_dot
 from content_scoring.predict import (
     LoadedPredictor,
     Post,
@@ -264,7 +264,13 @@ def compare(request: PredictionRequest) -> ComparisonResponse:
         title=request.title,
         domain=_domain(request.url),
         predictions=predictions,
-        details={name: describe(_predictors[name].model) for name in predictions},
+        details={
+            name: {
+                **describe(_predictors[name].model),
+                "graph": graph_dot(_predictors[name].model),
+            }
+            for name in predictions
+        },
         word_trace=_trace(post, reference, known),
         missing=[fusion for fusion in FUSIONS if fusion not in predictions],
     )
