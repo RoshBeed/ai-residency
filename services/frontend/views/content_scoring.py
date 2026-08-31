@@ -59,7 +59,7 @@ def _render_comparison(title: str, url: str, author: str) -> None:
     columns = st.columns(len(predictions))
     for column, (name, value) in zip(columns, predictions.items(), strict=True):
         with column:
-            st.metric(_ARCHITECTURE_LABELS.get(name, name), f"{value:.1f}")
+            st.metric(_ARCHITECTURE_LABELS.get(name, name), f"{value:.1f}", help="expected upvotes")
 
     st.markdown(_comparison_bars(predictions), unsafe_allow_html=True)
 
@@ -150,7 +150,16 @@ def _render_stream(title: str, url: str, author: str) -> None:
                     ),
                     unsafe_allow_html=True,
                 )
-                st.metric("Predicted score", f"{data['predicted_score']:.1f} upvotes")
+                left_metric, right_metric = st.columns(2)
+                with left_metric:
+                    st.metric("Expected score", f"{data['predicted_score']:.1f} upvotes")
+                with right_metric:
+                    st.metric("Chance of 100+", f"{data.get('viral_probability', 0.0):.1%}")
+                st.caption(
+                    "Hacker News is close to a lottery — the same URL posted twice scores "
+                    "similarly only about a quarter of the time. The expected count is the "
+                    "middle of a very wide distribution, not a forecast."
+                )
                 with st.expander("Raw response"):
                     st.json(data)
             elif stage == "error":

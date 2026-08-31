@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -120,13 +121,24 @@ class WordTrace(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """What `/predict` returns."""
+    """What `/predict` returns.
+
+    `predicted_score` is an expected upvote count -- the model emits `log(lambda)` under
+    a Poisson objective, so the exponential is the expectation directly.
+
+    `viral_probability` is the more honest half of the answer. Hacker News scores are
+    close to a lottery: the same URL posted twice correlates at only rho 0.26, and of
+    posts whose first submission scored 2-5 the second reached a maximum of 2,645. A
+    single expected value hides all of that, so the response carries the model's estimate
+    of clearing 100 upvotes beside it.
+    """
 
     title: str
     predicted_score: float
+    viral_probability: float = 0.0
     fusion: str
     api_source: str = "FastAPI Service"
-    model_info: str = "extended skip-gram + fusion head"
+    model_info: str = "extended skip-gram + fusion head, Poisson objective"
     word_trace: list[WordTrace] = []
     domain: str = ""
     embedding_dim: int = 0
@@ -209,6 +221,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     return PredictionResponse(
         title=request.title,
         predicted_score=round(score, 2),
+        viral_probability=round(viral_probability(loaded, score), 4),
         fusion=loaded.fusion,
         word_trace=_trace(post, loaded, known),
         domain=_domain(request.url),
@@ -244,6 +257,28 @@ def compare(request: PredictionRequest) -> ComparisonResponse:
         word_trace=_trace(post, reference, known),
         missing=[fusion for fusion in FUSIONS if fusion not in predictions],
     )
+
+
+def viral_probability(loaded: LoadedPredictor, expected: float) -> float:
+    """P(score >= 100) for a post the model expects to score `expected`.
+
+    Args:
+        loaded: The predictor, carrying the calibration fitted during its training run.
+        expected: The predicted upvote count.
+
+    Returns:
+        The empirical probability of clearing 100 upvotes, interpolated between the
+        validation buckets, or 0.0 for a checkpoint predating the calibration.
+
+    Read off held-out data rather than from the Poisson the model was trained under. The
+    analytic tail of a Poisson with a mean of 15 is about 1e-25, so serving it reported
+    0.0% for every post regardless of the title -- Hacker News is overdispersed enough
+    that the parametric tail is meaningless.
+    """
+    curve = loaded.viral_calibration
+    if not curve or not curve.get("edges"):
+        return 0.0
+    return float(np.interp(expected, curve["edges"], curve["rates"]))
 
 
 def _domain(url: str) -> str:
@@ -286,6 +321,7 @@ def predict_stream(request: PredictionRequest) -> StreamingResponse:
                 "stage": "done",
                 "title": request.title,
                 "predicted_score": round(score, 2),
+                "viral_probability": round(viral_probability(loaded, score), 4),
                 "fusion": loaded.fusion,
                 "word_trace": [word.model_dump() for word in trace],
                 "domain": _domain(request.url),

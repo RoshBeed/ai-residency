@@ -250,6 +250,33 @@ def _tail_metrics(predicted: np.ndarray, actual: np.ndarray) -> dict[str, float]
     }
 
 
+def viral_calibration(
+    predicted: np.ndarray, actual: np.ndarray, bins: int = 20
+) -> dict[str, list[float]]:
+    """Empirical P(score >= 100) as a function of the predicted count.
+
+    Args:
+        predicted: Predicted upvotes on a split the model did not train on.
+        actual: True upvotes for the same rows.
+        bins: Quantile buckets of the prediction.
+
+    Returns:
+        `{"edges": [...], "rates": [...]}` -- the mean prediction of each bucket and the
+        fraction of it that actually cleared 100 upvotes.
+
+    Fitted rather than derived from the Poisson the model was trained under. A Poisson
+    with a mean of 15 puts about 1e-25 of its mass above 100; Hacker News scores are
+    wildly overdispersed, so that analytic tail is off by more than twenty orders of
+    magnitude and reports 0.0% for every post ever submitted. The empirical rate on
+    held-out data is the only version of this number worth serving.
+    """
+    order = np.argsort(predicted)
+    chunks = np.array_split(order, bins)
+    edges = [float(predicted[c].mean()) for c in chunks if len(c)]
+    rates = [float((actual[c] >= VIRAL_THRESHOLD).mean()) for c in chunks if len(c)]
+    return {"edges": edges, "rates": rates}
+
+
 def calibration_table(
     predicted: np.ndarray, actual: np.ndarray, bins: int = 10
 ) -> tuple[list[str], list[list[Any]]]:
@@ -700,22 +727,44 @@ def main() -> None:
                 for row in rows:
                     logger.info("  %-58s %-24s %8.1f", row[0][:58], row[1][:24], row[2])
 
-    header = (
-        f"{'model':<16}{'spearman':>10}{'ndcg@10':>10}{'p@10':>8}{'rmse':>8}{'r2':>8}{'lift':>8}"
+    # Upvote accuracy first, then ranking. The service is named for predicting scores and
+    # for a while reported only how well it ordered them, which is how it shipped
+    # predicting a fifth of the upvotes that actually happen without anything noticing.
+    logger.info(
+        "%s split, %d posts, %d actual upvotes", arguments.split, len(frame), int(actual.sum())
     )
-    logger.info("%s split, %d posts", arguments.split, len(frame))
-    logger.info(header)
+    logger.info(
+        "%-16s%9s%9s%9s%9s%10s%10s%8s",
+        "model",
+        "MAE",
+        "medAE",
+        "mean",
+        "max",
+        "total",
+        "spearman",
+        "PR-AUC",
+    )
     for name, metrics in report.items():
         logger.info(
-            "%-16s%10.4f%10.4f%8.4f%8.4f%8.4f%8.2f",
+            "%-16s%9.2f%9.2f%9.2f%9.0f%9.0f%%%10.4f%8.3f",
             name,
+            metrics["mae"],
+            metrics["mdae"],
+            metrics["mean_predicted"],
+            metrics["max_predicted"],
+            100 * metrics["total_ratio"],
             metrics["spearman"],
-            metrics["ndcg@10"],
-            metrics["precision@10"],
-            metrics["rmse"],
-            metrics["r2"],
-            metrics["top_decile_lift"],
+            metrics.get("viral_pr_auc", float("nan")),
         )
+    logger.info(
+        "%-16s%9s%9s%9.2f%9.0f%9.0f%%",
+        "(actual)",
+        "-",
+        "-",
+        float(actual.mean()),
+        float(actual.max()),
+        100.0,
+    )
 
     if slices[1]:
         logger.info("slices (late fusion): %s", " | ".join(slices[0]))

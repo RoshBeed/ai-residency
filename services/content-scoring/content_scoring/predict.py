@@ -9,7 +9,7 @@ The spec travels inside the predictor checkpoint, so a served model cannot be pa
 with statistics from a different run.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -62,6 +62,8 @@ class LoadedPredictor:
         embeddings: The extended vectors and vocabulary.
         fusion: Which architecture this is.
         source: Where the checkpoint came from -- `local` or `hub`.
+        viral_calibration: Held-out mapping from a predicted count to the empirical
+            chance of clearing 100 upvotes. Empty for checkpoints written before it.
     """
 
     model: ScorePredictor
@@ -69,6 +71,7 @@ class LoadedPredictor:
     embeddings: ExtendedEmbeddings
     fusion: Fusion
     source: str
+    viral_calibration: dict[str, list[float]] = field(default_factory=dict)
 
 
 def post_frame(post: Post) -> pd.DataFrame:
@@ -175,6 +178,7 @@ def load_predictor(config: Config, embeddings: ExtendedEmbeddings | None = None)
         embeddings=embeddings,
         fusion=config.fusion,
         source=source,
+        viral_calibration=payload["extra"].get("viral_calibration", {}),
     )
 
 

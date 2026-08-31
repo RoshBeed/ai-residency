@@ -58,6 +58,7 @@ from content_scoring.evaluate import (
     probe_table,
     score_extended_embeddings,
     slice_table,
+    viral_calibration,
 )
 from content_scoring.model import build_model, load_predictor_weights, predictor_state_dict
 
@@ -342,6 +343,11 @@ def train(config: Config) -> float:
                 # 200 with numbers that have nothing to do with what was evaluated.
                 "embeddings_finetuned": not config.freeze_embeddings,
                 "objective": config.objective,
+                # Fitted on validation, which the model did not train on, so serving can
+                # report a real chance of reaching the front page rather than the
+                # Poisson's analytic tail -- which is off by twenty orders of magnitude
+                # on a distribution this overdispersed.
+                "viral_calibration": viral_calibration(predicted_val, val_actual),
                 "config": asdict(config),
             },
             state_dict=predictor_state_dict(model),

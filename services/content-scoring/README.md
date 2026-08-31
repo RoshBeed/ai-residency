@@ -9,13 +9,14 @@
   builds it both run from scratch with no credentials.
 - **The vocabulary:** the sibling project's text8 vectors extended onto the Hacker News title
   corpus. Out-of-vocabulary tokens fall from **11.3%** of a title to **3.2%**.
-- **Result today:** late fusion, test Spearman **0.368** against TF-IDF + Ridge at 0.246. Fusing
-  the title with the metadata is worth 0.05; the choice between early and late fusion is worth 0.01.
+- **Result today:** late fusion halves the median error against predicting the mean — **7.0 upvotes
+  against 16.2** — and accounts for 80% of the upvotes that actually happened, against 101% for a
+  constant and 19% for the ranking-optimised version this replaced.
 - **The honest ceiling:** the same URL posted to Hacker News twice predicts itself at only ρ 0.26,
-  so a large share of a score is timing and luck rather than content. And a fine-tuned transformer
-  encoder beats this service's mean-pooled word vectors by +0.017 ρ and +19% on finding front-page
-  posts — the representation, not the architecture, is what binds. See
-  [§1.6](#16-what-the-ceiling-actually-is).
+  so a large share of a score is timing and luck rather than content. Even among the posts this
+  model ranks in its top 10%, the median outcome is 4 upvotes. And a fine-tuned transformer encoder
+  beats its mean-pooled word vectors on every metric — the representation, not the architecture, is
+  what binds. See [§1.6](#16-what-the-ceiling-actually-is).
 
 This is the second half of Week 1. The [word-embeddings
 project](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) trains the
@@ -36,28 +37,85 @@ asks where the text and the metadata should meet.
 
 ## 1. Results
 
-Held-out test period, 69,275 posts from June to August 2026, never seen during training or
-tuning. Each architecture trained at three seeds with every hyperparameter held equal; ± is half
-the seed range.
+Held-out test period, 69,275 posts from June to August 2026 carrying 1,309,690 upvotes between
+them, never seen during training or tuning. Three seeds per architecture, every hyperparameter held
+equal.
 
-| model | test ρ | NDCG@10 | top-decile lift |
+**Predicting the count**, which is what the service is for:
+
+| model | mean predicted | max predicted | total upvotes | median abs error |
+|---|---|---|---|---|
+| *actual* | *18.91* | *3,158* | *100%* | — |
+| predict the mean | 19.15 | 19 | 101% | 16.15 |
+| TF-IDF + Ridge | 21.44 | 453 | 113% | 13.00 |
+| text only | 20.57 | 343 | 109% | 15.77 |
+| features only | 19.07 | 830 | 101% | 12.81 |
+| early fusion | 15.08 | 792 | 80% | 8.91 |
+| **late fusion** (served) | **15.21** | **1,242** | **80%** | **7.01** |
+
+**Ranking the posts**, which is what it is also useful for:
+
+| model | Spearman ρ | PR-AUC on `score ≥ 100` |
+|---|---|---|
+| TF-IDF + Ridge | 0.124 | 0.072 |
+| text only | 0.159 | 0.072 |
+| features only | 0.219 | 0.085 |
+| early fusion | 0.257 | 0.093 |
+| **late fusion** (served) | **0.269** | **0.099** |
+
+Fusing the title with the metadata halves the median error against predicting the mean — 16.15 to
+7.01 — and takes the model's ceiling from 19 upvotes to 1,242. Both ablations are far behind both
+fusion models on every column, so the title and the metadata are carrying different information
+rather than the same signal twice.
+
+### The service returns two numbers
+
+`/predict` answers with an expected count *and* a probability of clearing 100 upvotes:
+
+```
+   8.3 upvotes   P(100+)=  3.0%   Show HN: I built a database that runs in the browser
+  16.2 upvotes   P(100+)=  5.3%   Attention Is All You Need
+   2.0 upvotes   P(100+)=  0.9%   10 JavaScript tricks you wont believe
+```
+
+The second is fitted on the validation split, not read off the Poisson the model was trained under.
+That distinction is not pedantic: a Poisson with a mean of 15 puts about 1e-25 of its mass above
+100, so the analytic version returned **0.0% for every post ever submitted**. Hacker News is
+overdispersed enough that its parametric tail is meaningless, and the empirical rate on held-out
+data is the only version worth serving.
+
+### Calibration
+
+| predicted decile | mean predicted | mean actual | median actual |
 |---|---|---|---|
-| predict the mean | n/a | 0.034 | 1.01 |
-| hour mean | 0.111 | 0.026 | 1.11 |
-| domain mean | 0.217 | 0.079 | 2.41 |
-| TF-IDF + Ridge | 0.246 | 0.088 | 2.07 |
-| text only | 0.271 ±0.003 | 0.074 | 1.80 |
-| features only | 0.317 ±0.004 | 0.099 | 1.91 |
-| early fusion | 0.359 ±0.004 | 0.106 | 2.11 |
-| **late fusion** (served) | **0.368** ±0.002 | 0.106 | 2.19 |
+| 1 | 1.8 | 5.8 | 2 |
+| 5 | 8.5 | 15.7 | 3 |
+| 9 | 26.2 | 29.7 | 4 |
+| 10 | 57.6 | 45.4 | 4 |
 
-**Figure 2.** The four architectures against the four baselines.
+Monotone, and roughly right in the upper half. It under-predicts the bottom deciles and
+over-predicts the top, which is a model more confident about ordering than the outcomes justify.
 
-![Two horizontal bar panels. Left, test Spearman: predict-the-mean shows n/a, hour mean 0.111, domain mean 0.217, TF-IDF plus Ridge 0.246, then text only 0.268, features only 0.320, early fusion 0.362 and late fusion 0.366. Right, NDCG at 10 ranked within each day, with the same ordering and the four architectures clustered near 0.10 against baselines from 0.03 to 0.09.](assets/fusion-comparison.png)
+The third column is the sobering one. **Even among the posts the model ranks in its top ten
+percent, the median outcome is 4 upvotes.** The mean of that decile is 45 because a handful reach
+the front page. There is no configuration of this model that predicts 400 for a specific post and
+is right more often than not, because the post itself does not determine the answer — see
+[§1.6](#16-what-the-ceiling-actually-is).
 
-Predict-the-mean has **no** Spearman rather than a Spearman of zero: a constant prediction cannot
-order anything, so the correlation is undefined. Reporting 0.0 there would assert something the
-metric does not say.
+### Why MAE is worse than the version that could not predict upvotes
+
+The previous objective, squared error on `log1p(score)`, scores a **better MAE** — 16.95 against
+23.58 — while predicting 19% of the upvotes that happened and never exceeding 63 for any post.
+
+That is not a contradiction, it is the median/mean split. Absolute error is minimised by the
+conditional **median**, which on this data is 3. Total upvotes is matched by the conditional
+**mean**, which is 19. They are six times apart, so no single number optimises both, and an
+objective can look excellent on MAE precisely *because* it is predicting a median and calling it a
+score.
+
+This service optimises the mean, because "how many upvotes will this get" asks for an expectation.
+`AI_RESIDENCY_OBJECTIVE=log_mse` restores the other choice; it ranks better (ρ 0.366 against 0.269)
+and cannot predict a count. Sections 1.1 to 1.6 below study ranking and were measured under it.
 
 ### The result the comparison was built for
 
@@ -72,6 +130,11 @@ and that is fourteen times the noise.
 work earned its keep. Not every result here is flattering, though — see the honest reading below.
 
 ### Late fusion wins, but only where capacity is scarce
+
+*Everything from here to the end of §1.6 was measured under `log_mse`, the ranking-optimised
+objective, because these are questions about ranking and rank correlation is the metric that
+separates the answers. The shipped model uses `poisson`; the architectural conclusions carry over,
+the absolute numbers are not comparable to §1's table.*
 
 Late fusion leads by 0.0095 at the tuned configuration, about five times the seed spread. But that
 configuration is one hidden layer per branch, and depth is exactly the axis the two architectures
@@ -168,19 +231,27 @@ Three things worth naming:
   tokens score 0.37, those with more than a quarter unknown score 0.25. The gap is what the
   extension narrows, and it is why the OOV slice is in the harness at all.
 
-### The predictions are compressed
+### Why the objective is Poisson
 
-**The service reports them as if they were not.** Asking the
-running API for four very different posts returns 2.1 to 4.5 upvotes. The *ordering* is right, which
-is what ρ measures and what the task asks. The magnitudes are not: on the test period the model
-predicts 3.55 upvotes on average against an actual 18.91, and **19% of the upvotes that actually
-happened**. Its highest prediction anywhere is 63, against an actual maximum of 3,158.
+The first version of this service trained squared error on `log1p(score)` and was measured only on
+rank correlation. It ranked well and could not predict an upvote count at all: on the test period it
+averaged 3.55 predicted upvotes against an actual 18.91 — **19% of the upvotes that actually
+happened** — with a maximum prediction anywhere of 63 against an actual maximum of 3,158.
 
-That is a property of the target, not a tuning failure. Squared error on `log1p` fits the
-conditional mean *of the log*, and `expm1` of that is close to a geometric mean. Duan's smearing
-correction pulls the total back to 76% and makes the median error *worse*, because it inflates every
-prediction uniformly. `AI_RESIDENCY_OBJECTIVE=poisson` is the principled fix — Poisson NLL with a log
-link predicts the expected count directly — and §1.6 shows what it costs.
+That is the target's fault, not the tuning's. Squared error on `log1p` fits the conditional mean *of
+the log*, and `expm1` of that is close to a geometric mean, which on this distribution lands about
+five times low. Duan's smearing correction pulls the total back to 76% and makes the median error
+*worse*, since it inflates every prediction uniformly.
+
+Poisson negative log-likelihood with a log link is the fix that matches the data: the head emits
+`log(λ)` and is scored against the raw count, so the exponential *is* the expected number of
+upvotes, with no back-transform to be biased. It also weights the tail properly — the gradient is
+proportional to `(λ − y)`, so a 3,000-point post pulls a thousand times harder than a 3-point one,
+which is what stops a model coasting on the middle of a distribution where three quarters of posts
+score between 1 and 5.
+
+`AI_RESIDENCY_OBJECTIVE=log_mse` restores the old behaviour, and the comparison is in §1.6. It ranks
+better. It does not predict upvotes.
 
 ### 1.6 What the ceiling actually is
 
@@ -197,7 +268,7 @@ content, different outcome:
 | | |
 |---|---|
 | Spearman between the 1st and 2nd posting of the same URL | **0.260** |
-| this service's late-fusion model, on unseen posts | 0.366 |
+| this service's late-fusion model under `log_mse`, on unseen posts | 0.366 |
 
 **The same content posted twice predicts itself worse than the model predicts a post it has never
 seen.** The model can beat that bound because it also knows *when*, *who* and *where*, which two
@@ -212,7 +283,7 @@ against that.
 
 | model | train rows | test ρ | viral ROC-AUC | PR-AUC |
 |---|---|---|---|---|
-| this service (word2vec + metadata) | 710k | 0.366 | 0.678 | 0.090 |
+| this service (word2vec + metadata, `log_mse`) | 710k | 0.366 | 0.678 | 0.090 |
 | MiniLM-22M, **frozen** | 710k | 0.364 | 0.669 | 0.079 |
 | MiniLM-22M, **fine-tuned** | 710k | **0.383** | 0.721 | 0.107 |
 | Qwen2.5-0.5B + LoRA | 300k | 0.379 | **0.736** | **0.117** |
