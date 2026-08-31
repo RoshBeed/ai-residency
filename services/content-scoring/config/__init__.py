@@ -41,7 +41,7 @@ rank while training a count objective is how the shipped hyperparameters came to
 for a question the service had stopped asking.
 """
 
-Fusion = Literal["text_only", "features_only", "early", "late"]
+Fusion = Literal["text_only", "features_only", "early", "late", "block_diagonal"]
 """How the title and the metadata features reach the regression head.
 
 * `text_only` -- the pooled title vector alone. An ablation: it says whether the title
@@ -52,6 +52,11 @@ Fusion = Literal["text_only", "features_only", "early", "late"]
   interactions between the text and the metadata, and has to learn the grouping itself.
 * `late` -- one small tower per branch (text, temporal, domain, title-surface, author),
   joined at the head. Each branch gets its own representation before anything is mixed.
+* `block_diagonal` -- `early` with the cross-group weights removed and nothing else
+  changed: same input, same hidden width, same depth, same head. `late` varies
+  connectivity, width and depth all at once, so a difference against `early` has three
+  possible causes; this one isolates connectivity, and is strictly smaller than `early`
+  because it is `early` with weights deleted.
 """
 
 

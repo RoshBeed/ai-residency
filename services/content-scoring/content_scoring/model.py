@@ -39,6 +39,7 @@ from config import Config, Fusion
 from content_scoring.features import FEATURE_GROUPS, GROUP_SLICES
 
 __all__ = [
+    "BlockDiagonalScorer",
     "BranchMLP",
     "EarlyFusionScorer",
     "FeaturesOnlyScorer",
@@ -46,6 +47,7 @@ __all__ = [
     "ScorePredictor",
     "TextOnlyScorer",
     "build_model",
+    "describe",
     "load_predictor_weights",
     "predictor_state_dict",
 ]
@@ -298,11 +300,79 @@ class LateFusionScorer(ScorePredictor):
         return predicted
 
 
+class BlockDiagonalScorer(ScorePredictor):
+    """Early fusion with the cross-group connections removed, and nothing else changed.
+
+    `LateFusionScorer` gives each group a full-width tower and adds a head to combine
+    them, so against early fusion it varies connectivity, width *and* depth at once --
+    three explanations for any difference it shows. This varies only connectivity.
+
+    The first layer is the same `329 -> hidden` map early fusion uses, with the weight
+    matrix constrained to be block-diagonal: each group's inputs reach only its own share
+    of the hidden units, and the shares are proportional to how many inputs each group
+    brings. Everything after the first layer is identical to early fusion. It is
+    therefore strictly *smaller* -- it is early fusion with weights deleted -- which is
+    what makes "does crosstalk help?" the only question being asked.
+
+    Attributes:
+        disabled: Groups zeroed at the input, for the leave-one-group-out ablation.
+    """
+
+    def __init__(self, embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> None:
+        super().__init__(embedding_matrix, num_domains, config)
+        widths = {"text": self.embed_size}
+        for group in FEATURE_GROUPS:
+            slot = GROUP_SLICES[group]
+            widths[group] = (slot.stop - slot.start) + (
+                config.domain_embed_dim if group == "domain" else 0
+            )
+        total_in = sum(widths.values())
+
+        # Hidden units split in proportion to inputs, with a floor of one so a
+        # three-column group still reaches the head. The remainder goes to the widest
+        # group, so the shares sum to exactly `hidden_dim` and the layer is the same size
+        # as early fusion's.
+        shares = {
+            name: max(1, round(config.hidden_dim * w / total_in)) for name, w in widths.items()
+        }
+        widest = max(shares, key=lambda name: widths[name])
+        shares[widest] += config.hidden_dim - sum(shares.values())
+
+        self.blocks = nn.ModuleDict(
+            {name: BranchMLP(widths[name], shares[name], 1, config.dropout) for name in widths}
+        )
+        self.rest = BranchMLP(
+            config.hidden_dim, config.hidden_dim, max(0, config.num_layers - 1), config.dropout
+        )
+        self.head = nn.Linear(config.hidden_dim, 1)
+        self.disabled: set[str] = set()
+
+    def forward(
+        self, tokens: torch.Tensor, mask: torch.Tensor, numeric: torch.Tensor, domain: torch.Tensor
+    ) -> torch.Tensor:
+        parts = {"text": self.pool_title(tokens, mask)}
+        for group in FEATURE_GROUPS:
+            block = numeric[:, GROUP_SLICES[group]]
+            if group == "domain":
+                block = torch.cat([block, self.domain_embed(domain)], dim=1)
+            parts[group] = block
+
+        pieces = []
+        for name, projection in self.blocks.items():
+            value = parts[name]
+            if name in self.disabled:
+                value = torch.zeros_like(value)
+            pieces.append(projection(value))
+        predicted: torch.Tensor = self.head(self.rest(torch.cat(pieces, dim=1))).squeeze(-1)
+        return predicted
+
+
 _ARCHITECTURES: dict[Fusion, type[ScorePredictor]] = {
     "text_only": TextOnlyScorer,
     "features_only": FeaturesOnlyScorer,
     "early": EarlyFusionScorer,
     "late": LateFusionScorer,
+    "block_diagonal": BlockDiagonalScorer,
 }
 
 
@@ -352,6 +422,40 @@ def load_predictor_weights(model: ScorePredictor, state_dict: dict[str, torch.Te
             f"checkpoint does not fit this architecture: missing {sorted(unexplained)}, "
             f"unexpected {sorted(unexpected)}"
         )
+
+
+def describe(model: ScorePredictor) -> dict[str, object]:
+    """What a model is, in numbers, for anything that reports the comparison.
+
+    Args:
+        model: A built scorer.
+
+    Returns:
+        `{"parameters", "hidden", "first_layer", "connectivity"}`.
+
+    Read off the built modules rather than written down beside them. The four
+    architectures differ in ways a prose label hides -- `late` carries five times the
+    hidden units of `early` and an extra layer, so "late versus early" is not only a
+    question about connectivity -- and a UI that states the difference should be reading
+    it from the model rather than from a comment that can go stale.
+    """
+    linear = [
+        (name, layer) for name, layer in model.named_modules() if isinstance(layer, nn.Linear)
+    ]
+    first = [
+        f"{layer.in_features}→{layer.out_features}"
+        for name, layer in linear
+        if "head" not in name and "rest" not in name
+    ]
+    hidden = sum(
+        layer.out_features for name, layer in linear if "head" not in name and "rest" not in name
+    )
+    return {
+        "parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
+        "hidden": hidden,
+        "first_layer": " | ".join(first) or "—",
+        "connectivity": "dense" if len(first) == 1 else f"{len(first)} separate blocks",
+    }
 
 
 def predictor_state_dict(model: ScorePredictor) -> dict[str, torch.Tensor]:

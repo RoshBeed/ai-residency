@@ -20,7 +20,16 @@ ARCHITECTURES = {
     "text_only": "Title only",
     "features_only": "Metadata only",
     "early": "Early fusion",
+    "block_diagonal": "Block-diagonal",
     "late": "Late fusion",
+}
+
+WHAT_EACH_IS = {
+    "text_only": "the pooled title, nothing else — an ablation",
+    "features_only": "the metadata, no text — the other ablation",
+    "early": "one dense layer over the title and metadata together",
+    "block_diagonal": "the same layer with the cross-group weights removed",
+    "late": "a full-width tower per group, combined by a second layer",
 }
 
 EXAMPLES = {
@@ -220,12 +229,35 @@ def _render_architectures(data: dict[str, Any] | None) -> None:
         ),
         unsafe_allow_html=True,
     )
+    details = data.get("details") or {}
+    if details:
+        st.markdown("**What each one is**")
+        rows = [
+            "| model | what it is | first layer | hidden | parameters |",
+            "|---|---|---|---|---|",
+        ]
+        for name in predictions:
+            spec = details.get(name, {})
+            # Escaped: late fusion's shape is five blocks joined by a pipe, which is also
+            # markdown's cell delimiter, so it split one column into six and the row
+            # collapsed. Escaping here rather than changing the separator keeps the API
+            # returning data and the renderer responsible for its own syntax.
+            shape = str(spec.get("first_layer", "—")).replace("|", "\\|")
+            rows.append(
+                f"| {ARCHITECTURES.get(name, name)} | {WHAT_EACH_IS.get(name, '')} "
+                f"| `{shape}` | {spec.get('hidden', '—')} "
+                f"| {spec.get('parameters', 0):,} |"
+            )
+        st.markdown("\n".join(rows))
+
     st.caption(
-        "Title only and metadata only are single MLPs — the ablations that make “combining helps” "
-        "testable rather than assumed. Early fusion concatenates both and uses one network; late "
-        "fusion gives each input its own and joins them at the end. Across the test set the two "
-        "fusion models are separated by less than the difference between two training runs, so the "
-        "write-up does not call a winner between them."
+        "Read off the running models, not written down beside them. **Early fusion and "
+        "block-diagonal are the honest pair**: identical input, hidden width, depth and head, "
+        "differing only in whether the title and the metadata are wired to each other. "
+        "Block-diagonal is the smaller of the two because it *is* early fusion with weights "
+        "deleted, so the difference between them is the value of that crosstalk and nothing else. "
+        "Late fusion is not that comparison — it carries five times the hidden units and an extra "
+        "layer, so a gap against early could be connectivity, width or depth."
     )
     if data.get("missing"):
         st.caption("Not loaded: " + ", ".join(ARCHITECTURES.get(n, n) for n in data["missing"]))

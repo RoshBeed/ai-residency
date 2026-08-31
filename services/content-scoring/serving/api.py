@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from ai_residency_common import add_health_routes, format_sse, get_logger, retrying, run_app
 from config import Config, Fusion
+from content_scoring.model import describe
 from content_scoring.predict import (
     LoadedPredictor,
     Post,
@@ -39,7 +40,13 @@ __all__ = ["app"]
 
 logger = get_logger(__name__)
 
-FUSIONS: tuple[Fusion, ...] = ("text_only", "features_only", "early", "late")
+FUSIONS: tuple[Fusion, ...] = (
+    "text_only",
+    "features_only",
+    "early",
+    "block_diagonal",
+    "late",
+)
 MAX_TITLE_LENGTH = 512
 MAX_URL_LENGTH = 2048
 MAX_AUTHOR_LENGTH = 64
@@ -151,6 +158,9 @@ class ComparisonResponse(BaseModel):
     title: str
     domain: str
     predictions: dict[str, float]
+    # Read off each loaded model, so the UI can say what it is comparing without
+    # repeating shapes that would go stale the moment one changed.
+    details: dict[str, dict[str, Any]] = {}
     word_trace: list[WordTrace] = []
     missing: list[str] = []
 
@@ -254,6 +264,7 @@ def compare(request: PredictionRequest) -> ComparisonResponse:
         title=request.title,
         domain=_domain(request.url),
         predictions=predictions,
+        details={name: describe(_predictors[name].model) for name in predictions},
         word_trace=_trace(post, reference, known),
         missing=[fusion for fusion in FUSIONS if fusion not in predictions],
     )
