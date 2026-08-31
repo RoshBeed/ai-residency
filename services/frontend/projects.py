@@ -266,12 +266,18 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ),
         ],
         "model_specs": [
-            "**Late fusion** (served) — five towers, one each for the pooled title, "
-            "temporal, domain, title-surface and author features, joined by a head MLP.",
-            "**Early fusion** — one MLP over the pooled title concatenated with every feature.",
-            "**Text only** and **Features only** — the ablations, same widths, same data.",
-            "**Word vectors** — 86,438 × 300 skip-gram, text8 continued on the Hacker News "
-            "title corpus; frozen for the published models.",
+            "**Late fusion** (served) — 421,721 parameters. Five towers, each `→ 256`: "
+            "title `300`, temporal `6`, domain `9`, title-surface `11`, author `3`. "
+            "Concatenated to a head of `1280 → 256 → 1`.",
+            "**Early fusion** — 92,761 parameters, `329 → 256 → 1`. The 329 is the 300-d "
+            "pooled title plus 21 numeric features plus the 8-d domain embedding.",
+            "**Text only** — 85,337 parameters, `300 → 256 → 1`. The pooled title alone.",
+            "**Features only** — 15,961 parameters, `29 → 256 → 1`. The metadata alone.",
+            "**Domain embedding** — `1003 × 8`, shared by all four. Domains seen fewer than "
+            "50 times in training collapse to one `<rare>` row.",
+            "**Word vectors** — `86,438 × 300` skip-gram, text8 continued on the Hacker News "
+            "title corpus. Frozen, and kept out of the checkpoints: all four models share "
+            "one 104MB matrix.",
         ],
     },
     "vector-search-retrieval": {

@@ -145,12 +145,16 @@ difference between two training runs of the same model.
 same width, depth, dropout, learning rate and schedule, so none of them is tuned at another's
 expense — but they are not the same size:
 
-| architecture | trainable parameters |
-|---|---|
-| metadata only | 15,961 |
-| title only | 85,337 |
-| early fusion | 92,761 |
-| late fusion | 421,721 |
+| architecture | shape | parameters |
+|---|---|---|
+| metadata only | `29 → 256 → 1` | 15,961 |
+| title only | `300 → 256 → 1` | 85,337 |
+| early fusion | `329 → 256 → 1` | 92,761 |
+| late fusion | five towers `→ 256`, head `1280 → 256 → 1` | 421,721 |
+
+Late fusion's towers take the pooled title (`300`), the temporal features (`6`), the domain (`9`,
+one flag plus its 8-d embedding), the title's shape (`11`) and the author's history (`3`). Early
+fusion's 329 is those same inputs concatenated before anything learns from them.
 
 Late fusion is the largest by a distance, almost entirely because its head takes five 256-wide
 branch outputs at once. That is worth knowing when reading the early-versus-late comparison, and it
