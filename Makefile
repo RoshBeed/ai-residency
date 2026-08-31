@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: install fmt lint typecheck test check \
-        base base-train build demo demo-down local push train serve clean help \
+        base base-train build local push train serve clean help \
         up down status local-up local-cluster
 
 # Every member of the workspace. Derived from the directory listing, so a new
@@ -115,7 +115,16 @@ BASE_TRAIN_IMAGE ?= $(LOCAL_BASE_TRAIN)
 # from the repository root as well -- `make local` is here and `make local-up` is there,
 # which is a distinction nobody should have to know, and the error you get otherwise
 # ("No rule to make target") says nothing about the real problem.
-up down status local-up local-cluster: ## Deploy targets: see `make -C deploy help`
+# Listed one per line rather than as `up down status ...:` on a single line. `help`
+# greps for a target name followed by `## `, which a multi-target rule does not match --
+# so these were reachable but invisible, and the obvious response to not finding
+# `local-up` in `make help` is to build something that does the same thing again.
+up: ## Start the deployment, or a subset: make up SERVICES="content-scoring"
+down: ## Stop the deployment
+status: ## Show what is running
+local-up: ## Build natively and run one service with the UI: make local-up SERVICES="content-scoring"
+local-cluster: ## Build, load and install into the local Kubernetes cluster
+up down status local-up local-cluster:
 	@# `origin`, not a bare `$(if $(SERVICES),...)`: this Makefile already defines
 	@# SERVICES as every service in the workspace, so a plain check is always true and
 	@# would forward the whole list -- _template included -- to a target expecting the
@@ -181,53 +190,6 @@ build: ## Build a service's images: make build SERVICE=word-embeddings
 			--build-arg BASE_IMAGE=$(BASE_TRAIN_IMAGE) \
 			-t $(REGISTRY)/ai-residency-$(patsubst _%,%,$(SERVICE))-train:$(IMAGE_TAG) . ; \
 	fi
-
-# One command to try a service: its backend and the UI, built locally and wired together.
-# Distinct from `make serve`, which runs a single backend on the host with no container
-# and no UI, and from `make up`, which brings up the whole nine-service deployment.
-#
-# Three things this gets right that doing it by hand does not, each of which otherwise
-# fails in a way that does not name its own cause:
-#
-#   * `base` runs first. Without it `build` tries to *pull* local/ai-residency-base-serve,
-#     which exists in no registry, and reports "pull access denied" -- an auth error that
-#     is really a missing local image.
-#   * `REGISTRY=local`. The default is the published name, so a plain `make build`
-#     silently shadows whatever was pulled from Docker Hub and there is then no telling
-#     which image is running.
-#   * the frontend, a separate service whose absence surfaces only as the page saying the
-#     backend is not ready.
-#
-# Docker's layer cache makes the rebuild a few seconds when nothing changed, so this
-# always builds rather than asking the caller to remember whether they need to.
-demo: ## Build and run one service with the UI: make demo SERVICE=content-scoring
-	@test -n "$(SERVICE)" || (echo "Usage: make demo SERVICE=<name>   ($(SERVICES))" && exit 1)
-	@test "$(SERVICE)" != "frontend" || (echo "demo takes a backend; the UI comes with it" && exit 1)
-	$(MAKE) base REGISTRY=local
-	$(MAKE) build SERVICE=$(SERVICE) REGISTRY=local
-	$(MAKE) build SERVICE=frontend REGISTRY=local
-	@# Removed first so the target is safe to run twice; `docker run` errors on a name
-	@# that is already taken, which is the most common way this goes wrong.
-	-@docker rm -f $(SERVICE) frontend >/dev/null 2>&1
-	-@docker network create ai-residency-demo >/dev/null 2>&1
-	docker run --rm -d --name $(SERVICE) --network ai-residency-demo -p 8000:8000 \
-		local/$(IMAGE_STEM)
-	@# The container name, not localhost: inside the frontend container localhost is the
-	@# frontend, so the page would report "backend isn't ready" and look exactly like a
-	@# backend that is down.
-	docker run --rm -d --name frontend --network ai-residency-demo -p 8501:8501 \
-		-e AI_RESIDENCY_PAGES=$(SERVICE) \
-		-e $(shell echo $(SERVICE) | tr 'a-z-' 'A-Z_')_API_URL=http://$(SERVICE):8000 \
-		local/ai-residency-frontend
-	@echo "waiting for $(SERVICE) to pull its checkpoints..."
-	@curl -fsS --retry 90 --retry-delay 2 --retry-all-errors http://localhost:8000/ready >/dev/null \
-		&& echo "" && echo "  UI:      http://localhost:8501" && echo "  Backend: http://localhost:8000/docs" \
-		&& echo "" && echo "  Stop it with: make demo-down SERVICE=$(SERVICE)"
-
-demo-down: ## Stop what `make demo` started
-	-@docker rm -f $(SERVICE) frontend >/dev/null 2>&1
-	-@docker network rm ai-residency-demo >/dev/null 2>&1
-	@echo "stopped"
 
 push: ## Push a service's images: make push SERVICE=word-embeddings
 	@test -n "$(SERVICE)" || (echo "Usage: make push SERVICE=<name>" && exit 1)

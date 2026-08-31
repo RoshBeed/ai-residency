@@ -97,30 +97,40 @@ def _render_brief(service: str) -> None:
     st.divider()
 
 
+def _render_diagram(path: str, caption: str) -> None:
+    """One diagram, inlined so nothing depends on a separate media request.
+
+    Args:
+        path: Image path relative to the frontend package.
+        caption: What the figure shows, for anyone who cannot see it.
+    """
+    st.markdown(
+        '<div style="height:400px;display:flex;align-items:center;'
+        "justify-content:center;padding:16px;background:#fff;"
+        'border-radius:4px;">'
+        f'<img src="data:image/png;base64,{image_file_to_b64(path)}" '
+        'style="max-width:100%;max-height:400px;object-fit:contain;">'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(caption)
+
+
 def _render_details(service: str) -> None:
     """Diagrams, stats, tags, and docs link below the demo."""
     project = PROJECTS[service]
 
     if project.get("diagrams"):
         diagrams = project["diagrams"]
-        if len(diagrams) == 2:
-            for col, (path, caption) in zip(st.columns(2), diagrams, strict=True):
-                with col:
-                    b64 = image_file_to_b64(path)
-                    st.markdown(
-                        '<div style="height:400px;display:flex;align-items:center;'
-                        "justify-content:center;padding:16px;background:#fff;"
-                        'border-radius:4px;">'
-                        f'<img src="data:image/png;base64,{b64}" '
-                        'style="max-width:100%;max-height:400px;object-fit:contain;">'
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(caption)
-        else:
-            for path, caption in diagrams:
-                st.image(path, width=650)
-                st.caption(caption)
+        # Inlined as base64 for every count, not only for pairs. `st.image` hands the
+        # file to Streamlit's media server and serves it back over a generated URL,
+        # which the three single-diagram pages were relying on and which rendered as a
+        # broken image. The pages with two diagrams never hit it, so the bug was
+        # invisible on two thirds of the site.
+        columns = st.columns(len(diagrams)) if len(diagrams) > 1 else [st.container()]
+        for column, (path, caption) in zip(columns, diagrams, strict=True):
+            with column:
+                _render_diagram(path, caption)
 
     if project.get("model_specs"):
         st.markdown("**Model details**")
