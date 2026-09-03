@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: etl etl-verify mirror extend-vocab train train-all capacity evaluate evaluate-untrained sweep report onnx predict serve test help
+.PHONY: etl etl-verify mirror extend-vocab train train-all fusion-curve fusion-verify evaluate evaluate-untrained sweep report onnx graph predict serve test help
 
 # The pipeline, in order: etl -> extend-vocab -> train -> evaluate. Every stage reads
 # public repos, so the whole chain runs on a clean machine with no credentials. A token
@@ -35,22 +35,79 @@ train-all: ## Train all four architectures at three seeds each (the comparison t
 	  done; \
 	done
 
-# Early fusion has to *discover* the grouping that late fusion is handed by
-# construction, and discovering it costs depth. So the two should cross over: late ahead
-# where capacity is scarce, early catching up once there is enough to learn the structure
-# with. This varies depth alone, everything else at the tuned configuration, three seeds
-# a point -- and writes nothing, since the checkpoints are not the output, the curve is.
-capacity: ## Depth sweep, early vs late, 3 seeds a point (the crossover experiment)
-	@for layers in 1 2 3 4; do \
-	  for fusion in early late; do \
-	    for seed in 42 43 44; do \
-	      echo "=== $$fusion layers=$$layers seed=$$seed"; \
-	      AI_RESIDENCY_NUM_LAYERS=$$layers AI_RESIDENCY_SAVE_CHECKPOINTS=false \
-	      AI_RESIDENCY_HF_REPO_ID="" \
-	      uv run python -m content_scoring.train --fusion $$fusion --seed $$seed || exit 1; \
+# Where the title and the metadata first meet, swept as a hyperparameter. Layers before
+# `fusion_layer` are block-diagonal and layers from it on are shared, so `1` is early
+# fusion and a larger value delays the meeting without changing anything else.
+#
+# A shell grid rather than a W&B sweep because `fusion_layer` is only meaningful up to
+# the depth of the shape, and `method: grid` cannot express that -- it would spend a
+# third of the budget on duplicates that clamp onto each other.
+#
+# The per-run settings go through `env` rather than prefixing the command as
+# `VAR=value uv run ...`. The retry loop puts a `while` between the two, and
+# `A=1 B=2 attempt=1` is then parsed as three plain shell assignments that are never
+# exported -- so a run trains the *defaults* while being recorded under the shape that
+# was asked for. Four runs were logged that way before it was caught.
+#
+# Each combination is retried twice before the grid gives up. A 28-hour run met exactly
+# one transient failure -- `wandb ... the service process is busy and did not respond in
+# time` on run 60 of 490 -- and a bare `|| exit 1` turned that into the end of the
+# experiment. A flaky API call is not a reason to abandon twenty-five hours of work.
+#
+# Ten seeds a point, not three. The twelve baseline runs measured a seed spread of 0.106
+# Spearman on late fusion against 0.026 on early, so a three-seed mean carries a standard
+# error wider than the effect being measured. At n=10 the curve can also show the
+# *distribution*, which is the more useful answer if late fusion turns out to be bimodal.
+FUSION_SHAPES ?= 320,256 256,256 320,256,192 256,256,256 320,256,192,128 \
+                 256,256,256,256 320,256,192,128,96 256,256,256,256,256 \
+                 320,256,192,128,96,32 128,128,128,128,128,128 \
+                 640,512,384 64,64,64 256,64,256
+FUSION_SEEDS  ?= 42 43 44 45 46 47 48 49 50 51
+PROGRESS      := assets/fusion-curve.progress
+
+fusion-curve: ## Sweep the fusion point across shapes and seeds: make fusion-curve [RESUME=no]
+	@mkdir -p assets
+	@if [ "$(RESUME)" = "no" ]; then rm -f $(PROGRESS); fi
+	@touch $(PROGRESS)
+	@echo "$$(date +%H:%M:%S) starting; $$(wc -l < $(PROGRESS) | tr -d ' ') combinations already done"
+	@for widths in $(FUSION_SHAPES); do \
+	  depth=$$(echo $$widths | tr ',' '\n' | wc -l | tr -d ' '); \
+	  point=1; \
+	  while [ $$point -le $$depth ]; do \
+	    for seed in $(FUSION_SEEDS); do \
+	      key="$$widths|$$point|$$seed"; \
+	      if grep -qxF "$$key" $(PROGRESS); then continue; fi; \
+	      echo "$$(date +%H:%M:%S) === widths=$$widths fusion_layer=$$point seed=$$seed"; \
+	      attempt=1; \
+	      while : ; do \
+	        if env AI_RESIDENCY_HIDDEN_WIDTHS=$$widths \
+	               AI_RESIDENCY_FUSION_LAYER=$$point \
+	               AI_RESIDENCY_SAVE_CHECKPOINTS=false \
+	               AI_RESIDENCY_PROMOTE=false \
+	               AI_RESIDENCY_LOG_TABLES=false \
+	               AI_RESIDENCY_HF_REPO_ID="" \
+	           uv run python -m content_scoring.train --fusion late --seed $$seed; then \
+	          echo "$$key" >> $(PROGRESS); break; \
+	        fi; \
+	        if [ $$attempt -ge 3 ]; then \
+	          echo "$$(date +%H:%M:%S) !!! giving up on $$key after $$attempt attempts"; \
+	          exit 1; \
+	        fi; \
+	        echo "$$(date +%H:%M:%S) retry $$attempt for $$key in 60s"; \
+	        attempt=$$((attempt + 1)); sleep 60; \
+	      done; \
 	    done; \
+	    point=$$((point + 1)); \
 	  done; \
 	done
+	@echo "$$(date +%H:%M:%S) done; $$(wc -l < $(PROGRESS) | tr -d ' ') combinations recorded"
+
+# A run exiting zero is not the same as its results being stored. Run this after the
+# grid: it compares the progress file against what actually reached W&B, and FIX=1
+# requeues anything whose summary never landed.
+fusion-verify: ## Check the grid's results actually reached W&B: make fusion-verify [FIX=1]
+	uv run python -m content_scoring.verify_curve \
+	  --shapes $(FUSION_SHAPES) --seeds $(FUSION_SEEDS) $(if $(FIX),--fix,)
 
 evaluate: ## Score every trained architecture against the test split
 	uv run python -m content_scoring.evaluate $(if $(SPLIT),--split $(SPLIT),)
@@ -85,6 +142,13 @@ onnx: ## Export each architecture to ONNX for Netron: make onnx
 	uv run python -m content_scoring.export_onnx
 	@echo ""
 	@echo "  uvx netron services/content-scoring/assets/onnx/late.onnx"
+
+# The demo page builds this from the running models on every request, so there is no
+# file to open when the stack is down. Needs Graphviz for the image -- a system package,
+# not something uv can install -- and writes the DOT either way.
+graph: ## Draw the architecture diagram: make graph [FUSION=late] [FORMAT=svg]
+	uv run python -m content_scoring.export_graph \
+	  $(if $(FUSION),--fusion $(FUSION),) $(if $(FORMAT),--format $(FORMAT),)
 
 predict: ## Score one post: make predict TITLE="..." [URL="..."]
 	@test -n "$(TITLE)" || (echo 'Usage: make predict TITLE="Show HN: my thing" [URL="https://..."]' && exit 1)

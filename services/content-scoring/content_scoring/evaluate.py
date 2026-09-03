@@ -43,6 +43,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from config import Config, Fusion, Objective
 from content_scoring.data import PostBatch, Splits, iterate_batches
+from content_scoring.features import FEATURE_GROUPS
 from content_scoring.model import ScorePredictor, build_model, load_predictor_weights
 
 __all__ = [
@@ -563,34 +564,34 @@ def _tokenise(title: str) -> list[str]:
 def leave_one_group_out(
     model: ScorePredictor, splits: Splits, split: str
 ) -> tuple[list[str], list[list[Any]]]:
-    """Ablate each feature group in turn on a late-fusion model.
+    """Ablate each input group in turn.
 
     Args:
-        model: A `LateFusionScorer`. Other architectures have no separable branches, so
-            this returns an empty table for them.
+        model: Any built scorer.
         splits: The loaded splits.
         split: Which split to ablate on.
 
     Returns:
-        `(columns, rows)` giving each group's Spearman when its branch is zeroed, and
-        the drop from the full model.
+        `(columns, rows)` giving each group's Spearman when its input is zeroed, and the
+        drop from the full model.
 
-    Zeroing a branch's input rather than retraining without it: the question is what the
+    Zeroing a group's input rather than retraining without it: the question is what the
     trained model *uses*, not what a differently-trained model would learn to use, and
     the two answers differ.
+
+    Run this on the dense model. The block-diagonal one splits its hidden units in
+    proportion to input width, so the title -- 300 of the 329 columns -- owns 233 of the
+    256 units, and zeroing it there measures that allocation as much as the signal the
+    title carries. Early fusion gives every group the same layer to compete for, which
+    is the comparison the figure claims to make.
     """
-    from content_scoring.model import LateFusionScorer
-
-    if not isinstance(model, LateFusionScorer):
-        return ["group", "spearman", "delta"], []
-
     device = next(model.parameters()).device
     actual = splits.frames[split]["score"].to_numpy(dtype=np.float64)
     objective = model.config.objective
     full = _spearman(predict(model, splits.tensors[split], device, objective), actual)
 
     rows: list[list[Any]] = [["(none)", round(full, 4), 0.0]]
-    for name in model.branches:
+    for name in ("text", *FEATURE_GROUPS):
         model.disabled = {name}
         ablated = _spearman(predict(model, splits.tensors[split], device, objective), actual)
         rows.append([name, round(ablated, 4), round(ablated - full, 4)])
@@ -754,9 +755,11 @@ def main() -> None:
         if per_seed:
             spreads[fusion] = {name: aggregate(vals) for name, vals in per_seed.items()}
             report[fusion] = {name: mean for name, (mean, _) in spreads[fusion].items()}
+        if fusion == "early":
+            # Ablated on the dense model, where every group competes for the same layer.
+            ablation = leave_one_group_out(model, splits, arguments.split)
         if fusion == "late":
             slices = slice_table(frame, predicted, actual, splits, word_to_index)
-            ablation = leave_one_group_out(model, splits, arguments.split)
             for columns, rows in (probe_table(model, splits, variant, word_to_index),):
                 logger.info("probe titles: %s", " | ".join(columns))
                 for row in rows:

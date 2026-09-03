@@ -7,11 +7,11 @@ thing that differs between them is where the title and the metadata meet:
 text_only        title -> pool -> MLP ------------------> score
 features_only                     MLP(features) --------> score
 early            title -> pool -> MLP(concat(both)) ----> score
-late             title -> pool -> MLP ---.
-                 temporal  -> MLP -------|
-                 domain    -> MLP -------+-> head MLP --> score
-                 surface   -> MLP -------|
-                 author    -> MLP -------'
+late             title -> pool -.
+                 temporal  ------|  block-diagonal
+                 domain    ------+  MLP(concat(both)) --> score
+                 surface   ------|  (no cross-group weights)
+                 author    ------'
 ```
 
 The two ablations are not filler. `features_only` is a genuinely strong model on Hacker
@@ -19,31 +19,32 @@ News -- the domain and the hour carry a lot -- so `early` and `late` have to bea
 before "the title matters" is a claim rather than an assumption, and `text_only` is what
 says how much the title carries on its own.
 
-**Early versus late is a question about capacity, not about information.** Both see
-exactly the same inputs. Early fusion has one MLP over everything, so it can model any
-interaction between a word in the title and the hour it was posted, but it has to find
-the group structure itself and spends parameters doing so. Late fusion hands each group
-its own tower, so each learns a representation without interference and the head sees
-five summaries -- cheaper, and better when the groups genuinely are separable, worse
-when the interactions matter.
+**Early versus late is a question about connectivity, and only about connectivity.**
+Both see the same inputs, and `late` is built as `early` with the cross-group weights
+deleted -- same input width, same hidden width, same depth, same head. Early fusion can
+model an interaction between a word in the title and the hour it was posted; late fusion
+structurally cannot, because no group reaches another's hidden units until the head. So
+the gap between the two measures what that crosstalk is worth, with nothing else varying
+to explain it.
 
 The embedding matrix is not saved with the model. It is 104MB (86,438 x 300 floats)
 shared by all four architectures, published once by `vocab.py`, and `save_checkpoint`'s
 `state_dict` override exists for this case.
 """
 
+from collections.abc import Callable, Sequence
+from typing import get_args
+
 import torch
 from torch import nn
 
-from config import Config, Fusion
+from config import Allocation, Config, Fusion
 from content_scoring.features import FEATURE_GROUPS, GROUP_SLICES
 
 __all__ = [
-    "BlockDiagonalScorer",
     "BranchMLP",
-    "EarlyFusionScorer",
     "FeaturesOnlyScorer",
-    "LateFusionScorer",
+    "FusionScorer",
     "ScorePredictor",
     "TextOnlyScorer",
     "build_model",
@@ -55,24 +56,23 @@ __all__ = [
 
 
 class BranchMLP(nn.Module):
-    """A stack of `num_layers` hidden layers, ReLU and dropout between them."""
+    """A stack of hidden layers of given widths, ReLU and dropout between them."""
 
-    def __init__(self, in_dim: int, hidden_dim: int, num_layers: int, dropout: float) -> None:
+    def __init__(self, in_dim: int, widths: Sequence[int], dropout: float) -> None:
         """Build the stack.
 
         Args:
             in_dim: Input width.
-            hidden_dim: Hidden width, the same at every layer.
-            num_layers: Hidden layers. Zero makes this an identity, which is what a
-                one-feature branch usually wants.
+            widths: Output width of each hidden layer, in order. Empty makes this an
+                identity, which is what a group with no private layers wants.
             dropout: Dropout probability between layers.
         """
         super().__init__()
         layers: list[nn.Module] = []
         width = in_dim
-        for _ in range(num_layers):
-            layers += [nn.Linear(width, hidden_dim), nn.ReLU(), nn.Dropout(dropout)]
-            width = hidden_dim
+        for out_width in widths:
+            layers += [nn.Linear(width, out_width), nn.ReLU(), nn.Dropout(dropout)]
+            width = out_width
         self.network = nn.Sequential(*layers)
         self.out_dim = width
 
@@ -95,6 +95,12 @@ class ScorePredictor(nn.Module):
     Attributes:
         embeddings: The extended word vectors, frozen unless the run fine-tunes them.
         domain_embed: Learned domain representation, row 0 being `<rare>`.
+        disabled: Input groups zeroed before anything reads them, for the
+            leave-one-group-out ablation. On the base class so the ablation runs on any
+            architecture rather than only on the one with separable blocks -- measured
+            on the block-diagonal model alone it reports which group was handed the most
+            hidden units as much as which group carries the most signal, because that
+            model allocates its width in proportion to input width.
     """
 
     def __init__(
@@ -124,6 +130,7 @@ class ScorePredictor(nn.Module):
         self.domain_embed = nn.Embedding(num_domains, config.domain_embed_dim)
         self.embed_size = int(embedding_matrix.shape[1])
         self.config = config
+        self.disabled: set[str] = set()
 
     def pool_title(self, tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """Mean of a title's word vectors, ignoring padding.
@@ -150,8 +157,19 @@ class ScorePredictor(nn.Module):
 
         Returns:
             `(batch, numeric_dim + domain_embed_dim)`.
+
+        A group named in `disabled` is zeroed here, which for the domain means its
+        embedding as well as its flag -- zeroing only the numeric column would leave the
+        model an 8-d representation of exactly the thing being ablated.
         """
         embedded: torch.Tensor = self.domain_embed(domain)
+        if self.disabled:
+            numeric = numeric.clone()
+            for group in self.disabled:
+                if group in GROUP_SLICES:
+                    numeric[:, GROUP_SLICES[group]] = 0.0
+            if "domain" in self.disabled:
+                embedded = torch.zeros_like(embedded)
         return torch.cat([numeric, embedded], dim=1)
 
     def forward(
@@ -179,9 +197,7 @@ class TextOnlyScorer(ScorePredictor):
 
     def __init__(self, embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> None:
         super().__init__(embedding_matrix, num_domains, config)
-        self.branch = BranchMLP(
-            self.embed_size, config.hidden_dim, config.num_layers, config.dropout
-        )
+        self.branch = BranchMLP(self.embed_size, config.hidden_widths, config.dropout)
         self.head = nn.Linear(self.branch.out_dim, 1)
 
     def forward(
@@ -199,10 +215,7 @@ class FeaturesOnlyScorer(ScorePredictor):
         super().__init__(embedding_matrix, num_domains, config)
         numeric_dim = sum(slot.stop - slot.start for slot in GROUP_SLICES.values())
         self.branch = BranchMLP(
-            numeric_dim + config.domain_embed_dim,
-            config.hidden_dim,
-            config.num_layers,
-            config.dropout,
+            numeric_dim + config.domain_embed_dim, config.hidden_widths, config.dropout
         )
         self.head = nn.Linear(self.branch.out_dim, 1)
 
@@ -216,137 +229,119 @@ class FeaturesOnlyScorer(ScorePredictor):
         return predicted
 
 
-class EarlyFusionScorer(ScorePredictor):
-    """One MLP over the title and the features concatenated at the input."""
+class FusionScorer(ScorePredictor):
+    """Title and metadata, meeting at a configurable layer.
 
-    def __init__(self, embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> None:
-        super().__init__(embedding_matrix, num_domains, config)
-        numeric_dim = sum(slot.stop - slot.start for slot in GROUP_SLICES.values())
-        self.branch = BranchMLP(
-            self.embed_size + numeric_dim + config.domain_embed_dim,
-            config.hidden_dim,
-            config.num_layers,
-            config.dropout,
-        )
-        self.head = nn.Linear(self.branch.out_dim, 1)
+    Layers before `fusion_layer` are **block-diagonal**: each input group is projected
+    into its own share of that layer's width and reaches nothing else. Layers from
+    `fusion_layer` on are dense and shared. `fusion_layer=1` therefore *is* early
+    fusion -- one dense stack over everything -- and a larger value delays the meeting
+    without changing anything else about the network.
 
-    def forward(
-        self, tokens: torch.Tensor, mask: torch.Tensor, numeric: torch.Tensor, domain: torch.Tensor
-    ) -> torch.Tensor:
-        combined = torch.cat(
-            [self.pool_title(tokens, mask), self.feature_block(numeric, domain)], dim=1
-        )
-        predicted: torch.Tensor = self.head(self.branch(combined)).squeeze(-1)
-        return predicted
+    This is one class rather than an `EarlyFusionScorer` and a `LateFusionScorer`
+    because they were always the same network with a different fusion point, and keeping
+    them apart is what let an earlier version drift: it gave each group a full-width
+    tower plus an extra layer, so against early fusion it varied connectivity, width and
+    depth at once, with 4.5x the parameters and three explanations for any gap.
 
+    Shares are proportional to how many input columns each group brings, floored at one
+    and summing exactly to the layer's width. That is what makes the first layer the
+    same shape as early fusion's, so a block-diagonal model is early fusion with weights
+    deleted rather than a differently-sized network -- and the gap between them measures
+    the crosstalk and nothing else.
 
-class LateFusionScorer(ScorePredictor):
-    """One tower per branch, joined at the head.
+    At least one shared layer always remains. Without it the model would be
+    `sum_g w_g . f_g(x_g)`, a generalised additive model that cannot represent any
+    interaction between the title and the timestamp at all -- which an earlier
+    single-layer version silently was.
 
     Attributes:
-        branches: Text plus one tower per feature group, keyed by group name.
-        disabled: Groups zeroed at the input, which is how the leave-one-group-out
-            ablation runs without retraining or rebuilding anything.
+        fusion_layer: Where the groups meet, after clamping to the stack's depth.
     """
 
-    def __init__(self, embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> None:
-        super().__init__(embedding_matrix, num_domains, config)
-        widths = {"text": self.embed_size}
-        for group in FEATURE_GROUPS:
-            slot = GROUP_SLICES[group]
-            width = slot.stop - slot.start
-            if group == "domain":
-                width += config.domain_embed_dim
-            widths[group] = width
+    def __init__(
+        self,
+        embedding_matrix: torch.Tensor,
+        num_domains: int,
+        config: Config,
+        fusion_layer: int | None = None,
+    ) -> None:
+        """Build the stack.
 
-        # A branch narrower than the hidden width gets one layer rather than the full
-        # stack: three 128-wide layers over a three-column author block is capacity
-        # spent on nothing, and it makes the late model slower than early for no gain.
-        self.branches = nn.ModuleDict(
+        Args:
+            embedding_matrix: `(vocab_size, embed_size)` extended word vectors.
+            num_domains: Rows the domain embedding needs.
+            config: Supplies the widths, dropout and the default fusion point.
+            fusion_layer: Overrides `config.fusion_layer`. `build_model` pins this to 1
+                for `fusion="early"`.
+
+        Raises:
+            ValueError: If the fusion point is below 1, or the stack has no layers.
+        """
+        super().__init__(embedding_matrix, num_domains, config)
+        widths = list(config.hidden_widths)
+        if not widths:
+            raise ValueError("hidden_widths must name at least one layer")
+        requested = config.fusion_layer if fusion_layer is None else fusion_layer
+        if requested < 1:
+            raise ValueError(f"fusion_layer must be at least 1, got {requested}")
+        # Clamped rather than rejected: a Bayes sweep draws fusion_layer independently of
+        # the shape, so `5` against a two-layer stack is a normal sample, not an error. It
+        # costs a run either way; clamping makes that run useful. The effective value goes
+        # to W&B so the analysis groups on what was built, not what was asked for.
+        self.fusion_layer = min(requested, len(widths))
+
+        # Resize the groups before they meet, so the comparison is not dominated by the
+        # title arriving 100x wider than the author's history for reasons that have
+        # nothing to do with how much either one says.
+        raw_widths = _input_widths(self)
+        # Every group gets an entry, `Identity` where nothing is resized, so `forward`
+        # has no branch and the two ModuleDicts always share their keys.
+        self.project = nn.ModuleDict(
             {
-                name: BranchMLP(
-                    width,
-                    config.hidden_dim,
-                    max(1, config.num_layers - 1) if name != "text" else config.num_layers,
-                    config.dropout,
+                name: (
+                    nn.Identity()
+                    if (target := _projected_width(name, size, config)) == size
+                    else nn.Linear(size, target)
                 )
-                for name, width in widths.items()
+                for name, size in raw_widths.items()
             }
         )
-        self.head = nn.Sequential(
-            nn.Linear(config.hidden_dim * len(self.branches), config.hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(config.dropout),
-            nn.Linear(config.hidden_dim, 1),
-        )
-        self.disabled: set[str] = set()
-
-    def forward(
-        self, tokens: torch.Tensor, mask: torch.Tensor, numeric: torch.Tensor, domain: torch.Tensor
-    ) -> torch.Tensor:
-        parts = {"text": self.pool_title(tokens, mask)}
-        for group in FEATURE_GROUPS:
-            block = numeric[:, GROUP_SLICES[group]]
-            if group == "domain":
-                block = torch.cat([block, self.domain_embed(domain)], dim=1)
-            parts[group] = block
-
-        outputs = []
-        for name, branch in self.branches.items():
-            value = parts[name]
-            if name in self.disabled:
-                value = torch.zeros_like(value)
-            outputs.append(branch(value))
-        predicted: torch.Tensor = self.head(torch.cat(outputs, dim=1)).squeeze(-1)
-        return predicted
-
-
-class BlockDiagonalScorer(ScorePredictor):
-    """Early fusion with the cross-group connections removed, and nothing else changed.
-
-    `LateFusionScorer` gives each group a full-width tower and adds a head to combine
-    them, so against early fusion it varies connectivity, width *and* depth at once --
-    three explanations for any difference it shows. This varies only connectivity.
-
-    The first layer is the same `329 -> hidden` map early fusion uses, with the weight
-    matrix constrained to be block-diagonal: each group's inputs reach only its own share
-    of the hidden units, and the shares are proportional to how many inputs each group
-    brings. Everything after the first layer is identical to early fusion. It is
-    therefore strictly *smaller* -- it is early fusion with weights deleted -- which is
-    what makes "does crosstalk help?" the only question being asked.
-
-    Attributes:
-        disabled: Groups zeroed at the input, for the leave-one-group-out ablation.
-    """
-
-    def __init__(self, embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> None:
-        super().__init__(embedding_matrix, num_domains, config)
-        widths = {"text": self.embed_size}
-        for group in FEATURE_GROUPS:
-            slot = GROUP_SLICES[group]
-            widths[group] = (slot.stop - slot.start) + (
-                config.domain_embed_dim if group == "domain" else 0
-            )
-        total_in = sum(widths.values())
-
-        # Hidden units split in proportion to inputs, with a floor of one so a
-        # three-column group still reaches the head. The remainder goes to the widest
-        # group, so the shares sum to exactly `hidden_dim` and the layer is the same size
-        # as early fusion's.
-        shares = {
-            name: max(1, round(config.hidden_dim * w / total_in)) for name, w in widths.items()
+        group_widths = {
+            name: _projected_width(name, size, config) for name, size in raw_widths.items()
         }
-        widest = max(shares, key=lambda name: widths[name])
-        shares[widest] += config.hidden_dim - sum(shares.values())
 
-        self.blocks = nn.ModuleDict(
-            {name: BranchMLP(widths[name], shares[name], 1, config.dropout) for name in widths}
-        )
-        self.rest = BranchMLP(
-            config.hidden_dim, config.hidden_dim, max(0, config.num_layers - 1), config.dropout
-        )
-        self.head = nn.Linear(config.hidden_dim, 1)
-        self.disabled: set[str] = set()
+        towers = _parse_towers(config.tower_shapes)
+        if towers:
+            # Explicit per-group towers: each input gets its own depth and widths, and
+            # `hidden_widths` becomes the shared trunk.
+            self.blocks = nn.ModuleDict(
+                {
+                    name: BranchMLP(size, towers.get(name, ()), config.dropout)
+                    for name, size in group_widths.items()
+                }
+            )
+            joined = sum(
+                towers[name][-1] if towers.get(name) else size
+                for name, size in group_widths.items()
+            )
+            shared = widths
+        else:
+            private = widths[: self.fusion_layer - 1]
+            shared = widths[self.fusion_layer - 1 :]
+            self.blocks = nn.ModuleDict(
+                {
+                    name: BranchMLP(
+                        size,
+                        [_shares(group_widths, w, config.block_allocation)[name] for w in private],
+                        dropout=config.dropout,
+                    )
+                    for name, size in group_widths.items()
+                }
+            )
+            joined = sum(private[-1:]) or sum(group_widths.values())
+        self.rest = BranchMLP(joined, shared, config.dropout)
+        self.head = nn.Linear(self.rest.out_dim, 1)
 
     def forward(
         self, tokens: torch.Tensor, mask: torch.Tensor, numeric: torch.Tensor, domain: torch.Tensor
@@ -359,22 +354,114 @@ class BlockDiagonalScorer(ScorePredictor):
             parts[group] = block
 
         pieces = []
-        for name, projection in self.blocks.items():
+        # Not `block`: that name is bound to a tensor above, and reusing it makes the
+        # module look like a tensor to the type checker.
+        for name, layer in self.blocks.items():
             value = parts[name]
             if name in self.disabled:
                 value = torch.zeros_like(value)
-            pieces.append(projection(value))
+            pieces.append(layer(self.project[name](value)))
         predicted: torch.Tensor = self.head(self.rest(torch.cat(pieces, dim=1))).squeeze(-1)
         return predicted
 
 
-_ARCHITECTURES: dict[Fusion, type[ScorePredictor]] = {
-    "text_only": TextOnlyScorer,
-    "features_only": FeaturesOnlyScorer,
-    "early": EarlyFusionScorer,
-    "late": LateFusionScorer,
-    "block_diagonal": BlockDiagonalScorer,
-}
+def _parse_towers(spec: str) -> dict[str, tuple[int, ...]]:
+    """Per-group tower shapes from `text:128;temporal:16,16`.
+
+    Args:
+        spec: Semicolon-separated `group:widths` pairs. Empty means no explicit towers.
+
+    Returns:
+        Group name to its layer widths. A group the spec omits gets no tower.
+
+    Raises:
+        ValueError: If a clause is malformed or names an unknown group.
+
+    A string rather than five config fields because it has to survive a shell
+    environment: `AI_RESIDENCY_TOWER_SHAPES=text:128;author:8,8` is one variable a sweep
+    can set, where five would need five.
+    """
+    if not spec.strip():
+        return {}
+    towers: dict[str, tuple[int, ...]] = {}
+    for clause in spec.split(";"):
+        if not clause.strip():
+            continue
+        name, _, widths = clause.partition(":")
+        name = name.strip()
+        if name not in INPUT_LABELS:
+            raise ValueError(f"unknown input group {name!r} in tower_shapes")
+        towers[name] = tuple(int(part) for part in widths.split(",") if part.strip())
+    return towers
+
+
+def _projected_width(name: str, size: int, config: Config) -> int:
+    """The width a group arrives at the fusion layer with.
+
+    Args:
+        name: The input group.
+        size: How many columns it brings natively.
+        config: Supplies `input_projection` and `projection_dim`.
+
+    Returns:
+        The width after any resizing.
+
+    The three modes answer the same objection from different directions: the title is
+    300-d because word2vec chose 300, not because a title says a hundred times more than
+    an author's history does. `text_down` shrinks the title to meet the metadata,
+    `features_up` grows the metadata to meet the title, and `all` puts everything at one
+    width. None of them adds information -- they change only how much of the fusion layer
+    each input can reach.
+    """
+    mode = config.input_projection
+    if mode == "none":
+        return size
+    if mode == "all":
+        return config.projection_dim
+    if mode == "text_down":
+        return config.projection_dim if name == "text" else size
+    return size if name == "text" else config.projection_dim
+
+
+def _shares(
+    group_widths: dict[str, int], width: int, allocation: Allocation = "proportional"
+) -> dict[str, int]:
+    """Split one layer's width between the input groups.
+
+    Args:
+        group_widths: How many input columns each group brings.
+        width: The layer's total width.
+        allocation: `proportional` to columns, or `equal` between groups.
+
+    Returns:
+        Each group's share, at least one each and summing to exactly `width`.
+
+    **Proportional is not the neutral rule it looks like.** The title arrives as a 300-d
+    mean of word vectors, so its width reflects the embedding size rather than how much
+    it says; the author's history is three engineered scalars. Splitting by column count
+    gives the title 233 of 256 units and the author 2 -- and on this data the 29 metadata
+    columns out-predict the 300 title columns, so the rule hands the weaker input eight
+    times the capacity, then a fusion-point sweep measures that instead of fusion.
+
+    `equal` divides the width evenly. Either way the shares sum to exactly `width`, so
+    the block-diagonal layer stays the same size as the dense layer it is carved from and
+    late fusion remains early fusion with weights deleted.
+    """
+    names = list(group_widths)
+    if allocation == "equal":
+        shares = {name: max(1, width // len(names)) for name in names}
+    else:
+        total = sum(group_widths.values())
+        shares = {name: max(1, round(width * size / total)) for name, size in group_widths.items()}
+    widest = max(shares, key=lambda name: group_widths[name])
+    shares[widest] += width - sum(shares.values())
+    return shares
+
+
+# `early` and `late` are the same class at different fusion points. Early fusion is
+# pinned to 1 rather than reading the config, so it stays the fixed reference the curve
+# is measured against however `fusion_layer` is swept.
+_FUSION_POINTS: dict[Fusion, int | None] = {"early": 1, "late": None}
 
 
 def build_model(embedding_matrix: torch.Tensor, num_domains: int, config: Config) -> ScorePredictor:
@@ -383,7 +470,7 @@ def build_model(embedding_matrix: torch.Tensor, num_domains: int, config: Config
     Args:
         embedding_matrix: The extended word vectors.
         num_domains: Rows the domain embedding needs.
-        config: Supplies `fusion` and every width.
+        config: Supplies `fusion`, the layer widths and the fusion point.
 
     Returns:
         The model, on CPU.
@@ -393,11 +480,13 @@ def build_model(embedding_matrix: torch.Tensor, num_domains: int, config: Config
             through `Config`, which validates the Literal, but reachable by a caller
             constructing one directly.
     """
-    if config.fusion not in _ARCHITECTURES:
-        raise ValueError(
-            f"unknown fusion {config.fusion!r}; expected one of {list(_ARCHITECTURES)}"
-        )
-    return _ARCHITECTURES[config.fusion](embedding_matrix, num_domains, config)
+    if config.fusion == "text_only":
+        return TextOnlyScorer(embedding_matrix, num_domains, config)
+    if config.fusion == "features_only":
+        return FeaturesOnlyScorer(embedding_matrix, num_domains, config)
+    if config.fusion in _FUSION_POINTS:
+        return FusionScorer(embedding_matrix, num_domains, config, _FUSION_POINTS[config.fusion])
+    raise ValueError(f"unknown fusion {config.fusion!r}; expected one of {list(get_args(Fusion))}")
 
 
 def load_predictor_weights(model: ScorePredictor, state_dict: dict[str, torch.Tensor]) -> None:
@@ -415,8 +504,17 @@ def load_predictor_weights(model: ScorePredictor, state_dict: dict[str, torch.Te
     returns quietly, and the service happily serves a randomly-initialised head. Nothing
     fails, the API answers, and the numbers are noise. So the omission is checked to be
     exactly the one that was intended.
+
+    Two different mismatches reach here now that every fused model is one class. A
+    checkpoint from a different *architecture* misses keys; one from the same
+    architecture at a different width or fusion point has all the keys and the wrong
+    shapes, which `load_state_dict` raises itself. Both are the same failure to a caller,
+    so both leave by the same message -- serving logs it verbatim.
     """
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    try:
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    except RuntimeError as error:
+        raise RuntimeError(f"checkpoint does not fit this architecture: {error}") from error
     unexplained = set(missing) - {"embeddings.weight"}
     if unexplained or unexpected:
         raise RuntimeError(
@@ -432,95 +530,238 @@ def describe(model: ScorePredictor) -> dict[str, object]:
         model: A built scorer.
 
     Returns:
-        `{"parameters", "hidden", "first_layer", "connectivity"}`.
+        `{"parameters", "hidden", "depth", "fusion_layer", "first_layer",
+        "shared_layers", "connectivity"}`.
 
-    Read off the built modules rather than written down beside them. The four
-    architectures differ in ways a prose label hides -- `late` carries five times the
-    hidden units of `early` and an extra layer, so "late versus early" is not only a
-    question about connectivity -- and a UI that states the difference should be reading
-    it from the model rather than from a comment that can go stale.
+    Read off the built modules rather than written down beside them. The first layer is
+    the only place the fused architectures differ, so it is reported block by block;
+    everything the groups share after meeting is reported separately. A UI that states
+    the difference should be reading it from the model rather than from a comment that
+    can go stale.
     """
-    linear = [
-        (name, layer) for name, layer in model.named_modules() if isinstance(layer, nn.Linear)
-    ]
-    first = [
-        f"{layer.in_features}→{layer.out_features}"
-        for name, layer in linear
-        if "head" not in name and "rest" not in name
-    ]
-    hidden = sum(
-        layer.out_features for name, layer in linear if "head" not in name and "rest" not in name
-    )
+    blocks = first_layer_blocks(model)
     return {
         "parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
-        "hidden": hidden,
-        "first_layer": " | ".join(first) or "—",
-        "connectivity": "dense" if len(first) == 1 else f"{len(first)} separate blocks",
+        "hidden": sum(out for _, _, out in blocks),
+        "depth": len(model.config.hidden_widths),
+        "fusion_layer": getattr(model, "fusion_layer", 1),
+        "first_layer": " | ".join(f"{i}→{o}" for _, i, o in blocks) or "—",
+        "shared_layers": " → ".join(_shared_shapes(model)) or "—",
+        "connectivity": "dense" if len(blocks) == 1 else f"{len(blocks)} separate blocks",
     }
 
 
-def graph_dot(model: ScorePredictor) -> str:
+def _shared_shapes(model: ScorePredictor) -> list[str]:
+    """The layers every input group passes through together, after the first.
+
+    A `FusionScorer` fused at layer one has no private layers, so its shared stack is
+    everything in `rest` *after* the first -- which `first_layer_blocks` already
+    reported. Fused later, the whole of `rest` is shared and the private layers live in
+    `blocks`.
+    """
+    source = model.rest if isinstance(model, FusionScorer) else getattr(model, "branch", None)
+    network = getattr(source, "network", None)
+    if not isinstance(network, nn.Sequential):
+        return []
+    linears = [layer for layer in network if isinstance(layer, nn.Linear)]
+    fused_at_one = isinstance(model, FusionScorer) and model.fusion_layer == 1
+    if fused_at_one or not isinstance(model, FusionScorer):
+        linears = linears[1:]
+    return [f"{layer.in_features}→{layer.out_features}" for layer in linears]
+
+
+def _graph_nodes(model: ScorePredictor, prefix: str = "") -> list[str]:
+    """The DOT nodes and edges for one architecture, ids optionally prefixed.
+
+    Args:
+        model: A built scorer.
+        prefix: Prepended to every node id, so several graphs can share one digraph
+            without their nodes colliding.
+
+    Returns:
+        DOT statement lines, without the enclosing braces.
+    """
+    inputs = {name: (INPUT_LABELS[name], width) for name, width in _input_widths(model).items()}
+    box = "style=filled fontcolor=white fillcolor="
+
+    def node(name: str) -> str:
+        """This graph's id for a node, unique across the graphs sharing a digraph."""
+        return f"{prefix}{name}"
+
+    lines = [f'  {node("score")} [label="expected\\nupvotes" shape=oval {box}"#eb6834"];']
+
+    blocks = model.blocks if isinstance(model, FusionScorer) and model.fusion_layer > 1 else None
+    if blocks is None:
+        # Fused at the first layer: every input reaches one dense stack.
+        used = [key for key in inputs if _uses(model, key)]
+        source = model.rest if isinstance(model, FusionScorer) else model.branch
+        width = _first_width(source)
+        for key in used:
+            label, size = inputs[key]
+            lines.append(
+                f'  {node(key)} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];'
+            )
+            lines.append(f"  {node(key)} -> {node('dense')};")
+        total = sum(inputs[key][1] for key in used)
+        lines.append(
+            f'  {node("dense")} [label="one dense layer\\n{total} → {width}" {box}"#2a78d6"];'
+        )
+        lines.extend(_shared_nodes(model, node, "dense", box))
+        return lines
+
+    for key, module in blocks.items():
+        label, size = inputs[key]
+        out = _first_width(module) or size
+        lines.append(f'  {node(key)} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];')
+        lines.append(f'  {node(key)}_l [label="{size} → {out}" {box}"#2a78d6"];')
+        lines.append(f"  {node(key)} -> {node(key)}_l -> {node('concat')};")
+    width = sum(_first_width(module) for module in blocks.values())
+    lines.append(f'  {node("concat")} [label="concat\\n{width}" shape=point width=0.12];')
+    lines.extend(_shared_nodes(model, node, "concat", box))
+    return lines
+
+
+def _shared_nodes(
+    model: ScorePredictor, node: Callable[[str], str], source: str, box: str
+) -> list[str]:
+    """The layers every input group passes through together, from the join to the score.
+
+    Args:
+        model: A built scorer.
+        node: This graph's id-maker, so ids stay unique inside a shared digraph.
+        source: Id of the node the shared stack reads from.
+        box: The DOT attribute prefix for a filled node.
+
+    Returns:
+        DOT statements for the shared stack and the edge into the score.
+
+    Drawn for every architecture because it *is* the same stack in each: they differ in
+    where the groups meet and in nothing else, and a diagram showing the shared part for
+    only one of them would hide the thing that makes them comparable.
+    """
+    shared = _shared_shapes(model)
+    if not shared:
+        return [f"  {node(source)} -> {node('score')};"]
+    label = " → ".join(shared)
+    lines = [f'  {node("shared")} [label="shared\\n{label}" {box}"#4a3aa7"];']
+    lines.append(f"  {node(source)} -> {node('shared')} -> {node('score')};")
+    return lines
+
+
+def _graph_header(rankdir: str) -> list[str]:
+    """The digraph preamble every architecture diagram shares."""
+    return [
+        "digraph {",
+        f"  rankdir={rankdir};",
+        "  node [shape=box style=rounded fontname=Helvetica fontsize=10];",
+        '  edge [color="#898781"];',
+    ]
+
+
+def graph_dot(model: ScorePredictor, rankdir: str = "BT") -> str:
     """The model's structure as Graphviz DOT, for rendering in the UI.
 
     Args:
         model: A built scorer.
+        rankdir: Graphviz direction. `BT` puts the inputs at the bottom and the score at
+            the top, matching the course diagram in the write-up.
 
     Returns:
-        A DOT digraph: inputs on the left, layers in the middle, the score on the right.
+        A DOT digraph from the inputs to the predicted score.
 
     Built from the model's own modules, the same way `describe` is, so a diagram cannot
     drift from the network it claims to show. `make onnx` writes the full computation
     graph for Netron; this is the shape a reader needs while looking at four predictions.
     """
-    inputs = {
-        "text": ("title", model.embed_size),
-        "temporal": ("when posted", GROUP_SLICES["temporal"].stop - GROUP_SLICES["temporal"].start),
-        "domain": ("where it links", 1 + model.config.domain_embed_dim),
-        "title_surface": (
-            "title shape",
-            GROUP_SLICES["title_surface"].stop - GROUP_SLICES["title_surface"].start,
-        ),
-        "author": ("author history", GROUP_SLICES["author"].stop - GROUP_SLICES["author"].start),
-    }
-    box = "style=filled fontcolor=white fillcolor="
-    lines = [
-        "digraph {",
-        "  rankdir=LR;",
-        "  node [shape=box style=rounded fontname=Helvetica fontsize=10];",
-        '  edge [color="#898781"];',
-        f'  score [label="expected\\nupvotes" shape=oval {box}"#eb6834"];',
-    ]
+    return "\n".join([*_graph_header(rankdir), *_graph_nodes(model), "}"])
 
-    blocks = getattr(model, "blocks", None) or getattr(model, "branches", None)
-    if blocks is None:
-        # One dense layer over whatever this architecture takes.
-        used = [k for k in inputs if _uses(model, k)]
-        width = _first_width(model.branch)
-        for key in used:
-            label, size = inputs[key]
-            lines.append(f'  {key} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];')
-            lines.append(f"  {key} -> dense;")
-        total = sum(inputs[k][1] for k in used)
-        lines.append(f'  dense [label="one dense layer\\n{total} → {width}" {box}"#2a78d6"];')
-        lines.append("  dense -> score;")
-    else:
-        joined = "concat" if hasattr(model, "rest") else "head"
-        for key, module in blocks.items():
-            label, size = inputs[key]
-            out = _first_width(module) or size
-            lines.append(f'  {key} [label="{label}\\n{size}" style=filled fillcolor="#e8f0fb"];')
-            lines.append(f'  {key}_l [label="{size} → {out}" {box}"#2a78d6"];')
-            lines.append(f"  {key} -> {key}_l -> {joined};")
-        width = sum(_first_width(m) for m in blocks.values())
-        if hasattr(model, "rest"):
-            lines.append(f'  concat [label="concat\\n{width}" shape=point width=0.12];')
-            lines.append("  concat -> score;")
-        else:
-            head_in, head_out = _linear_shape(model.head)
-            lines.append(f'  head [label="second layer\\n{head_in} → {head_out}" {box}"#4a3aa7"];')
-            lines.append("  head -> score;")
+
+def graph_dot_all(models: dict[str, ScorePredictor], rankdir: str = "BT") -> str:
+    """Every architecture in one digraph, so they are drawn to one scale.
+
+    Args:
+        models: Fusion name to built scorer, in the order they should appear.
+        rankdir: Graphviz direction, as for `graph_dot`.
+
+    Returns:
+        One DOT digraph holding a labelled cluster per architecture.
+
+    Four separate graphs each scaled to the same column width is not a comparison: the
+    tall narrow one (title only, two nodes stacked) is blown up and the wide one (early
+    fusion, five inputs side by side) is shrunk, so the same "expected upvotes" node
+    comes out a different size in each and the diagrams read as though they were drawn at
+    different zoom levels. Laying them out as clusters of a single graph makes Graphviz
+    size every node once, which is what makes the four visually comparable.
+    """
+    lines = _graph_header(rankdir)
+    lines.append("  compound=true;")
+    lines.append('  graph [fontname=Helvetica fontsize=11 fontcolor="#52514e" color="#c3c2b7"];')
+    for name, model in models.items():
+        lines.append(f"  subgraph cluster_{name} {{")
+        lines.append(f'    label="{ARCHITECTURE_LABELS.get(name, name)}";')
+        lines.append("    labelloc=b;")
+        lines.extend(f"  {line}" for line in _graph_nodes(model, prefix=f"{name}_"))
+        lines.append("  }")
     lines.append("}")
     return "\n".join(lines)
+
+
+# What a reader calls each architecture, for a diagram that shows more than one.
+ARCHITECTURE_LABELS = {
+    "text_only": "Title only",
+    "features_only": "Metadata only",
+    "early": "Early fusion",
+    "late": "Late fusion",
+}
+
+# What a reader calls each input group. `graph_dot` and the connectivity figure label
+# the same five things, so the names live here rather than in whichever drew them first.
+INPUT_LABELS = {
+    "text": "title",
+    "temporal": "when posted",
+    "domain": "where it links",
+    "title_surface": "title shape",
+    "author": "author history",
+}
+
+
+def _input_widths(model: ScorePredictor) -> dict[str, int]:
+    """How many columns each input group contributes, in input order."""
+    widths = {"text": model.embed_size}
+    for group in FEATURE_GROUPS:
+        slot = GROUP_SLICES[group]
+        widths[group] = (slot.stop - slot.start) + (
+            model.config.domain_embed_dim if group == "domain" else 0
+        )
+    return widths
+
+
+def first_layer_blocks(model: ScorePredictor) -> list[tuple[str, int, int]]:
+    """The first layer as `(label, in_features, out_features)` per block.
+
+    Args:
+        model: A built scorer.
+
+    Returns:
+        One entry per independent block, in input order. A dense architecture has a
+        single entry spanning every input; the block-diagonal one has five.
+
+    This is what makes the connectivity figure a *reading* of the model rather than a
+    drawing beside it. The two are the same layer shape and differ only in how many
+    blocks it is cut into, which is the whole claim the figure exists to show.
+    """
+    if isinstance(model, FusionScorer) and model.fusion_layer > 1:
+        blocks = []
+        for name, block in model.blocks.items():
+            in_features, out_features = _linear_shape(getattr(block, "network", None))
+            blocks.append((INPUT_LABELS.get(name, name), in_features, out_features))
+        return blocks
+    # Fused at layer one: the shared stack *is* the first layer, and every input reaches
+    # all of it. `blocks` is a stack of identities in that case, so it has no shape to
+    # report and the dense `rest` is what the diagram should show.
+    source = model.rest if isinstance(model, FusionScorer) else getattr(model, "branch", None)
+    in_features, out_features = _linear_shape(getattr(source, "network", None))
+    return [("all inputs", in_features, out_features)]
 
 
 def _first_width(module: object) -> int:

@@ -54,10 +54,22 @@ parameters:
     distribution: log_uniform_values
     min: 0.000001
     max: 0.001
-  AI_RESIDENCY_HIDDEN_DIM:
-    values: [64, 128, 256]
-  AI_RESIDENCY_NUM_LAYERS:
-    values: [1, 2, 3]
+  # The number and size of hidden layers are one field, so a whole architecture shape is
+  # a swept value rather than a code change. `BaseConfig._coerce` parses the
+  # comma-separated form back into a tuple, which is what makes this work with no
+  # trainer plumbing at all. The same thirteen shapes `make fusion-curve` walks, so the
+  # grid and the search are comparable.
+  AI_RESIDENCY_HIDDEN_WIDTHS:
+    values: ["320,256", "256,256", "320,256,192", "256,256,256",
+             "320,256,192,128", "256,256,256,256",
+             "320,256,192,128,96", "256,256,256,256,256",
+             "320,256,192,128,96,32", "128,128,128,128,128,128",
+             "640,512,384", "64,64,64", "256,64,256"]
+  # Where the groups first meet. Drawn independently of the shape, so values past a short
+  # stack's depth are normal samples; they clamp, and the run records the fusion point it
+  # actually built as `model/fusion_layer`. Group the analysis on that, not on this.
+  AI_RESIDENCY_FUSION_LAYER:
+    values: [1, 2, 3, 4, 5, 6]
   AI_RESIDENCY_DROPOUT:
     values: [0.0, 0.1, 0.2, 0.3]
   AI_RESIDENCY_DOMAIN_EMBED_DIM:

@@ -28,10 +28,6 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -39,6 +35,15 @@ from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
 from ai_residency_common import get_logger, load_checkpoint, resolve_required, set_seed
+from ai_residency_common.figures import (
+    BLUE,
+    INK_SOFT,
+    MUTED,
+    ORANGE,
+    RULE,
+    apply_style,
+    save_figure,
+)
 from config import Config
 from word_embeddings.evaluate import PUBLISHED_TEXT8, checkpoint_vocabulary
 
@@ -46,37 +51,7 @@ __all__ = ["main", "plot_benchmarks", "plot_country_capital", "plot_loss", "plot
 
 logger = get_logger(__name__)
 
-# The reference categorical palette, first three slots -- the set that validates on
-# all pairs rather than only adjacent ones, which is what a scatter needs.
-BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
-INK, INK_SOFT, MUTED, RULE = "#0b0b0b", "#52514e", "#898781", "#c3c2b7"
-SURFACE = "#fcfcfb"
-
 ASSETS = Path("services/word-embeddings/assets")
-
-
-def _style() -> None:
-    """Recessive axes and grid, so the data is the only assertive thing on the page."""
-    plt.rcParams.update(
-        {
-            "figure.facecolor": SURFACE,
-            "axes.facecolor": SURFACE,
-            "axes.edgecolor": RULE,
-            "axes.labelcolor": INK_SOFT,
-            "axes.titlecolor": INK,
-            "axes.grid": True,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "grid.color": RULE,
-            "grid.alpha": 0.4,
-            "grid.linewidth": 0.6,
-            "text.color": INK,
-            "xtick.color": MUTED,
-            "ytick.color": MUTED,
-            "font.size": 10,
-            "legend.frameon": False,
-        }
-    )
 
 
 def _runs(project: str, sweep_id: str | None = None) -> list[Any]:
@@ -124,7 +99,7 @@ def _best_per_architecture(runs: list[Any]) -> dict[str, Any]:
 
 def plot_loss(runs: list[Any], output: Path) -> None:
     """Training loss as a fraction of each run's own random-init baseline."""
-    _style()
+    apply_style()
     figure, axes = plt.subplots(figsize=(7.5, 4.2))
 
     for (architecture, run), colour in zip(
@@ -163,14 +138,14 @@ def plot_loss(runs: list[Any], output: Path) -> None:
     axes.set_ylim(0, 1.1)
     axes.legend(loc="upper right")
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE)
+    save_figure(figure, output, tight=False)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
 
 def plot_benchmarks(runs: list[Any], output: Path) -> None:
     """Benchmark scores against epoch, one panel per benchmark."""
-    _style()
+    apply_style()
     panels = [
         ("eval/wordsim353_spearman", "WordSim-353", "Spearman rho", "wordsim353_spearman"),
         ("eval/simlex999_spearman", "SimLex-999", "Spearman rho", "simlex999_spearman"),
@@ -215,7 +190,7 @@ def plot_benchmarks(runs: list[Any], output: Path) -> None:
         y=1.02,
     )
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -226,7 +201,7 @@ def plot_sweep(runs: list[Any], output: Path) -> None:
     A dot per run rather than a line: these are independent runs, and joining them
     would imply a trajectory that does not exist.
     """
-    _style()
+    apply_style()
     parameters = [
         ("architecture", "architecture"),
         ("embed_size", "embedding size"),
@@ -290,7 +265,7 @@ def plot_sweep(runs: list[Any], output: Path) -> None:
         y=1.04,
     )
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -347,7 +322,7 @@ def plot_country_capital(config: Config, output: Path) -> None:
     country-capital as a consistent direction -- rather than a citation of someone
     else's.
     """
-    _style()
+    apply_style()
     set_seed(config.seed)
     path, _ = resolve_required(config.embedding_checkpoint, config.hf_repo_id)
     checkpoint = load_checkpoint(path)
@@ -390,7 +365,7 @@ def plot_country_capital(config: Config, output: Path) -> None:
     axes.legend(handles=handles, loc="best")
     axes.set_title("Country and capital vectors, projected by PCA", pad=12)
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE)
+    save_figure(figure, output, tight=False)
     plt.close(figure)
     logger.info("Wrote %s", output)
 

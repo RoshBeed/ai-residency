@@ -136,6 +136,7 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div:first-chi
 .prob-fill { height:100%; background:var(--series-1-muted); }
 .prob-fill.pred { background:var(--series-1); }
 .prob-value { width:56px; text-align:right; font-size:12px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+.prob-delta { width:46px; text-align:right; font-size:11px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
 .loss-svg { display:block; margin:6px 0 4px; }
 .stat-row { display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 14px; }
 .stat-tile { padding:10px 16px; border:1px solid var(--border); border-radius:8px; background:var(--chip-bg); }

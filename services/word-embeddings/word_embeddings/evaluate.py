@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 from ai_residency_common import get_logger, load_checkpoint, resolve_required, set_seed
+from ai_residency_common.figures import save_figure
 from config import Config
 from word2vec import nearest_words
 from word_embeddings.benchmarks import evaluate_embeddings, load_benchmarks
@@ -158,7 +159,7 @@ def visualise_embeddings(config: Config, max_embeddings: int, output: str) -> No
         plt.annotate(word, (x, y), fontsize=7)
     plt.title(f"{config.architecture} embeddings, t-SNE projection (top {len(words)})")
     plt.grid(True)
-    plt.savefig(output, dpi=150, bbox_inches="tight")
+    save_figure(plt.gcf(), output)
     plt.close()
     logger.info("Wrote %s", output)
 

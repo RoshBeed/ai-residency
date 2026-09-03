@@ -260,19 +260,27 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "docs_path": "services/content-scoring/README.md",
         "diagrams": [
             (
+                "assets/content-scoring/fusion-architectures.png",
+                "The first layer is the only place early and late fusion differ: early wires "
+                "every input group to every hidden unit, late keeps the five blocks on the "
+                "diagonal. The shared layer underneath is identical in both.",
+            ),
+            (
                 "assets/word-embeddings/fig3-late-early-fusion.png",
                 "Early fusion versus late fusion — this service builds both and compares them "
                 "head to head, alongside the text-only and features-only ablations.",
             ),
         ],
         "model_specs": [
-            "**Late fusion** (served) — 421,721 parameters. Five towers, each `→ 256`: "
-            "title `300`, temporal `6`, domain `9`, title-surface `11`, author `3`. "
-            "Concatenated to a head of `1280 → 256 → 1`.",
-            "**Early fusion** — 92,761 parameters, `329 → 256 → 1`. The 329 is the 300-d "
-            "pooled title plus 21 numeric features plus the 8-d domain embedding.",
-            "**Text only** — 85,337 parameters, `300 → 256 → 1`. The pooled title alone.",
-            "**Features only** — 15,961 parameters, `29 → 256 → 1`. The metadata alone.",
+            "**Early fusion** (served) — 150,593 parameters. A dense `329 → 256` first "
+            "layer, then a shared `256 → 256` and the head. The 329 is the 300-d pooled "
+            "title plus 21 numeric features plus the 8-d domain embedding.",
+            "**Late fusion** — 136,467 parameters. The same layer with the cross-group "
+            "weights removed: `300→233 | 6→5 | 9→7 | 11→9 | 3→2`, so each group reaches "
+            "only its own hidden units. Identical shared layer and head, so the two differ "
+            "in connectivity alone.",
+            "**Text only** — 143,169 parameters, `300 → 256` then the shared stack.",
+            "**Features only** — 73,793 parameters, `29 → 256` then the shared stack.",
             "**Domain embedding** — `1003 × 8`, shared by all four. Domains seen fewer than "
             "50 times in training collapse to one `<rare>` row.",
             "**Word vectors** — `86,438 × 300` skip-gram, text8 continued on the Hacker News "

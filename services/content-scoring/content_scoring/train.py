@@ -62,7 +62,12 @@ from content_scoring.evaluate import (
     slice_table,
     viral_calibration,
 )
-from content_scoring.model import build_model, load_predictor_weights, predictor_state_dict
+from content_scoring.model import (
+    build_model,
+    describe,
+    load_predictor_weights,
+    predictor_state_dict,
+)
 
 __all__ = ["train"]
 
@@ -216,9 +221,10 @@ def train(config: Config) -> float:
             },
             step=epoch,
         )
-        log_table("eval/slices", columns, rows, step=epoch)
-        probe_columns, probe_rows = probe_table(model, splits, config, word_to_index)
-        log_table("eval/probes", probe_columns, probe_rows, step=epoch)
+        if config.log_tables:
+            log_table("eval/slices", columns, rows, step=epoch)
+            probe_columns, probe_rows = probe_table(model, splits, config, word_to_index)
+            log_table("eval/probes", probe_columns, probe_rows, step=epoch)
 
         logger.info(
             "epoch %2d/%d  loss %.4f  val rho %.4f  ndcg@10 %.4f  lift %.2f",
@@ -258,12 +264,13 @@ def train(config: Config) -> float:
         # belongs.
         best_score = -1.0
         logger.warning(
-            "%s collapsed to a constant prediction at lr=%g, dropout=%g, layers=%d -- "
-            "no epoch produced a defined Spearman",
+            "%s collapsed to a constant prediction at lr=%g, dropout=%g, widths=%s, "
+            "fusion_layer=%d -- no epoch produced a defined Spearman",
             config.fusion,
             config.learning_rate,
             config.dropout,
-            config.num_layers,
+            ",".join(str(width) for width in config.hidden_widths),
+            config.fusion_layer,
         )
 
     test_frame = splits.frames["test"]
@@ -275,9 +282,10 @@ def train(config: Config) -> float:
     test_columns, test_rows = slice_table(
         test_frame, test_predicted, test_actual, splits, word_to_index
     )
-    log_table("test/slices", test_columns, test_rows)
+    if config.log_tables:
+        log_table("test/slices", test_columns, test_rows)
     ablation_columns, ablation_rows = leave_one_group_out(model, splits, "test")
-    if ablation_rows:
+    if ablation_rows and config.log_tables:
         log_table("test/ablation", ablation_columns, ablation_rows)
 
     # `set_summary`, not the last logged value: W&B otherwise summarises a run by where
@@ -293,6 +301,13 @@ def train(config: Config) -> float:
             # has one MLP, so "same hyperparameters" is not "same capacity" -- and
             # a curve drawn against layers would quietly credit early fusion for
             # being the smaller model.
+            # The architecture as *built*, not as requested: `fusion_layer` clamps to the
+            # stack's depth, so a sweep asking for 5 against a two-layer shape is recorded
+            # at the 2 it actually got. Grouping the curve on the request would merge
+            # different models into one point.
+            "model/fusion_layer": describe(model)["fusion_layer"],
+            "model/hidden_widths": ",".join(str(width) for width in config.hidden_widths),
+            "model/depth": len(config.hidden_widths),
             "model/parameters": sum(p.numel() for p in model.parameters()),
             "model/trainable_parameters": sum(
                 p.numel() for p in model.parameters() if p.requires_grad
@@ -365,6 +380,10 @@ def train(config: Config) -> float:
             json.dumps(
                 {
                     "fusion": config.fusion,
+                    # The architecture, so promotion can tell a rival seed from a
+                    # different model wearing the same name.
+                    "hidden_widths": ",".join(str(w) for w in config.hidden_widths),
+                    "fusion_layer": describe(model)["fusion_layer"],
                     "seed": config.seed,
                     "objective": config.objective,
                     "epoch": best_epoch,
@@ -406,11 +425,34 @@ def _promote(config: Config, selection_score: float) -> None:
             stored = json.load(handle)
         # Only comparable within one objective; a `log_mse` incumbent must not block a
         # `poisson` run, since their validation scores are not on the same scale.
+        #
+        # And only within one architecture. An incumbent from a different shape or fusion
+        # point is not a rival, it is a different model -- and one whose weights the
+        # current code may not even be able to load. Merging the two fusion classes
+        # renamed early fusion's stack from `branch` to `rest`, and the old promoted
+        # checkpoint went on out-scoring three freshly trained seeds while failing to load
+        # at all, so `make evaluate` crashed on a file promotion was actively protecting.
+        architecture = (
+            ",".join(str(width) for width in config.hidden_widths),
+            config.fusion_layer,
+        )
+        stored_architecture = (
+            stored.get("hidden_widths"),
+            stored.get("fusion_layer"),
+        )
         if (
             stored.get("objective") == config.objective
             and stored.get("selection_metric") == config.selection_metric
+            and stored_architecture == architecture
         ):
             incumbent = float(stored.get("val_selection", -float("inf")))
+        elif stored_architecture != architecture:
+            logger.info(
+                "promoted checkpoint is a different architecture (%s at layer %s); "
+                "not treating it as an incumbent",
+                stored_architecture[0],
+                stored_architecture[1],
+            )
     if selection_score <= incumbent:
         logger.info(
             "seed %d scored %.4f, behind the promoted %.4f; keeping the incumbent",

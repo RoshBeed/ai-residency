@@ -11,7 +11,12 @@ from typing import Any
 import streamlit as st
 
 from client import call
-from components import render_probability_bars, render_stats, render_word_trace
+from components import (
+    render_delta_bars,
+    render_probability_bars,
+    render_stats,
+    render_word_trace,
+)
 from shared import service_page
 
 SERVICE = "content-scoring"
@@ -131,19 +136,16 @@ def _score(
 
 
 def _delta_table(rows: list[tuple[str, float]], baseline: float) -> None:
-    """Variants against the post as typed, ordered by predicted score."""
+    """Variants against the post as typed, ordered by predicted score.
+
+    One line each. The bar, the predicted count and the change from the post as typed
+    share a row rather than the numbers being repeated under the chart, which is what
+    fits all three comparisons on a screen instead of scrolling past thirty rows.
+    """
     ordered = sorted(rows, key=lambda row: -row[1])
     if not ordered:
         return
-    largest = max(value for _, value in ordered) or 1.0
-    st.markdown(
-        render_probability_bars({name: value / largest for name, value in ordered}, ordered[0][0]),
-        unsafe_allow_html=True,
-    )
-    for name, value in ordered:
-        change = value - baseline
-        arrow = "▲" if change > 0.05 else ("▼" if change < -0.05 else "—")
-        st.markdown(f"`{value:>6.1f}`  {arrow} {change:+.1f} &nbsp; {name}", unsafe_allow_html=True)
+    st.markdown(render_delta_bars(ordered, baseline), unsafe_allow_html=True)
 
 
 def _render_score(data: dict[str, Any] | None) -> None:
@@ -191,13 +193,20 @@ def _render_what_moves_it(bundle: dict[str, Any]) -> None:
         return
     st.markdown(f"Your post as typed scores **{base:.1f} upvotes**. Now change one thing:")
 
-    for heading, key in (
-        ("Where it links", "domains"),
-        ("When it is posted", "hours"),
-        ("How the title opens", "prefixes"),
+    # Side by side rather than stacked: the three questions are independent, so reading
+    # them in parallel is the point, and stacking them pushed the last one off-screen.
+    for column, (heading, key) in zip(
+        st.columns(3),
+        (
+            ("Where it links", "domains"),
+            ("When it is posted", "hours"),
+            ("How the title opens", "prefixes"),
+        ),
+        strict=True,
     ):
-        st.markdown(f"**{heading}**")
-        _delta_table(bundle[key], base)
+        with column:
+            st.markdown(f"**{heading}**")
+            _delta_table(bundle[key], base)
 
     st.caption(
         "Across the whole test set, removing the timestamp branch costs the model more accuracy "
@@ -233,7 +242,7 @@ def _render_architectures(data: dict[str, Any] | None) -> None:
     if details:
         st.markdown("**What each one is**")
         rows = [
-            "| model | what it is | first layer | hidden | parameters |",
+            "| model | what it is | first layer | then | parameters |",
             "|---|---|---|---|---|",
         ]
         for name in predictions:
@@ -243,9 +252,10 @@ def _render_architectures(data: dict[str, Any] | None) -> None:
             # collapsed. Escaping here rather than changing the separator keeps the API
             # returning data and the renderer responsible for its own syntax.
             shape = str(spec.get("first_layer", "—")).replace("|", "\\|")
+            shared = str(spec.get("shared_layers", "—"))
             rows.append(
                 f"| {ARCHITECTURES.get(name, name)} | {WHAT_EACH_IS.get(name, '')} "
-                f"| `{shape}` | {spec.get('hidden', '—')} "
+                f"| `{shape}` | `{shared} → 1` "
                 f"| {spec.get('parameters', 0):,} |"
             )
         st.markdown("\n".join(rows))

@@ -1,10 +1,10 @@
 """Export each architecture to ONNX, for inspection in Netron.
 
-The four models differ in ways a parameter count only hints at: `late` runs five separate
-towers and joins them in a second layer, `block_diagonal` is the same first layer as
-`early` with the cross-group weights removed. Both are much easier to see than to read
-about, and an exported graph is checkable in a way a hand-drawn diagram is not -- it comes
-from the model rather than from someone's memory of it.
+The four models differ in ways a parameter count only hints at: `early` is one dense
+layer over everything, `late` is that same layer with the cross-group weights removed, so
+each input group reaches only its own share of the hidden units. That is much easier to
+see than to read about, and an exported graph is checkable in a way a hand-drawn diagram
+is not -- it comes from the model rather than from someone's memory of it.
 
     make -C services/content-scoring onnx
     netron services/content-scoring/assets/onnx/late.onnx
@@ -16,6 +16,7 @@ anything has been trained.
 
 import argparse
 from pathlib import Path
+from typing import get_args
 
 import torch
 
@@ -83,7 +84,7 @@ def main() -> None:
     parser.add_argument("--real-shapes", action="store_true", help="Use the true table sizes.")
     arguments = parser.parse_args()
 
-    for fusion in ("text_only", "features_only", "early", "block_diagonal", "late"):
+    for fusion in get_args(Fusion):
         export(fusion, ASSETS / f"{fusion}.onnx", real_shapes=arguments.real_shapes)
     logger.info("Open one with: netron %s", ASSETS / "late.onnx")
 

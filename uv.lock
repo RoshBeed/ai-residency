@@ -88,6 +88,11 @@ dependencies = [
     { name = "wandb" },
 ]
 
+[package.optional-dependencies]
+figures = [
+    { name = "matplotlib" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -99,12 +104,14 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.100" },
     { name = "huggingface-hub", specifier = ">=0.24" },
+    { name = "matplotlib", marker = "extra == 'figures'", specifier = ">=3.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=9.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "torch", specifier = ">=2.0" },
     { name = "wandb", specifier = ">=0.17" },
 ]
+provides-extras = ["figures"]
 
 [package.metadata.requires-dev]
 dev = [

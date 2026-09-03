@@ -3,43 +3,53 @@
 Every number here comes from `evaluate.py` or from the W&B run history. Nothing is
 recomputed: a figure that disagreed with the README table would be worse than no figure.
 
-Palette and axis treatment match `word-embeddings/report.py`, so the two write-ups read
-as one portfolio rather than two. The four-slot categorical set (blue, orange, aqua,
-violet) was validated on the all-pairs list, which is what a scatter needs -- the
-adjacent-pairs default is only enough for bars and lines. Aqua sits below 3:1 against
-the surface, so every chart that uses it also carries direct value labels.
+Palette, axis treatment and resolution come from `ai_residency_common.figures`, so
+every write-up in the portfolio reads as one rather than nine. See that module for why
+the DPI is a constant.
 """
 
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
+from matplotlib.patches import Rectangle
 
 from ai_residency_common import get_logger
-from config import Config
+from ai_residency_common.figures import (
+    BLUE,
+    INK_SOFT,
+    MUTED,
+    ORANGE,
+    RULE,
+    SERIES,
+    SURFACE,
+    VIOLET,
+    apply_style,
+    save_figure,
+)
+from config import Config, Fusion
+from content_scoring.model import build_model, describe, first_layer_blocks
 
 __all__ = [
     "main",
     "plot_ablation",
+    "plot_architectures",
     "plot_capacity",
     "plot_fusion_comparison",
+    "plot_fusion_curve",
     "plot_score_distribution",
+    "plot_seed_distribution",
     "plot_slices",
 ]
 
 logger = get_logger(__name__)
-
-BLUE, ORANGE, AQUA, VIOLET = "#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7"
-INK, INK_SOFT, MUTED, RULE = "#0b0b0b", "#52514e", "#898781", "#c3c2b7"
-SURFACE = "#fcfcfb"
-SERIES = (BLUE, ORANGE, AQUA, VIOLET)
 
 # Resolved from this file, not from the working directory. Every other path in the
 # service is relative to the repo root because that is where `make` runs, but the
@@ -47,6 +57,19 @@ SERIES = (BLUE, ORANGE, AQUA, VIOLET)
 # mistake here creates `services/content-scoring/services/content-scoring/assets`
 # rather than failing.
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+# Width of the extended word vectors, for the architecture figure only.
+EMBED_SIZE = 300
+
+# What a reader calls each input group in a figure. `content_scoring.model.INPUT_LABELS`
+# names the same five for the diagrams; these are the sentence-case forms.
+GROUP_LABELS = {
+    "text": "the title",
+    "temporal": "when it was posted",
+    "domain": "where it links",
+    "title_surface": "the title's shape",
+    "author": "the author's history",
+}
 
 LABELS = {
     "text_only": "Text only",
@@ -60,30 +83,6 @@ LABELS = {
 }
 
 
-def _style() -> None:
-    """Recessive axes and grid, so the data is the only assertive thing on the page."""
-    plt.rcParams.update(
-        {
-            "figure.facecolor": SURFACE,
-            "axes.facecolor": SURFACE,
-            "axes.edgecolor": RULE,
-            "axes.labelcolor": INK_SOFT,
-            "axes.titlecolor": INK,
-            "axes.grid": True,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "grid.color": RULE,
-            "grid.alpha": 0.4,
-            "grid.linewidth": 0.6,
-            "text.color": INK,
-            "xtick.color": MUTED,
-            "ytick.color": MUTED,
-            "font.size": 10,
-            "legend.frameon": False,
-        }
-    )
-
-
 def plot_fusion_comparison(report: dict[str, dict[str, float]], output: Path) -> None:
     """The four architectures against the four baselines, on two metrics.
 
@@ -95,7 +94,7 @@ def plot_fusion_comparison(report: dict[str, dict[str, float]], output: Path) ->
     ranges and mean different things; overlaying them on a shared axis would invite
     exactly the comparison that is not valid.
     """
-    _style()
+    apply_style()
     baselines = [
         name
         for name in ("global_mean", "hour_mean", "domain_mean", "tfidf_ridge")
@@ -141,7 +140,7 @@ def plot_fusion_comparison(report: dict[str, dict[str, float]], output: Path) ->
         ha="left",
     )
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -157,7 +156,7 @@ def plot_score_distribution(config: Config, output: Path) -> None:
     logged and the reason a squared error on the raw scale would train a model to
     predict the tail and ignore everything else.
     """
-    _style()
+    apply_style()
     scores = pd.read_parquet(config.split_path("train"), columns=["score"])["score"].to_numpy()
 
     figure, panels = plt.subplots(1, 2, figsize=(11, 3.8))
@@ -195,24 +194,27 @@ def plot_score_distribution(config: Config, output: Path) -> None:
         ha="left",
     )
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
 
 def plot_ablation(rows: list[list[Any]], output: Path) -> None:
-    """What each feature group contributes to the late-fusion model.
+    """What each input group contributes to the dense model.
 
     Args:
         rows: `(group, spearman, delta)` from `leave_one_group_out`.
         output: Where to write the PNG.
+
+    Ordered by size of the drop rather than by the order the groups happen to be
+    declared in, because the ranking is the finding.
     """
     if not rows:
         logger.warning("No ablation rows; skipping %s", output)
         return
-    _style()
-    ablated = [row for row in rows if row[0] != "(none)"]
-    names = [LABELS.get(str(row[0]), str(row[0]).replace("_", " ")) for row in ablated]
+    apply_style()
+    ablated = sorted((row for row in rows if row[0] != "(none)"), key=lambda row: float(row[2]))
+    names = [GROUP_LABELS.get(str(row[0]), str(row[0]).replace("_", " ")) for row in ablated]
     deltas = [float(row[2]) for row in ablated]
 
     figure, axes = plt.subplots(figsize=(7.5, 3.8))
@@ -232,12 +234,13 @@ def plot_ablation(rows: list[list[Any]], output: Path) -> None:
             color=INK_SOFT,
         )
     axes.axvline(0, color=MUTED, linewidth=1)
-    axes.set_xlabel("change in Spearman ρ when this branch is zeroed")
-    axes.set_title("Leave one group out, late fusion", fontsize=12, loc="left")
-    axes.invert_yaxis()
+    axes.set_xlabel("change in Spearman ρ when this input is zeroed")
+    axes.set_title("Leave one input out, early fusion", fontsize=12, loc="left")
+    # Room for the longest label to sit inside the axes rather than on top of the tick.
+    axes.set_xlim(min(deltas) * 1.28, max(0.0, max(deltas)) + 0.006)
     axes.grid(axis="y", visible=False)
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -255,7 +258,7 @@ def plot_slices(rows: list[list[Any]], output: Path) -> None:
     if not rows:
         logger.warning("No slice rows; skipping %s", output)
         return
-    _style()
+    apply_style()
     families: dict[str, list[list[Any]]] = {}
     for row in rows:
         families.setdefault(str(row[0]), []).append(row)
@@ -279,7 +282,7 @@ def plot_slices(rows: list[list[Any]], output: Path) -> None:
 
     figure.suptitle("Late fusion, sliced", fontsize=12, x=0.02, ha="left")
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -299,7 +302,7 @@ def plot_capacity(capacity: dict[str, dict[str, list[Any]]], output: Path) -> No
     if not capacity:
         logger.warning("No capacity rows; skipping %s", output)
         return
-    _style()
+    apply_style()
     layers = sorted(int(k) for k in capacity)
     figure, panels = plt.subplots(1, 2, figsize=(11, 4.0))
 
@@ -347,7 +350,315 @@ def plot_capacity(capacity: dict[str, dict[str, list[Any]]], output: Path) -> No
         ha="left",
     )
     figure.tight_layout()
-    figure.savefig(output, dpi=200, facecolor=SURFACE, bbox_inches="tight")
+    save_figure(figure, output)
+    plt.close(figure)
+    logger.info("Wrote %s", output)
+
+
+def plot_architectures(config: Config, output: Path) -> None:
+    """Early against late: one layer differs, everything after it is shared.
+
+    Args:
+        config: Supplies the hidden width and the domain embedding size.
+        output: Where to write the PNG.
+
+    Both models are the same stack -- a first layer of 329 inputs onto 256 hidden units,
+    a shared 256 → 256 layer, then the head -- and differ only in which of the first
+    layer's weights exist. The top row is that layer as a group-by-block grid: early
+    fills all twenty-five cells, late keeps the five on the diagonal. The bottom row is
+    everything after it, drawn for both because it is identical in both, which is what
+    makes the pair a controlled comparison rather than two different networks.
+
+    Drawn as a grid rather than as the weight matrix itself because the title is 300 of
+    the 329 inputs, so a to-scale matrix renders the four metadata groups as invisible
+    slivers. The true widths are printed on the axes, so the even spacing hides nothing.
+
+    Shapes are read off built models, so the figure cannot drift from the network. A stub
+    embedding matrix is enough because only layer widths are drawn, not weights.
+    """
+    apply_style()
+    stub = torch.zeros(64, EMBED_SIZE)
+    spec: tuple[tuple[Fusion, str], ...] = (
+        ("early", "one dense layer"),
+        ("late", "the same layer, block-diagonal"),
+    )
+
+    figure, panels = plt.subplots(
+        2, 2, figsize=(11, 4.8), height_ratios=[6, 0.55], gridspec_kw={"hspace": 0.5}
+    )
+    groups = first_layer_blocks(build_model(stub, 8, replace(config, fusion="late")))
+    size = len(groups)
+
+    for column, (fusion, subtitle) in enumerate(spec):
+        model = build_model(stub, 8, replace(config, fusion=fusion))
+        blocks = first_layer_blocks(model)
+        facts = describe(model)
+        top, bottom = panels[0][column], panels[1][column]
+
+        # Rows are input groups, columns are the hidden units each group owns. A dense
+        # layer connects every group to every column; the block-diagonal one connects
+        # each group only to its own.
+        grid = np.ones((size, size)) if len(blocks) == 1 else np.eye(size)
+        _connectivity(top, grid, groups)
+        weights = (
+            sum(width for _, width, _ in groups) * sum(out for _, _, out in groups)
+            if len(blocks) == 1
+            else sum(width * out for _, width, out in groups)
+        )
+        top.set_title(
+            f"{'Early' if fusion == 'early' else 'Late'} fusion — {subtitle}\n"
+            f"{weights:,} first-layer weights",
+            fontsize=10,
+            pad=14,
+        )
+
+        bottom.imshow(
+            np.ones((1, size)),
+            cmap=matplotlib.colors.ListedColormap([SURFACE, VIOLET]),
+            vmin=0,
+            vmax=1,
+            interpolation="nearest",
+            aspect="auto",
+        )
+        bottom.grid(False)
+        bottom.set_xticks([])
+        bottom.set_yticks([])
+        for spine in bottom.spines.values():
+            spine.set_visible(False)
+        bottom.text(
+            (size - 1) / 2,
+            0,
+            f"shared {facts['shared_layers']}, then the head — identical in both",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="white",
+        )
+
+    panels[0][0].set_ylabel(
+        "input group, and how many columns it brings", color=INK_SOFT, fontsize=9
+    )
+
+    save_figure(figure, output)
+    plt.close(figure)
+    logger.info("Wrote %s", output)
+
+
+def _connectivity(
+    panel: Any, grid: "np.ndarray[Any, Any]", groups: list[tuple[str, int, int]]
+) -> None:
+    """Draw one group-by-block connectivity grid onto a panel."""
+    panel.imshow(
+        grid,
+        cmap=matplotlib.colors.ListedColormap([SURFACE, BLUE]),
+        vmin=0,
+        vmax=1,
+        interpolation="nearest",
+    )
+    for row in range(len(groups)):
+        for column in range(len(groups)):
+            panel.add_patch(
+                Rectangle(
+                    (column - 0.5, row - 0.5), 1, 1, fill=False, edgecolor=RULE, linewidth=0.8
+                )
+            )
+    panel.grid(False)
+    panel.set_xticks(range(len(groups)))
+    panel.set_xticklabels([str(out) for _, _, out in groups], fontsize=8)
+    panel.set_yticks(range(len(groups)))
+    panel.set_yticklabels([f"{label}  ({width})" for label, width, _ in groups], fontsize=8.5)
+    panel.set_xlabel("hidden units, by the group that owns them", color=INK_SOFT, fontsize=9)
+    panel.tick_params(length=0)
+    for spine in panel.spines.values():
+        spine.set_visible(False)
+
+
+def _curve_runs(project: str) -> list[dict[str, Any]]:
+    """Every finished fusion-curve run, as flat records.
+
+    Args:
+        project: `entity/project` on W&B.
+
+    Returns:
+        One dict per run with `widths`, `fusion_layer`, `seed`, `val_mae` and `spearman`.
+
+    Reads the *effective* fusion layer from the summary rather than the requested one
+    from the config: a value past the end of a shape clamps, so grouping on the request
+    would merge two different models into one point on the curve.
+
+    **Only the grid's own runs count.** Three kinds of run share this project and two of
+    them would corrupt the curve:
+
+    - the Bayes search varies learning rate, dropout and width, so a point meant to hold
+      ten identical runs would hold a hundred differently-tuned ones and the spread would
+      describe the hyperparameter search rather than the seed;
+    - the published training runs use the default shape, which *is* a point on the curve
+      -- 94 of them landed on `256,256` at fusion layer 2 before this filter existed.
+
+    `run.sweep` excludes the first. `save_checkpoints` and `promote` exclude the second:
+    the grid writes nothing by design, and nothing else that writes nothing shares its
+    shape. Both work on runs that have already finished, which matters because the filter
+    was missing when the first 150 ran.
+    """
+    import wandb
+
+    api = wandb.Api()
+    records = []
+    for run in api.runs(project):
+        if run.state != "finished" or run.sweep is not None:
+            continue
+        summary, config = run.summary, run.config
+        if config.get("save_checkpoints", True) or config.get("promote", True):
+            continue
+        widths = summary.get("model/hidden_widths")
+        layer = summary.get("model/fusion_layer")
+        if widths is None or layer is None:
+            continue  # a run from before the fusion point was swept
+        records.append(
+            {
+                "widths": str(widths),
+                "fusion_layer": int(layer),
+                "seed": int(config.get("seed", 0)),
+                "val_mae": float(summary.get("best/val_mae", float("nan"))),
+                "spearman": float(summary.get("test/spearman", float("nan"))),
+            }
+        )
+    return records
+
+
+# The grid, grouped by the question each comparison answers. Depths 2-6 pair a taper
+# against a constant-width control, so a difference between them is the shape and not the
+# depth; the width panel holds three depth-3 shapes that differ only in how wide the
+# isolated blocks are.
+CURVE_PANELS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("2 layers", ("320,256", "256,256")),
+    ("3 layers", ("320,256,192", "256,256,256")),
+    ("4 layers", ("320,256,192,128", "256,256,256,256")),
+    ("5 layers", ("320,256,192,128,96", "256,256,256,256,256")),
+    ("6 layers", ("320,256,192,128,96,32", "128,128,128,128,128,128")),
+    ("3 layers, width varied", ("640,512,384", "256,256,256", "256,64,256", "64,64,64")),
+)
+
+
+def plot_fusion_curve(records: list[dict[str, Any]], output: Path) -> None:
+    """Accuracy against the layer at which the input groups first meet.
+
+    Args:
+        records: `_curve_runs` output.
+        output: Where to write the PNG.
+
+    **Small multiples, not thirteen lines on one axis.** The categorical palette holds
+    four hues and is never cycled, so thirteen shapes on shared axes would give four
+    shapes the same colour and make the legend a guess. Each panel holds two to four
+    series that are meant to be compared with each other, which is also the structure of
+    the experiment: a taper against a constant-width control at each depth, and then the
+    width probes that decide whether the effect is fusion or capacity.
+
+    **Median and interquartile band, not mean and standard deviation.** Late fusion's
+    seed spread reached 0.106 Spearman where early fusion's was 0.026, with runs landing
+    in two clusters rather than around one centre. A mean would describe neither, and an
+    error bar drawn from a standard deviation would imply a precision these runs do not
+    have. `plot_seed_distribution` shows the raw points behind these bands.
+
+    Spearman only. Validation MAE moves within about 1.5 upvotes across the whole grid
+    and not monotonically, so plotting it beside a metric that moves by half its range
+    invites reading noise as signal -- the README states that it does not separate these
+    models rather than giving it half a figure.
+    """
+    if not records:
+        logger.warning("No fusion-curve runs found; skipping %s", output)
+        return
+    apply_style()
+    frame = pd.DataFrame(records)
+
+    figure, panels = plt.subplots(2, 3, figsize=(12.5, 6.6), sharey=True)
+    for index, (title, shapes) in enumerate(CURVE_PANELS):
+        panel = panels[index // 3][index % 3]
+        for slot, shape in enumerate(shapes):
+            rows = frame[frame["widths"] == shape]
+            if rows.empty:
+                continue
+            grouped = rows.groupby("fusion_layer")["spearman"]
+            points = sorted(int(str(key)) for key in grouped.groups)
+            colour = SERIES[slot % len(SERIES)]
+            panel.plot(
+                points,
+                [grouped.get_group(p).median() for p in points],
+                color=colour,
+                linewidth=2,
+                marker="o",
+                markersize=5,
+                label=shape,
+            )
+            panel.fill_between(
+                points,
+                [grouped.get_group(p).quantile(0.25) for p in points],
+                [grouped.get_group(p).quantile(0.75) for p in points],
+                color=colour,
+                alpha=0.15,
+                linewidth=0,
+            )
+        panel.set_title(title, fontsize=10, loc="left")
+        panel.set_xticks(range(1, 7))
+        panel.legend(fontsize=7.5, loc="upper right")
+        if index // 3 == 1:
+            panel.set_xlabel("layer the groups first meet", fontsize=9)
+        if index % 3 == 0:
+            panel.set_ylabel("test Spearman ρ", fontsize=9)
+
+    figure.suptitle(
+        "Delaying fusion costs accuracy — but most of the cost is narrow blocks, not late fusion",
+        fontsize=11,
+        x=0.01,
+        ha="left",
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
+    save_figure(figure, output, tight=False)
+    plt.close(figure)
+    logger.info("Wrote %s", output)
+
+
+def plot_seed_distribution(records: list[dict[str, Any]], output: Path) -> None:
+    """Every seed at every fusion point, drawn individually.
+
+    Args:
+        records: `_curve_runs` output.
+        output: Where to write the PNG.
+
+    The companion to the curve, and the reason the run uses ten seeds rather than three.
+    If late fusion is bimodal -- sometimes training to early fusion's accuracy and
+    sometimes collapsing 0.10 below it -- then a median and a band hide the only thing
+    worth knowing, which is *how often it works* rather than how good it is on average.
+    """
+    if not records:
+        logger.warning("No fusion-curve runs found; skipping %s", output)
+        return
+    apply_style()
+    frame = pd.DataFrame(records)
+    shapes = sorted(frame["widths"].unique(), key=lambda w: (len(w.split(",")), w))
+
+    columns = min(4, len(shapes))
+    rows_needed = (len(shapes) + columns - 1) // columns
+    figure, panels = plt.subplots(
+        rows_needed, columns, figsize=(3.1 * columns, 2.5 * rows_needed), squeeze=False
+    )
+    generator = np.random.default_rng(0)
+    for index, shape in enumerate(shapes):
+        panel = panels[index // columns][index % columns]
+        rows = frame[frame["widths"] == shape]
+        # Jittered, so ten seeds landing on the same value are visible as ten points
+        # rather than as one.
+        jitter = generator.uniform(-0.12, 0.12, len(rows))
+        panel.scatter(rows["fusion_layer"] + jitter, rows["spearman"], s=14, color=BLUE, alpha=0.75)
+        panel.set_title(shape, fontsize=8.5, loc="left")
+        panel.set_xticks(sorted(rows["fusion_layer"].unique()))
+        panel.tick_params(labelsize=7)
+    for index in range(len(shapes), rows_needed * columns):
+        panels[index // columns][index % columns].axis("off")
+    figure.supxlabel("layer at which the groups first meet", fontsize=9, color=INK_SOFT)
+    figure.supylabel("test Spearman ρ, one point per seed", fontsize=9, color=INK_SOFT)
+    figure.tight_layout()
+    save_figure(figure, output, tight=False)
     plt.close(figure)
     logger.info("Wrote %s", output)
 
@@ -361,6 +672,11 @@ def main() -> None:
         help="Output of `python -m content_scoring.evaluate --json <path>`.",
     )
     parser.add_argument(
+        "--curve",
+        action="store_true",
+        help="Also draw the fusion-point curve, which reads run history back from W&B.",
+    )
+    parser.add_argument(
         "--capacity",
         default="services/content-scoring/assets/capacity.json",
         help="Depth-sweep results, for the crossover figure.",
@@ -370,6 +686,7 @@ def main() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
 
     plot_score_distribution(config, ASSETS / "score-distribution.png")
+    plot_architectures(config, ASSETS / "fusion-architectures.png")
 
     path = Path(arguments.report)
     if not path.exists():
@@ -387,6 +704,15 @@ def main() -> None:
             plot_capacity(json.load(handle), ASSETS / "fusion-capacity.png")
     plot_slices(report.get("slices", []), ASSETS / "slice-performance.png")
     plot_ablation(report.get("ablation", []), ASSETS / "feature-ablation.png")
+
+    # Behind a flag because it is the only figure that needs the network: everything else
+    # is drawn from the evaluation JSON on disk, so `make report` still works offline.
+    if arguments.curve and config.wandb_project:
+        records = _curve_runs(config.wandb_project)
+        plot_fusion_curve(records, ASSETS / "fusion-curve.png")
+        plot_seed_distribution(records, ASSETS / "fusion-seeds.png")
+    elif arguments.curve:
+        logger.warning("No wandb_project configured, so the fusion curve cannot be drawn")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ import numpy as np
 import seaborn as sns
 
 from ai_residency_common import get_logger
+from ai_residency_common.figures import save_figure
 from config import Config, DatasetSpec
 
 # macOS's default backend is interactive and blocks on show() when these run as a
@@ -205,7 +206,7 @@ def create_visualizations(config: Config) -> Path | None:
     plt.tight_layout()
     output_path = config.data_dir / "dataset_analysis.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    save_figure(plt.gcf(), output_path)
     plt.close(figure)
     logger.info("Saved class-balance plots to %s", output_path)
     return output_path
@@ -254,7 +255,7 @@ def plot_example_spectrograms(config: Config) -> list[Path]:
         plt.tight_layout()
         output_path = config.data_dir / "audio_spectrograms.png"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        save_figure(plt.gcf(), output_path)
         plt.close(figure)
         logger.info("Saved spectrograms to %s", output_path)
         written.append(output_path)
@@ -283,7 +284,7 @@ def plot_example_spectrograms(config: Config) -> list[Path]:
             logger.info("Example: %s | label: %s", audio_file.name, emotion)
         plt.tight_layout(rect=(0, 0, 1, 0.96))
         output_path = config.data_dir / "example_melspectrograms.png"
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        save_figure(plt.gcf(), output_path)
         plt.close(figure)
         logger.info("Saved example mel spectrograms to %s", output_path)
         written.append(output_path)

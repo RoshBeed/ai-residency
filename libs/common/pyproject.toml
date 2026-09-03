@@ -19,6 +19,12 @@ dependencies = [
     "wandb>=0.17",
 ]
 
+[project.optional-dependencies]
+# Only the reporting stages import `figures`; a serving image never draws a chart, and
+# matplotlib is ~60MB it would otherwise carry into every one of the nine API
+# containers. `Dockerfile.train` installs with `--all-extras`.
+figures = ["matplotlib>=3.10"]
+
 [project.urls]
 Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/libs/common"
 Repository = "https://github.com/RoshBeed/ai-residency.git"

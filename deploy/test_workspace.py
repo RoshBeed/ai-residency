@@ -14,6 +14,7 @@ specific to deploying.
 
 import pathlib
 import re
+import subprocess
 import tomllib
 from typing import Any
 
@@ -306,3 +307,65 @@ def test_every_frontend_docs_path_resolves() -> None:
         if "docs_path" in project and not (ROOT / project["docs_path"]).exists()
     ]
     assert not missing, "frontend docs_path values that do not resolve: " + ", ".join(missing)
+
+
+def png_dpi(path: pathlib.Path) -> int | None:
+    """The horizontal resolution a PNG declares, in dots per inch, or None.
+
+    Args:
+        path: The PNG to read.
+
+    Returns:
+        The rounded DPI, or None if the file declares no physical size.
+
+    Reads the `pHYs` chunk directly rather than through Pillow, which is not a
+    dependency of this suite and would be a 3MB install to read eight bytes. The chunk
+    stores pixels per metre; PNG has no DPI field of its own.
+    """
+    with path.open("rb") as handle:
+        if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+            return None
+        while chunk := handle.read(8):
+            length = int.from_bytes(chunk[:4], "big")
+            if chunk[4:] == b"pHYs":
+                body = handle.read(length)
+                if body[8] != 1:  # unit 1 is metres; 0 means "aspect ratio only"
+                    return None
+                return round(int.from_bytes(body[:4], "big") * 0.0254)
+            if chunk[4:] == b"IDAT":
+                return None
+            handle.seek(length + 4, 1)
+    return None
+
+
+def test_every_committed_figure_is_the_portfolio_resolution() -> None:
+    """One DPI across every write-up, so two figures are the same size on a page.
+
+    Nine services drew charts with their own `dpi=` and the committed assets came out at
+    110, 140, 150, 200, 300 and 600, which a reader sees as figures that will not line
+    up. `ai_residency_common.figures.DPI` is the one number now; this fails if a new
+    asset lands at a different one, which is the only way a directory of images stays
+    uniform.
+    """
+    expected = 200
+    images = [
+        image for image in sorted(ROOT.glob("**/assets/**/*.png")) if ".venv" not in image.parts
+    ]
+    # Only committed figures. `make graph` and `make onnx` write into gitignored
+    # directories, and a locally generated file is not something a reader ever sees --
+    # failing on it would make the suite depend on which targets someone last ran.
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        input="\n".join(str(image) for image in images),
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    ).stdout.split()
+    wrong = []
+    for image in images:
+        if str(image) in ignored:
+            continue
+        actual = png_dpi(image)
+        if actual != expected:
+            wrong.append(f"{image.relative_to(ROOT)} is {actual or 'unset'}")
+    assert not wrong, f"figures not at {expected} DPI: " + ", ".join(wrong)

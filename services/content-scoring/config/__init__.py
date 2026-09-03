@@ -41,7 +41,14 @@ rank while training a count objective is how the shipped hyperparameters came to
 for a question the service had stopped asking.
 """
 
-Fusion = Literal["text_only", "features_only", "early", "late", "block_diagonal"]
+Fusion = Literal["text_only", "features_only", "early", "late"]
+
+# How the isolated layer's width is divided between the input groups. See
+# `Config.block_allocation` for why proportional is not the neutral choice it looks like.
+Allocation = Literal["proportional", "equal"]
+
+# Whether the groups are resized before they meet. See `Config.input_projection`.
+Projection = Literal["none", "text_down", "features_up", "all"]
 """How the title and the metadata features reach the regression head.
 
 * `text_only` -- the pooled title vector alone. An ablation: it says whether the title
@@ -50,13 +57,10 @@ Fusion = Literal["text_only", "features_only", "early", "late", "block_diagonal"
   News a genuinely strong model.
 * `early` -- one MLP over `concat(title, every feature)`. The network is free to find
   interactions between the text and the metadata, and has to learn the grouping itself.
-* `late` -- one small tower per branch (text, temporal, domain, title-surface, author),
-  joined at the head. Each branch gets its own representation before anything is mixed.
-* `block_diagonal` -- `early` with the cross-group weights removed and nothing else
-  changed: same input, same hidden width, same depth, same head. `late` varies
-  connectivity, width and depth all at once, so a difference against `early` has three
-  possible causes; this one isolates connectivity, and is strictly smaller than `early`
-  because it is `early` with weights deleted.
+* `late` -- the same layer with the cross-group weights removed, so no input sees another
+  until the head. Same input, hidden width, depth and head as `early`, and strictly
+  smaller because it is `early` with weights deleted -- which is what makes the gap
+  between them the value of the crosstalk and nothing else.
 """
 
 
@@ -68,8 +72,46 @@ class Config(BaseConfig):
         fusion: Which architecture to build. See `Fusion`.
         objective: What the head predicts. See `Objective`.
         selection_metric: Which validation metric picks the best epoch. See `Selection`.
-        hidden_dim: Width of every branch MLP and of the fusion head.
-        num_layers: Hidden layers per branch MLP.
+        hidden_widths: Width of each hidden layer, in order. The number of layers and
+            their sizes are one field rather than two, so a tapering stack is a value
+            rather than a code change: `AI_RESIDENCY_HIDDEN_WIDTHS=320,256,192` is a
+            three-layer taper. `BaseConfig._coerce` parses the comma-separated form, so
+            this is sweepable with no trainer plumbing.
+        tower_shapes: An explicit pre-fusion tower per input group, as
+            `text:128;temporal:16,16;author:8,8,8`. Empty leaves the towers derived from
+            `hidden_widths` and `fusion_layer`, which forces every group to the same
+            depth. Setting it lets each input have the *shape* it wants -- narrow and
+            deep, or wide and shallow -- which is the one structural thing late fusion
+            can do that early fusion cannot. `hidden_widths` is then the shared trunk.
+
+            Note this deliberately gives up the property the fusion-point sweep rests on:
+            towers of different depths no longer tile a single dense layer, so the model
+            is not early fusion with weights deleted any more. That is the right trade for
+            a shape experiment and the wrong one for a connectivity experiment, so the two
+            sets of numbers must not be pooled.
+        block_allocation: How the isolated layer's width is split between the input
+            groups. `proportional` gives each group a share of the hidden units in
+            proportion to how many columns it brings, which sounds fair and is not: the
+            title is a 300-d *mean of word vectors*, so its width is an artifact of the
+            embedding size rather than a measure of information, and it takes 233 of 256
+            units while the author's history takes 2. Measured on this data the 29
+            metadata columns out-predict the 300 title columns, so the rule hands the
+            weaker input eight times the capacity. `equal` gives every group the same
+            share. Either way the blocks sum to exactly the layer's width, so a
+            block-diagonal layer stays the same size as the dense one it is carved from.
+        input_projection: Resize the groups before they reach the fusion layer, so that
+            "300 versus 3" stops being the thing under test. `text_down` projects the
+            title to `projection_dim`; `features_up` projects each metadata group up to
+            it; `all` puts every group at it. `none` leaves the raw widths.
+        projection_dim: Target width for `input_projection`.
+        fusion_layer: The layer at which the input groups first meet. Layers before it
+            are block-diagonal -- each group reaches only its own hidden units -- and
+            layers from it on are dense and shared. `1` is early fusion; `2` lets each
+            group have one private layer first; `len(hidden_widths)` is the latest
+            fusion that still leaves a shared layer. Values past the end clamp, so a
+            sweep drawing `5` against a two-layer stack costs a run rather than wasting
+            one. Where the modalities meet is the experiment, so it is a number rather
+            than the difference between two classes.
         dropout: Dropout between hidden layers.
         domain_embed_dim: Width of the learned domain embedding.
         freeze_embeddings: Keep the word vectors fixed. When false they are fine-tuned
@@ -78,6 +120,12 @@ class Config(BaseConfig):
         patience: Epochs without improvement before stopping.
         weight_decay: Adam weight decay.
         eval_every: Steps between `train/*` log points.
+        log_tables: Log the per-epoch slice and probe tables to W&B. On for a run
+            someone will read; off for a grid, where each run would upload two table
+            artifacts per epoch and 490 runs would queue ~20,000 uploads. That backlog
+            is not theoretical -- it wedged a run for 25 minutes after its metrics were
+            already computed, and starved the W&B service into failing an earlier one
+            outright. The scalars the curve is drawn from are logged either way.
         save_checkpoints: Sweep runs set this false. Two dozen runs writing a
             checkpoint each is disk nobody reads.
         promote: Whether a winning seed may replace the served checkpoint.
@@ -107,11 +155,15 @@ class Config(BaseConfig):
         info_name: File name for the JSON sidecar describing a checkpoint.
     """
 
-    fusion: Fusion = "late"
+    fusion: Fusion = "early"
     objective: Objective = "poisson"
     selection_metric: Selection = "mae"
-    hidden_dim: int = 256
-    num_layers: int = 1
+    hidden_widths: tuple[int, ...] = (256, 256)
+    fusion_layer: int = 2
+    tower_shapes: str = ""
+    block_allocation: Allocation = "proportional"
+    input_projection: Projection = "none"
+    projection_dim: int = 64
     dropout: float = 0.0
     domain_embed_dim: int = 8
     freeze_embeddings: bool = True
@@ -122,6 +174,7 @@ class Config(BaseConfig):
     batch_size: int = 1024
     learning_rate: float = 3.737e-4
     eval_every: int = 100
+    log_tables: bool = True
     save_checkpoints: bool = True
     # False for the objective A/B runs: they exist to be compared, not served,
     # and must not overwrite the checkpoint the API is loading.

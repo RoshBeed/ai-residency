@@ -29,6 +29,7 @@ from ai_residency_common import (
     save_checkpoint,
     set_seed,
 )
+from ai_residency_common.figures import save_figure
 from config import Config
 from datasets.mnist_dataset import Example, MNISTDataset
 from vit_classifier.classifier import VisionTransformer
@@ -127,7 +128,7 @@ def plot_history(history: dict[str, list[float]], path: str) -> None:
     accuracy_axis.grid(visible=True)
 
     figure.tight_layout()
-    figure.savefig(path, dpi=300, bbox_inches="tight")
+    save_figure(figure, path)
     plt.close(figure)
 
 

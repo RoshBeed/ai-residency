@@ -6,8 +6,11 @@
   who by — predict how many upvotes it will get.
 - **The data:** 872,554 real posts, November 2023 to August 2026, split by time so the model is
   always predicting a future it has not seen.
-- **Result:** the served model's median error is **7.5 upvotes**, less than half the 16.2 you get by
-  guessing the average every time, and it accounts for 85% of the upvotes that actually happened.
+- **Result:** the served model's median error is **10.1 upvotes** against the 16.2 you get by
+  guessing the average every time, and it accounts for 90% of the upvotes that actually happened.
+- **The architecture question:** where the title and the metadata meet is a swept hyperparameter,
+  not two hand-built models. 490 runs say fusing at the first layer is best — but that most of the
+  apparent cost of fusing later is really the cost of narrow per-input blocks.
 - **The ceiling:** Hacker News is substantially a lottery — the same link posted twice scores
   similarly only about a quarter of the time, which bounds what any model can do here.
 
@@ -76,37 +79,42 @@ three seeds.
 | *what actually happened* | — | *18.9* | *3,158* | *100%* |
 | guess the average every time | 16.2 | 19.2 | 19 | 101% |
 | TF-IDF + Ridge on the title | 13.0 | 21.4 | 453 | 113% |
-| title only | 15.1 | 19.5 | 265 | 103% |
-| metadata only | 13.1 | 19.3 | 562 | 102% |
-| early fusion | 10.0 | 16.6 | 651 | 88% |
-| **late fusion** (served) | **7.5** | 16.0 | **1,286** | 85% |
+| title only | 11.1 | 15.7 | 529 | 83% |
+| metadata only | 13.2 | 18.7 | 512 | 99% |
+| **early fusion** (served) | **10.1** | 17.0 | **1,226** | 90% |
+| late fusion | 10.1 | 15.8 | 825 | 84% |
 
-Two things to read here. The median error more than halves against guessing the average, so the
-model is doing real work. And its highest prediction is 1,286 upvotes — it can call a front-page
-post, which matters because those are the posts anyone cares about.
+Two things to read here. Early fusion's median error is a third better than guessing the average,
+so the model is doing real work. And it will predict 1,226 upvotes for the right post — it can call
+a front-page post, which matters because those are the posts anyone cares about.
 
 **Figure 2.** Every model against the baselines.
 
-![Two horizontal bar panels comparing eight models. The four neural architectures lead the four baselines on both panels, with late fusion highest.](assets/fusion-comparison.png)
+![Two horizontal bar panels comparing eight models. The four neural architectures lead the four baselines on both panels, with early fusion highest on rank correlation.](assets/fusion-comparison.png)
 
 ### What the model uses
 
-Zero out one branch at a time and see what the prediction loses:
+Zero out one input at a time and see what the prediction loses:
 
-| branch removed | effect |
+| input removed | effect |
 |---|---|
-| **when it was posted** | **−0.12** |
-| the title | −0.06 |
-| the author's history | −0.04 |
+| **the title** | **−0.11** |
+| the author's history | −0.07 |
+| when it was posted | −0.03 |
 | the title's shape | −0.02 |
-| where it links | −0.01 |
+| where it links | +0.02 |
 
-**When you post matters more than what you say.** The metadata-only ablation is what makes that
-measurable rather than assumed.
+**The title carries the most, and the author's history is second.** Zeroing the title costs 0.11
+Spearman; zeroing the author's history costs 0.07. Removing the domain slightly *helps*, which is
+the one input the model would be better off without at this width.
 
-**Figure 3.** Leave one branch out.
+Measured on early fusion, where every group competes for the same layer. The block-diagonal model
+splits its hidden units in proportion to input width, so the title owns 233 of its 256 and an
+ablation there would report that allocation as much as the signal.
 
-![Horizontal bars showing the drop in rank correlation when each branch is zeroed: temporal largest, then text, author, title shape and domain.](assets/feature-ablation.png)
+**Figure 3.** Leave one input out.
+
+![Horizontal bars showing the drop in rank correlation when each input is zeroed: the title largest, then when it was posted, the author's history, the title's shape and where it links.](assets/feature-ablation.png)
 
 ### Where it struggles
 
@@ -130,33 +138,39 @@ question this project is built around is **where those should meet**.
 **Late fusion** gives each kind of input its own small network, then joins the results at the end.
 **Early fusion** concatenates everything up front and lets one network sort it out.
 
-**Figure 6.** The late-fusion model this service serves.
+**Figure 6.** The two fusion wirings, read off the built models.
 
-![A Hacker News post feeding three feature extractors, each into its own small network, whose outputs are concatenated and passed through a final network to a single predicted score.](assets/word-embeddings/fig2-reward-model-architecture.png)
+![Two five-by-five grids over a shared bar. Early fusion fills all twenty-five cells, connecting every input group to every hidden unit; late fusion fills only the five on the diagonal, so each input group reaches only its own share. Underneath, both carry an identical shared layer.](assets/fusion-architectures.png)
 
-**Figure 6a.** The three fusion wirings, generated from the built models.
+I built late fusion as **early fusion with the cross-group weights deleted**. Both models are the
+same stack — a first layer taking 329 inputs onto 256 hidden units, a shared `256 → 256` layer, then
+the head — and the only difference is that late fusion's *first* layer is block-diagonal, so the
+title cannot reach the hidden units the timestamp owns and vice versa.
+
+Everything after that first layer is shared, and that is the point of the second layer: the groups do
+meet in late fusion, just one layer later than in early fusion. Without it, "late" would have had no
+trunk after the join at all, and the two models would have differed in depth as well as in
+connectivity — two explanations for any gap instead of one.
+
+Hidden units are split in proportion to how many columns each group brings, which is why the title
+gets 233 of the 256 and the author's history gets 2. That keeps the first layer exactly the same
+shape in both, which is what lets late fusion be early fusion with weights removed rather than a
+differently-sized network.
+
+**Figure 7.** The same two wirings as a flow.
 
 ```mermaid
 flowchart LR
-  subgraph E["early — one dense layer"]
-    ei["title 300<br/>+ metadata 29"] --> el["329 → 256"] --> es(("score"))
+  subgraph E["early — first layer dense"]
+    ei["title 300<br/>+ metadata 29"] --> el["329 → 256"] --> eh["shared<br/>256 → 256"] --> es(("score"))
   end
-  subgraph B["block-diagonal — same layer, no crosstalk"]
+  subgraph B["late — first layer block-diagonal"]
     bt["title 300"] --> bt1["→ 233"] --> bc(( ))
-    bm["metadata 29"] --> bm1["→ 23"] --> bc --> bs(("score"))
-  end
-  subgraph L["late — a tower each, then a second layer"]
-    lt["title 300"] --> lt1["→ 256"] --> lh["1280 → 256"]
-    lm["metadata 29"] --> lm1["4 towers → 1024"] --> lh --> ls(("score"))
+    bm["metadata 29"] --> bm1["→ 23"] --> bc --> bh["shared<br/>256 → 256"] --> bs(("score"))
   end
 ```
 
-Early and block-diagonal are the controlled pair: identical input, hidden width, depth and
-head, differing only in whether the title and the metadata are wired to each other. Block-diagonal
-is the smaller of the two, because it *is* early fusion with weights removed. Late fusion is not
-that comparison — it carries five times the hidden units and an extra layer.
-
-`make -C services/content-scoring onnx` exports all five to ONNX; open one with
+`make -C services/content-scoring onnx` exports all four to ONNX; open one with
 [Netron](https://netron.app) to see every operator. The demo page draws the same wiring live from
 whichever model you select.
 
@@ -164,29 +178,132 @@ Both are built, alongside two ablations — **title only** and **metadata only**
 "combining helps" testable. It helps by a wide margin: either input alone lands near a 13–15 upvote
 median error, and together they reach 7.5.
 
-The choice between early and late fusion matters much less. The gap between them is smaller than the
-difference between two training runs of the same model.
+**Where the inputs meet turns out to matter.** Early fusion reaches ρ 0.260 against late fusion's
+0.202, and the three-seed spreads are 0.012 and 0.016 — so the gap is about three times the noise.
+Letting the title and the metadata interact in the first layer is worth real accuracy, and that is
+the one thing the two models differ in.
 
-**What is held equal is the hyperparameters, not the parameter count.** Every architecture uses the
-same width, depth, dropout, learning rate and schedule, so none of them is tuned at another's
-expense — but they are not the same size:
+Late fusion keeps a narrow edge on the two ranking metrics (NDCG@10 0.128 against 0.124, top-decile
+lift 2.40 against 2.28) while early fusion is clearly better at predicting the count. Early fusion
+is what the service serves, because the count is what it is for.
 
-| architecture | shape | parameters |
-|---|---|---|
-| metadata only | `29 → 256 → 1` | 15,961 |
-| title only | `300 → 256 → 1` | 85,337 |
-| early fusion | `329 → 256 → 1` | 92,761 |
-| late fusion | five towers `→ 256`, head `1280 → 256 → 1` | 421,721 |
+**Every architecture uses the same width, depth, dropout, learning rate and schedule**, so none is
+tuned at another's expense:
 
-Late fusion's towers take the pooled title (`300`), the temporal features (`6`), the domain (`9`,
-one flag plus its 8-d embedding), the title's shape (`11`) and the author's history (`3`). Early
+| architecture | first layer | then | parameters |
+|---|---|---|---|
+| metadata only | `29 → 256` | `256 → 256 → 1` | 73,793 |
+| title only | `300 → 256` | `256 → 256 → 1` | 143,169 |
+| early fusion | `329 → 256` dense | `256 → 256 → 1` | 150,593 |
+| late fusion | `300→233 \| 6→5 \| 9→7 \| 11→9 \| 3→2` | `256 → 256 → 1` | 136,467 |
+
+The five blocks take the pooled title (`300`), the temporal features (`6`), the domain (`9`, one
+flag plus its 8-d embedding), the title's shape (`11`) and the author's history (`3`). Early
 fusion's 329 is those same inputs concatenated before anything learns from them.
 
-Late fusion is the largest by a distance, almost entirely because its head takes five 256-wide
-branch outputs at once. That is worth knowing when reading the early-versus-late comparison, and it
-is a further reason not to call a winner there. It does not touch the ablations: early fusion is
-within 9% of title-only's size and still well ahead of it, and metadata-only wins on median error
-with a fifth of title-only's parameters.
+### Where the inputs meet is a number, not two models
+
+Once late fusion is built as early fusion with weights removed, "early" and "late" stop being two
+architectures and become **one architecture with a dial**. `fusion_layer` says which layer the
+groups first meet at: everything before it is block-diagonal, everything from it on is shared.
+`fusion_layer=1` is early fusion. A larger value gives each group more private layers before they
+are allowed to interact.
+
+That turns a two-point comparison into a curve, and the curve is a better question: *how long can
+you delay fusion before it costs you?*
+
+I swept it over 13 layer shapes at every valid fusion point, ten seeds each — **490 runs**. Ten
+rather than three because the seed spread here is large enough to swallow the effect: late fusion's
+three-seed spread was 0.106 Spearman against early fusion's 0.026, so a three-seed mean carries a
+standard error wider than the gap being measured.
+
+**Figure 8.** The fusion point swept, one panel per depth.
+
+![Six panels of test Spearman against the layer at which the input groups first meet. Every panel declines from left to right. The first five pair a tapering shape against a constant-width control at depths two to six; the sixth varies width at depth three, where the widest shape stays flat and the narrowest falls steeply.](assets/fusion-curve.png)
+
+**Moving the fusion point through a six-layer stack**, from the bottom of the model to the top,
+ten seeds at each position:
+
+| fusion at | `320,256,192,128,96,32` | `128,128,128,128,128,128` |
+|---|---|---|
+| layer 1 — bottom, early fusion | **0.241** | **0.242** |
+| layer 2 | 0.239 | 0.192 |
+| layer 3 | 0.194 | 0.151 |
+| layer 4 | 0.148 | 0.145 |
+| layer 5 | 0.161 | 0.130 |
+| layer 6 — top, latest possible | 0.134 | 0.136 |
+
+Fusing at the bottom is best, and it degrades as the meeting point rises. The two shapes disagree
+about *where* the fall happens: the tapering stack holds its accuracy through layer 2 and drops at
+3, while the constant-128 stack falls immediately. That difference is the whole finding below.
+
+**Delaying fusion always costs accuracy — but almost all of that cost is how wide the isolated
+layer is, not the delay itself.** The depth-3 panel isolates it: same depth, same everything, only
+the width changes.
+
+| shape | first-layer width | fuse at 1 | fuse at 2 | cost of one private layer |
+|---|---|---|---|---|
+| `640,512,384` | 640 | 0.249 | 0.254 | **+0.005** |
+| `320,256,192` | 320 | 0.251 | 0.242 | −0.008 |
+| `256,256,256` | 256 | 0.243 | 0.191 | −0.053 |
+| `64,64,64` | 64 | 0.247 | 0.186 | −0.061 |
+
+At 640 units a private layer per group is **free**. At 64 it costs 0.061 — more than the entire
+early-versus-late gap in the table above.
+
+The reason is in how the blocks are sized. Each group's share of a layer is proportional to how many
+columns it brings, so the author's history (3 of 329 columns) gets `round(w × 3/329)` units: six at
+width 640, and **one** at width 64. A narrow block-diagonal layer does not delay fusion so much as
+strangle four of the five inputs before they reach it.
+
+**A real residual survives that.** Even at 640 wide, isolating the groups for two layers instead of
+one costs 0.047 (0.249 → 0.202). So crosstalk between the title and the metadata is worth something
+— just far less than a narrow model makes it look.
+
+### The allocation rule was measuring the wrong thing
+
+Splitting a layer between input groups in proportion to how many columns each brings sounds like the
+neutral choice. It is not, and the reason is worth stating because it invalidated the first reading
+of the sweep above.
+
+**The title is 300-dimensional because word2vec chose 300.** It is the *mean* of its word vectors, so
+it arrives 300 wide whether the title is two words or twenty. The other groups are counts of
+engineered scalars — the author's history is `author_mean`, `author_count`, `author_is_first`, and
+that is all three of them. "300 versus 3" compares an embedding size against a feature count; the
+two are not commensurable, and neither is a measure of how much the input says.
+
+Proportional allocation nonetheless treats them as if they were:
+
+| group | columns | share of a 256-unit layer |
+|---|---|---|
+| title | 300 | **233** |
+| title shape | 11 | 9 |
+| where it links | 9 | 7 |
+| when posted | 6 | 5 |
+| author history | 3 | **2** |
+
+And the ranking is backwards. Measured on this data:
+
+```
+title only      300 columns  ->  rho 0.148
+metadata only    29 columns  ->  rho 0.212
+```
+
+**The 29 metadata columns out-predict the 300 title columns**, and the rule hands the weaker input
+eight times the capacity — then reduces four of the five inputs to one or two units, which is not a
+fusion point but a bottleneck. A sweep run on top of that measures how well four inputs survive
+being throttled, not when they should meet.
+
+That is why the curves fall so much faster at narrow widths, and it is a finding in its own right:
+**when you carve a layer into per-input blocks, how you size the blocks matters more than where you
+put the fusion point.** `AI_RESIDENCY_BLOCK_ALLOCATION=equal` divides the width evenly instead, and
+`AI_RESIDENCY_INPUT_PROJECTION` resizes the groups before they meet — the title down, the metadata
+up, or everything to one width — so that the comparison is about fusion rather than about encoding
+verbosity.
+
+This is why the write-up quotes early fusion. It is not that late fusion is a worse idea; it is that
+under proportional allocation late fusion is being asked to work through a bottleneck that early
+fusion never sees.
 
 ### Predicting a count
 
@@ -224,7 +341,7 @@ checks the mirror against the live Hacker News API.
 Scores drift and posts from the same day compete for the same front page, so a random split would
 let the model see the future of its own test set.
 
-**Figure 7.** The score distribution.
+**Figure 9.** The score distribution.
 
 ![Two panels over 710,722 training posts. Raw scores on log-log axes fall steeply from 180,000 posts scoring 1 down to single posts scoring thousands. The logged version shows a tall spike at the low end and a long thin tail.](assets/score-distribution.png)
 
@@ -254,8 +371,14 @@ re-runs those benchmarks and reports them, so that stays a measurement rather th
 
 ## 5. What the results say
 
-**When you post matters more than what you write.** The strongest single branch is the timestamp,
-not the title.
+**The title carries the most, and the author's history is second.** Zeroing the title costs 0.11
+Spearman, the author's history 0.07, the timestamp 0.03. Neither input alone is a good model, and
+the combination beats both.
+
+**Where the inputs meet matters less than how much room they get.** Sweeping the fusion point across
+490 runs, delaying fusion always costs accuracy, but at 640 hidden units a private layer per input
+group is free while at 64 it costs 0.06. Most of what looks like an argument about architecture is
+an argument about width.
 
 **Hacker News is substantially a lottery.** A quarter of all linked posts are reposts — 85,340 URLs
 submitted more than once — and the same URL's two scores agree only weakly. Of URLs whose first
@@ -285,7 +408,7 @@ credentials.
 `make train-all` trains four architectures at three seeds; `make capacity` runs the depth
 comparison; `wandb sweep sweep.yaml` then `make sweep SWEEP=<id>` searches hyperparameters.
 
-**Figure 8.** The Streamlit page, which runs all four architectures over a post you type.
+**Figure 10.** The Streamlit page, which runs all four architectures over a post you type.
 
 ![The content-scoring page showing a Hacker News title input and a predicted score.](assets/word-embeddings/streamlit_ui.png)
 

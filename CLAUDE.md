@@ -160,9 +160,16 @@ numbers true: `make -C services/word-embeddings evaluate` reports them from a ch
 README quotes them.
 
 `content-scoring` is trained on 872,554 Hacker News posts, split by time, with four fusion
-architectures compared against four baselines. Same rule: `make -C services/content-scoring
-evaluate` is the single source of every number in its README, and the trainer streams the same
-harness to W&B rather than computing its own metrics — so a chart and the table cannot disagree.
+architectures compared against four baselines. `late` is built as `early` with the cross-group
+weights deleted -- same input, width, depth and head -- so the two differ only in connectivity and
+the gap between them (ρ 0.260 against 0.202, on seed spreads of 0.012 and 0.016) measures what
+crosstalk between the title and the metadata is worth. Early fusion is what it serves.
+
+Same rule as word-embeddings: `make -C services/content-scoring evaluate` is the single source of
+every number in its README, and the trainer streams the same harness to W&B rather than computing
+its own metrics — so a chart and the table cannot disagree. The leave-one-group-out ablation runs on
+the dense model, because the block-diagonal one splits its hidden units in proportion to input width
+and an ablation there reports that allocation as much as the signal.
 
 **Its ceiling is the representation, not the architecture, and that took four wrong turns to
 establish.** A mean of static word vectors throws away word order; a fine-tuned MiniLM beats the
@@ -411,6 +418,11 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
   em-dash use. Never cut the *why* behind a technique — that reasoning is the point.
 - Real numbers only, always next to their baseline. Cite papers; course material needs no citation.
 - Explain a shared thing once, in the library that owns it, and link to it.
+- **Every figure is written at `ai_residency_common.figures.DPI`.** Nine services drew their own
+  charts and the committed assets came out at 110, 140, 150, 200, 300 and 600, which a reader sees
+  as figures that will not line up. Charts go through `figures.save_figure`; a screenshot or a slide
+  export gets stamped by `python deploy/stamp_dpi.py --write`, which rewrites the `pHYs` chunk and
+  touches no pixels. `deploy/test_workspace.py` fails on an asset at any other resolution.
 - Validate every Mermaid block: `npx -y @mermaid-js/mermaid-cli -i b.mmd -o b.svg`. On a Mac the
   bundled Chromium fails to launch; point it at the installed browser instead:
   `echo '{"executablePath":"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}' > p.json`

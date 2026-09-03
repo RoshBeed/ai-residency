@@ -34,8 +34,10 @@ from content_scoring.features import (
     fit_feature_spec,
 )
 from content_scoring.model import (
-    LateFusionScorer,
+    FusionScorer,
     build_model,
+    describe,
+    first_layer_blocks,
     load_predictor_weights,
     predictor_state_dict,
 )
@@ -385,23 +387,124 @@ class TestArchitectures:
 
     @pytest.mark.parametrize("fusion", ["text_only", "features_only", "early", "late"])
     def test_every_architecture_returns_one_score_per_post(self, fusion: Fusion) -> None:
-        config = Config(fusion=fusion, hidden_dim=8, num_layers=1)
+        config = Config(fusion=fusion, hidden_widths=(8, 8))
         model = build_model(torch.randn(50, 6), num_domains=3, config=config)
         assert model(*self._inputs()).shape == (4,)
 
+    @pytest.mark.parametrize("fusion_layer", [1, 2, 3, 4])
+    def test_every_fusion_point_returns_one_score_per_post(self, fusion_layer: int) -> None:
+        """The fusion point is a swept hyperparameter, so every value in range builds."""
+        config = Config(fusion="late", hidden_widths=(16, 12, 10, 8), fusion_layer=fusion_layer)
+        model = build_model(torch.randn(50, 6), num_domains=3, config=config)
+        assert model(*self._inputs()).shape == (4,)
+
+    def test_early_fusion_is_the_same_network_as_fusing_at_layer_one(self) -> None:
+        """The claim the whole comparison rests on, checked rather than asserted.
+
+        `early` and `late` are one class at different fusion points, so fusing at layer
+        one must reproduce early fusion exactly. An earlier version of this pair differed
+        in width and depth as well as connectivity without anything noticing.
+        """
+        widths = (16, 12)
+        matrix = torch.randn(50, 6)
+        early = build_model(matrix, 3, Config(fusion="early", hidden_widths=widths))
+        fused_at_one = build_model(
+            matrix, 3, Config(fusion="late", hidden_widths=widths, fusion_layer=1)
+        )
+        assert describe(early) == describe(fused_at_one)
+
+    def test_delaying_fusion_only_ever_removes_weights(self) -> None:
+        """Late fusion is early fusion with the cross-group weights deleted, so each
+        further layer of isolation must make the model strictly smaller. A fusion point
+        that *added* parameters would mean the two are not the controlled pair the
+        write-up claims."""
+        widths = (32, 24, 16)
+        counts = [
+            sum(
+                p.numel()
+                for p in build_model(
+                    torch.randn(50, 6),
+                    3,
+                    Config(fusion="late", hidden_widths=widths, fusion_layer=point),
+                ).parameters()
+                if p.requires_grad
+            )
+            for point in (1, 2, 3)
+        ]
+        assert counts == sorted(counts, reverse=True), counts
+
+    def test_a_fusion_point_past_the_stack_clamps_to_its_depth(self) -> None:
+        """A Bayes sweep draws the fusion point independently of the shape, so `5`
+        against a two-layer stack is a normal sample. Clamping costs one run; raising
+        would waste it."""
+        config = Config(fusion="late", hidden_widths=(8, 8), fusion_layer=9)
+        model = build_model(torch.randn(50, 6), num_domains=3, config=config)
+        assert describe(model)["fusion_layer"] == 2
+
+    def test_a_fusion_point_below_one_is_refused(self) -> None:
+        config = Config(fusion="late", hidden_widths=(8, 8), fusion_layer=0)
+        with pytest.raises(ValueError, match="at least 1"):
+            build_model(torch.randn(50, 6), num_domains=3, config=config)
+
+    def test_every_block_reaches_the_next_layer_and_they_sum_to_its_width(self) -> None:
+        """Shares are proportional to input columns, so the 3-column author group would
+        round to zero at a narrow layer and stop reaching the head at all. The floor of
+        one prevents that; the remainder goes to the widest group so the blocks still sum
+        to exactly the dense layer's width, which is what makes late fusion the same
+        layer as early with weights removed."""
+        config = Config(fusion="late", hidden_widths=(32, 32), fusion_layer=2)
+        model = build_model(torch.randn(50, 300), num_domains=3, config=config)
+        blocks = first_layer_blocks(model)
+        assert all(out >= 1 for _, _, out in blocks), blocks
+        assert sum(out for _, _, out in blocks) == 32, blocks
+
+    def test_hidden_widths_round_trip_from_the_environment(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """The whole sweep depends on this: a shape is expressed as a comma-separated
+        string, and `BaseConfig._coerce` is what turns it back into a tuple."""
+        monkeypatch.setenv("AI_RESIDENCY_HIDDEN_WIDTHS", "320,256,192")
+        monkeypatch.setenv("AI_RESIDENCY_FUSION_LAYER", "3")
+        config = Config()
+        assert config.hidden_widths == (320, 256, 192)
+        assert config.fusion_layer == 3
+
+    def test_explicit_tower_shapes_give_each_input_its_own_depth(self) -> None:
+        """The shape experiment needs towers of different depths, which the shared
+        `hidden_widths` split cannot express."""
+        config = Config(
+            fusion="late",
+            hidden_widths=(16,),
+            tower_shapes="text:8;temporal:4,4;domain:8;title_surface:8;author:2,2,2,2",
+        )
+        model = build_model(torch.randn(50, 6), num_domains=3, config=config)
+        assert model(*self._inputs()).shape == (4,)
+        # `nn.Module` attribute access is typed `Tensor | Module`, so the ModuleDict is
+        # narrowed rather than indexed straight through.
+        blocks = model.blocks
+        assert isinstance(blocks, torch.nn.ModuleDict)
+        depths = {
+            name: sum(1 for m in block.modules() if isinstance(m, torch.nn.Linear))
+            for name, block in blocks.items()
+        }
+        assert depths["temporal"] == 2 and depths["author"] == 4 and depths["text"] == 1
+
+    def test_tower_shapes_reject_an_unknown_group(self) -> None:
+        config = Config(fusion="late", hidden_widths=(16,), tower_shapes="sideways:8")
+        with pytest.raises(ValueError, match="unknown input group"):
+            build_model(torch.randn(50, 6), num_domains=3, config=config)
+
     def test_build_model_rejects_an_unknown_architecture(self) -> None:
-        config = Config(hidden_dim=8)
+        config = Config(hidden_widths=(8, 8))
         object.__setattr__(config, "fusion", "sideways")
         with pytest.raises(ValueError, match="unknown fusion"):
             build_model(torch.randn(50, 6), num_domains=3, config=config)
 
     def test_a_batch_of_one_works(self) -> None:
-        config = Config(fusion="late", hidden_dim=8, num_layers=1)
+        config = Config(fusion="late", hidden_widths=(8, 8))
         model = build_model(torch.randn(50, 6), num_domains=3, config=config)
         assert model(*self._inputs(batch=1)).shape == (1,)
 
     def test_a_title_with_no_known_words_pools_to_zero_not_nan(self) -> None:
-        config = Config(fusion="text_only", hidden_dim=8, num_layers=1)
+        config = Config(fusion="text_only", hidden_widths=(8, 8))
         model = build_model(torch.randn(50, 6), num_domains=3, config=config)
         tokens = torch.zeros(2, 8, dtype=torch.long)
         mask = torch.zeros(2, 8)
@@ -413,13 +516,13 @@ class TestArchitectures:
     def test_the_embedding_table_is_not_saved_with_the_model(self) -> None:
         """It is 85MB shared by all four; saving it four times would put 340MB on the
         Hub to say the same thing."""
-        config = Config(fusion="late", hidden_dim=8, num_layers=1)
+        config = Config(fusion="late", hidden_widths=(8, 8))
         model = build_model(torch.randn(50, 6), num_domains=3, config=config)
         assert "embeddings.weight" not in predictor_state_dict(model)
-        assert any(key.startswith("branches.") for key in predictor_state_dict(model))
+        assert any(key.startswith("blocks.") for key in predictor_state_dict(model))
 
     def test_a_saved_predictor_round_trips(self) -> None:
-        config = Config(fusion="late", hidden_dim=8, num_layers=1)
+        config = Config(fusion="late", hidden_widths=(8, 8))
         matrix = torch.randn(50, 6)
         saved = build_model(matrix, num_domains=3, config=config)
         restored = build_model(matrix, num_domains=3, config=config)
@@ -435,23 +538,35 @@ class TestArchitectures:
         on its own it would let a mismatched checkpoint load nothing and serve a random
         head -- silently, with the API answering 200 the whole time."""
         matrix = torch.randn(50, 6)
-        early = build_model(matrix, 3, Config(fusion="early", hidden_dim=8, num_layers=1))
-        late = build_model(matrix, 3, Config(fusion="late", hidden_dim=8, num_layers=1))
+        early = build_model(matrix, 3, Config(fusion="early", hidden_widths=(8, 8)))
+        late = build_model(matrix, 3, Config(fusion="late", hidden_widths=(8, 8)))
         with pytest.raises(RuntimeError, match="does not fit this architecture"):
             load_predictor_weights(late, predictor_state_dict(early))
 
     def test_freezing_the_embeddings_stops_their_gradient(self) -> None:
-        frozen = build_model(torch.randn(50, 6), 3, Config(hidden_dim=8, freeze_embeddings=True))
-        thawed = build_model(torch.randn(50, 6), 3, Config(hidden_dim=8, freeze_embeddings=False))
+        frozen = build_model(
+            torch.randn(50, 6), 3, Config(hidden_widths=(8, 8), freeze_embeddings=True)
+        )
+        thawed = build_model(
+            torch.randn(50, 6), 3, Config(hidden_widths=(8, 8), freeze_embeddings=False)
+        )
         assert not frozen.embeddings.weight.requires_grad
         assert thawed.embeddings.weight.requires_grad
 
     def test_ablating_a_branch_changes_the_output(self) -> None:
         """The leave-one-group-out ablation zeroes a branch's input rather than
-        retraining, so it has to actually reach the head."""
-        config = Config(fusion="late", hidden_dim=8, num_layers=2)
+        retraining, so it has to actually reach the head.
+
+        Seeded because the assertion is about a *randomly initialised* model: at a narrow
+        width the author group owns one hidden unit, and whether zeroing it moves the
+        output depends on the draw. Unseeded, this passed alone and failed in the suite
+        as soon as other tests shifted the global RNG -- which is a flaky test, not a
+        finding about the model.
+        """
+        torch.manual_seed(0)
+        config = Config(fusion="late", hidden_widths=(32, 32))
         model = build_model(torch.randn(50, 6), num_domains=3, config=config)
-        assert isinstance(model, LateFusionScorer)
+        assert isinstance(model, FusionScorer)
         model.eval()
         inputs = self._inputs()
         with torch.no_grad():

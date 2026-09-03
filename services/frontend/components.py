@@ -91,6 +91,37 @@ def render_probability_bars(probs: dict[str, float], predicted: str | None) -> s
     return f'<div class="prob-chart">{"".join(rows)}</div>'
 
 
+def render_delta_bars(rows: list[tuple[str, float]], baseline: float) -> str:
+    """One line per variant: label, magnitude bar, the value and its change.
+
+    Args:
+        rows: `(label, value)` pairs. Drawn in the order given.
+        baseline: What each value is compared against, for the change column.
+
+    Returns:
+        An HTML block reusing the `prob-*` bar styling.
+
+    The value and the change share the row with the bar rather than being repeated
+    underneath it, which is what keeps a three-way comparison to a dozen lines instead
+    of a screenful.
+    """
+    largest = max((value for _, value in rows), default=0.0) or 1.0
+    out = []
+    for label, value in rows:
+        change = value - baseline
+        arrow = "▲" if change > 0.05 else ("▼" if change < -0.05 else "—")
+        emphasis = " pred" if value == max(v for _, v in rows) else ""
+        out.append(
+            f'<div class="prob-row">'
+            f'<span class="prob-label" title="{esc(label)}">{esc(label)}</span>'
+            f'<div class="prob-track"><div class="prob-fill{emphasis}" '
+            f'style="width:{max(value, 0.0) / largest * 100:.1f}%"></div></div>'
+            f'<span class="prob-value">{value:.1f}</span>'
+            f'<span class="prob-delta">{arrow}{abs(change):.1f}</span></div>'
+        )
+    return f'<div class="prob-chart">{"".join(out)}</div>'
+
+
 def render_token_heatmap(tokens: list[dict[str, Any]]) -> str:
     """Each token shaded by its own sampling/greedy probability -- one hue, magnitude only."""
     spans = []
