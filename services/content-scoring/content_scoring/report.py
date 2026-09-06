@@ -44,6 +44,7 @@ __all__ = [
     "plot_capacity",
     "plot_fusion_comparison",
     "plot_fusion_curve",
+    "plot_interaction",
     "plot_score_distribution",
     "plot_seed_distribution",
     "plot_slices",
@@ -657,6 +658,86 @@ def plot_seed_distribution(records: list[dict[str, Any]], output: Path) -> None:
         panels[index // columns][index % columns].axis("off")
     figure.supxlabel("layer at which the groups first meet", fontsize=9, color=INK_SOFT)
     figure.supylabel("test Spearman ρ, one point per seed", fontsize=9, color=INK_SOFT)
+    figure.tight_layout()
+    save_figure(figure, output, tight=False)
+    plt.close(figure)
+    logger.info("Wrote %s", output)
+
+
+def _cell(records: dict[str, Any], alpha: float, key: str) -> float:
+    """One cell's median, from either a raw-seed file or a recovered medians file."""
+    row = records.get(f"{alpha:g}") or records.get(f"{alpha}") or records[str(alpha)]
+    value = row[key]
+    return float(value["median"]) if isinstance(value, dict) else float(np.median(value))
+
+
+def plot_interaction(records: dict[str, Any], output: Path) -> None:
+    """Accuracy against interaction strength, for three fusion architectures.
+
+    Args:
+        records: `fusion_probes.py interaction` output, alpha to `arch@width` to scores.
+        output: Where to write the PNG.
+
+    The control that makes the null on real data worth reporting. On a synthetic target
+    `g + h + alpha * g * h`, the architecture that reduces each modality to one score
+    cannot represent the product at any alpha, and the gap grows without bound; the two
+    that can are indistinguishable from each other everywhere. At `alpha = 0` -- which is
+    where the real task sits -- all three are identical, so a setup that finds no
+    difference on Hacker News is measuring the data rather than failing to measure.
+
+    Two panels: the curves, and the gap against width. The second is the structural
+    claim -- if capacity closed the gap it would be a fitting problem, and it does not.
+    """
+    if not records:
+        logger.warning("No interaction records; skipping %s", output)
+        return
+    apply_style()
+    alphas = sorted(float(a) for a in records)
+    widths = sorted({int(key.split("@")[1]) for key in next(iter(records.values()))})
+    architectures = ("early", "late-deep", "late-snoek")
+
+    figure, panels = plt.subplots(1, 2, figsize=(11, 4.4))
+    reference = widths[0]
+    for slot, architecture in enumerate(architectures):
+        medians = [_cell(records, a, f"{architecture}@{reference}") for a in alphas]
+        panels[0].plot(
+            alphas,
+            medians,
+            color=SERIES[slot],
+            linewidth=2,
+            marker="o",
+            markersize=4,
+            label=architecture,
+        )
+    panels[0].set_title(
+        f"Accuracy against interaction strength ({reference} hidden units)", fontsize=10, loc="left"
+    )
+    panels[0].set_xlabel("α — how much of the signal lives in title × metadata")
+    panels[0].set_ylabel("test Spearman ρ")
+    panels[0].legend(fontsize=8)
+
+    for slot, width in enumerate(widths):
+        gaps = [
+            _cell(records, a, f"early@{width}") - _cell(records, a, f"late-snoek@{width}")
+            for a in alphas
+        ]
+        panels[1].plot(
+            alphas,
+            gaps,
+            color=SERIES[slot % len(SERIES)],
+            linewidth=2,
+            marker="o",
+            markersize=4,
+            label=f"{width} units",
+        )
+    panels[1].axhline(0, color=MUTED, linewidth=1)
+    panels[1].set_title(
+        "Early minus Snoek late fusion — capacity does not close it", fontsize=10, loc="left"
+    )
+    panels[1].set_xlabel("α")
+    panels[1].set_ylabel("gap in Spearman ρ")
+    panels[1].legend(fontsize=8)
+
     figure.tight_layout()
     save_figure(figure, output, tight=False)
     plt.close(figure)

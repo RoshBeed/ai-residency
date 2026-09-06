@@ -161,9 +161,26 @@ README quotes them.
 
 `content-scoring` is trained on 872,554 Hacker News posts, split by time, with four fusion
 architectures compared against four baselines. `late` is built as `early` with the cross-group
-weights deleted -- same input, width, depth and head -- so the two differ only in connectivity and
-the gap between them (ρ 0.260 against 0.202, on seed spreads of 0.012 and 0.016) measures what
-crosstalk between the title and the metadata is worth. Early fusion is what it serves.
+weights deleted -- same input, width, depth and head -- so the two differ only in connectivity.
+
+**Where the inputs meet does not affect the score here, and it took ~2,000 runs to say that
+properly.** At matched hidden units early beats late only at the smallest budget tested (0.2526 vs
+0.2288 at 128 units, p=0.045); from 256 up they are indistinguishable, early is flat across the
+whole range and late climbs, because late starts throttled by its per-group blocks and stops being
+throttled. The reason is the data: reducing each modality to a score and combining them linearly --
+Snoek's late fusion -- reaches 0.2348 against the joint model's 0.2392, so **modelling the title and
+the metadata jointly buys +0.004 against a seed spread of 0.013**. The task is additive, and no
+fusion architecture can beat another when there is no interaction to model.
+
+That null is only reportable because a synthetic control shows the same code detecting an
+interaction the moment one exists: on `g + h + α·g·h`, Snoek late fusion falls behind by 0.118 at
+α=8 and eight times the width recovers nine percent of that. The same control also found that
+**early fusion and "towers into a shared trunk" are indistinguishable at every α** (max difference
+0.0006), so this service's late-fusion models were never the kind the papers warn about. Earlier
+readings of this comparison were confounded three times over -- by tower width, by a bare linear
+head that made late fusion a generalised additive model, and by proportional block sizing that gave
+the 300-d title 233 of 256 units and the author's three scalars 2. Do not quote a fusion number
+without checking which of those was in force.
 
 Same rule as word-embeddings: `make -C services/content-scoring evaluate` is the single source of
 every number in its README, and the trainer streams the same harness to W&B rather than computing

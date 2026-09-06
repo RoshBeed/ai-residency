@@ -1,0 +1,602 @@
+{
+  "0.0": {
+    "early@64": {
+      "median": 0.7126,
+      "spread": 0.0013
+    },
+    "late-deep@64": {
+      "median": 0.7132,
+      "spread": 0.0009
+    },
+    "late-snoek@64": {
+      "median": 0.7133,
+      "spread": 0.0007
+    },
+    "early@128": {
+      "median": 0.7126,
+      "spread": 0.0013
+    },
+    "late-deep@128": {
+      "median": 0.713,
+      "spread": 0.0015
+    },
+    "late-snoek@128": {
+      "median": 0.7132,
+      "spread": 0.0013
+    },
+    "early@256": {
+      "median": 0.7126,
+      "spread": 0.002
+    },
+    "late-deep@256": {
+      "median": 0.7126,
+      "spread": 0.0016
+    },
+    "late-snoek@256": {
+      "median": 0.7133,
+      "spread": 0.0011
+    },
+    "early@512": {
+      "median": 0.7123,
+      "spread": 0.0009
+    },
+    "late-deep@512": {
+      "median": 0.7124,
+      "spread": 0.0017
+    },
+    "late-snoek@512": {
+      "median": 0.7131,
+      "spread": 0.0027
+    }
+  },
+  "0.125": {
+    "early@64": {
+      "median": 0.7124,
+      "spread": 0.0013
+    },
+    "late-deep@64": {
+      "median": 0.713,
+      "spread": 0.0008
+    },
+    "late-snoek@64": {
+      "median": 0.7133,
+      "spread": 0.0007
+    },
+    "early@128": {
+      "median": 0.7124,
+      "spread": 0.0015
+    },
+    "late-deep@128": {
+      "median": 0.7128,
+      "spread": 0.0016
+    },
+    "late-snoek@128": {
+      "median": 0.7131,
+      "spread": 0.0012
+    },
+    "early@256": {
+      "median": 0.7123,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.7124,
+      "spread": 0.0016
+    },
+    "late-snoek@256": {
+      "median": 0.7132,
+      "spread": 0.0009
+    },
+    "early@512": {
+      "median": 0.7121,
+      "spread": 0.0011
+    },
+    "late-deep@512": {
+      "median": 0.7122,
+      "spread": 0.0019
+    },
+    "late-snoek@512": {
+      "median": 0.7132,
+      "spread": 0.0026
+    }
+  },
+  "0.25": {
+    "early@64": {
+      "median": 0.7124,
+      "spread": 0.0011
+    },
+    "late-deep@64": {
+      "median": 0.7128,
+      "spread": 0.0008
+    },
+    "late-snoek@64": {
+      "median": 0.7133,
+      "spread": 0.0006
+    },
+    "early@128": {
+      "median": 0.7124,
+      "spread": 0.0013
+    },
+    "late-deep@128": {
+      "median": 0.7128,
+      "spread": 0.0016
+    },
+    "late-snoek@128": {
+      "median": 0.713,
+      "spread": 0.0012
+    },
+    "early@256": {
+      "median": 0.7123,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.7123,
+      "spread": 0.0019
+    },
+    "late-snoek@256": {
+      "median": 0.7132,
+      "spread": 0.0008
+    },
+    "early@512": {
+      "median": 0.7118,
+      "spread": 0.0011
+    },
+    "late-deep@512": {
+      "median": 0.7121,
+      "spread": 0.0018
+    },
+    "late-snoek@512": {
+      "median": 0.7132,
+      "spread": 0.0021
+    }
+  },
+  "0.5": {
+    "early@64": {
+      "median": 0.7124,
+      "spread": 0.0013
+    },
+    "late-deep@64": {
+      "median": 0.7127,
+      "spread": 0.0007
+    },
+    "late-snoek@64": {
+      "median": 0.7131,
+      "spread": 0.0007
+    },
+    "early@128": {
+      "median": 0.7123,
+      "spread": 0.0015
+    },
+    "late-deep@128": {
+      "median": 0.7128,
+      "spread": 0.0015
+    },
+    "late-snoek@128": {
+      "median": 0.7128,
+      "spread": 0.0011
+    },
+    "early@256": {
+      "median": 0.7123,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.7126,
+      "spread": 0.0015
+    },
+    "late-snoek@256": {
+      "median": 0.7129,
+      "spread": 0.0011
+    },
+    "early@512": {
+      "median": 0.712,
+      "spread": 0.0012
+    },
+    "late-deep@512": {
+      "median": 0.7122,
+      "spread": 0.0018
+    },
+    "late-snoek@512": {
+      "median": 0.7129,
+      "spread": 0.0017
+    }
+  },
+  "0.75": {
+    "early@64": {
+      "median": 0.7129,
+      "spread": 0.001
+    },
+    "late-deep@64": {
+      "median": 0.7129,
+      "spread": 0.0007
+    },
+    "late-snoek@64": {
+      "median": 0.7128,
+      "spread": 0.0007
+    },
+    "early@128": {
+      "median": 0.7126,
+      "spread": 0.0013
+    },
+    "late-deep@128": {
+      "median": 0.7132,
+      "spread": 0.0015
+    },
+    "late-snoek@128": {
+      "median": 0.7125,
+      "spread": 0.0012
+    },
+    "early@256": {
+      "median": 0.7127,
+      "spread": 0.0017
+    },
+    "late-deep@256": {
+      "median": 0.713,
+      "spread": 0.0018
+    },
+    "late-snoek@256": {
+      "median": 0.7125,
+      "spread": 0.0014
+    },
+    "early@512": {
+      "median": 0.7124,
+      "spread": 0.0012
+    },
+    "late-deep@512": {
+      "median": 0.7126,
+      "spread": 0.002
+    },
+    "late-snoek@512": {
+      "median": 0.7127,
+      "spread": 0.0014
+    }
+  },
+  "1.0": {
+    "early@64": {
+      "median": 0.7138,
+      "spread": 0.0012
+    },
+    "late-deep@64": {
+      "median": 0.7137,
+      "spread": 0.0005
+    },
+    "late-snoek@64": {
+      "median": 0.7123,
+      "spread": 0.0008
+    },
+    "early@128": {
+      "median": 0.7136,
+      "spread": 0.0013
+    },
+    "late-deep@128": {
+      "median": 0.7139,
+      "spread": 0.0016
+    },
+    "late-snoek@128": {
+      "median": 0.712,
+      "spread": 0.0013
+    },
+    "early@256": {
+      "median": 0.7136,
+      "spread": 0.0019
+    },
+    "late-deep@256": {
+      "median": 0.7137,
+      "spread": 0.0017
+    },
+    "late-snoek@256": {
+      "median": 0.7121,
+      "spread": 0.0017
+    },
+    "early@512": {
+      "median": 0.7133,
+      "spread": 0.0011
+    },
+    "late-deep@512": {
+      "median": 0.7134,
+      "spread": 0.0019
+    },
+    "late-snoek@512": {
+      "median": 0.7123,
+      "spread": 0.0014
+    }
+  },
+  "1.5": {
+    "early@64": {
+      "median": 0.7167,
+      "spread": 0.0013
+    },
+    "late-deep@64": {
+      "median": 0.7167,
+      "spread": 0.0009
+    },
+    "late-snoek@64": {
+      "median": 0.7111,
+      "spread": 0.0011
+    },
+    "early@128": {
+      "median": 0.7167,
+      "spread": 0.0015
+    },
+    "late-deep@128": {
+      "median": 0.7169,
+      "spread": 0.0014
+    },
+    "late-snoek@128": {
+      "median": 0.711,
+      "spread": 0.0013
+    },
+    "early@256": {
+      "median": 0.7165,
+      "spread": 0.002
+    },
+    "late-deep@256": {
+      "median": 0.7165,
+      "spread": 0.0016
+    },
+    "late-snoek@256": {
+      "median": 0.711,
+      "spread": 0.0022
+    },
+    "early@512": {
+      "median": 0.7162,
+      "spread": 0.0015
+    },
+    "late-deep@512": {
+      "median": 0.7163,
+      "spread": 0.0019
+    },
+    "late-snoek@512": {
+      "median": 0.7114,
+      "spread": 0.0027
+    }
+  },
+  "2.0": {
+    "early@64": {
+      "median": 0.7211,
+      "spread": 0.0015
+    },
+    "late-deep@64": {
+      "median": 0.7212,
+      "spread": 0.0008
+    },
+    "late-snoek@64": {
+      "median": 0.7096,
+      "spread": 0.0018
+    },
+    "early@128": {
+      "median": 0.7212,
+      "spread": 0.0015
+    },
+    "late-deep@128": {
+      "median": 0.7212,
+      "spread": 0.0014
+    },
+    "late-snoek@128": {
+      "median": 0.7095,
+      "spread": 0.0019
+    },
+    "early@256": {
+      "median": 0.7211,
+      "spread": 0.0019
+    },
+    "late-deep@256": {
+      "median": 0.721,
+      "spread": 0.0014
+    },
+    "late-snoek@256": {
+      "median": 0.7093,
+      "spread": 0.0031
+    },
+    "early@512": {
+      "median": 0.7206,
+      "spread": 0.0009
+    },
+    "late-deep@512": {
+      "median": 0.7207,
+      "spread": 0.002
+    },
+    "late-snoek@512": {
+      "median": 0.7103,
+      "spread": 0.0037
+    }
+  },
+  "3.0": {
+    "early@64": {
+      "median": 0.7323,
+      "spread": 0.0013
+    },
+    "late-deep@64": {
+      "median": 0.7327,
+      "spread": 0.0005
+    },
+    "late-snoek@64": {
+      "median": 0.7053,
+      "spread": 0.0032
+    },
+    "early@128": {
+      "median": 0.7326,
+      "spread": 0.0018
+    },
+    "late-deep@128": {
+      "median": 0.7323,
+      "spread": 0.0013
+    },
+    "late-snoek@128": {
+      "median": 0.7059,
+      "spread": 0.0027
+    },
+    "early@256": {
+      "median": 0.7323,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.7322,
+      "spread": 0.0009
+    },
+    "late-snoek@256": {
+      "median": 0.7057,
+      "spread": 0.0063
+    },
+    "early@512": {
+      "median": 0.7317,
+      "spread": 0.0012
+    },
+    "late-deep@512": {
+      "median": 0.7319,
+      "spread": 0.0013
+    },
+    "late-snoek@512": {
+      "median": 0.7076,
+      "spread": 0.0056
+    }
+  },
+  "4.0": {
+    "early@64": {
+      "median": 0.7452,
+      "spread": 0.0016
+    },
+    "late-deep@64": {
+      "median": 0.7455,
+      "spread": 0.0007
+    },
+    "late-snoek@64": {
+      "median": 0.7003,
+      "spread": 0.0056
+    },
+    "early@128": {
+      "median": 0.7451,
+      "spread": 0.0016
+    },
+    "late-deep@128": {
+      "median": 0.7451,
+      "spread": 0.0013
+    },
+    "late-snoek@128": {
+      "median": 0.7017,
+      "spread": 0.0046
+    },
+    "early@256": {
+      "median": 0.7451,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.745,
+      "spread": 0.0008
+    },
+    "late-snoek@256": {
+      "median": 0.7027,
+      "spread": 0.0109
+    },
+    "early@512": {
+      "median": 0.7444,
+      "spread": 0.0012
+    },
+    "late-deep@512": {
+      "median": 0.7447,
+      "spread": 0.0015
+    },
+    "late-snoek@512": {
+      "median": 0.7041,
+      "spread": 0.0073
+    }
+  },
+  "6.0": {
+    "early@64": {
+      "median": 0.7713,
+      "spread": 0.0016
+    },
+    "late-deep@64": {
+      "median": 0.7718,
+      "spread": 0.0004
+    },
+    "late-snoek@64": {
+      "median": 0.6911,
+      "spread": 0.0085
+    },
+    "early@128": {
+      "median": 0.7713,
+      "spread": 0.0022
+    },
+    "late-deep@128": {
+      "median": 0.7715,
+      "spread": 0.0015
+    },
+    "late-snoek@128": {
+      "median": 0.6925,
+      "spread": 0.0111
+    },
+    "early@256": {
+      "median": 0.771,
+      "spread": 0.0018
+    },
+    "late-deep@256": {
+      "median": 0.7711,
+      "spread": 0.0007
+    },
+    "late-snoek@256": {
+      "median": 0.6926,
+      "spread": 0.0151
+    },
+    "early@512": {
+      "median": 0.7707,
+      "spread": 0.0021
+    },
+    "late-deep@512": {
+      "median": 0.7708,
+      "spread": 0.0015
+    },
+    "late-snoek@512": {
+      "median": 0.6968,
+      "spread": 0.0114
+    }
+  },
+  "8.0": {
+    "early@64": {
+      "median": 0.7957,
+      "spread": 0.0014
+    },
+    "late-deep@64": {
+      "median": 0.7961,
+      "spread": 0.0005
+    },
+    "late-snoek@64": {
+      "median": 0.6776,
+      "spread": 0.0168
+    },
+    "early@128": {
+      "median": 0.7955,
+      "spread": 0.0021
+    },
+    "late-deep@128": {
+      "median": 0.7955,
+      "spread": 0.0022
+    },
+    "late-snoek@128": {
+      "median": 0.6839,
+      "spread": 0.0146
+    },
+    "early@256": {
+      "median": 0.7954,
+      "spread": 0.0023
+    },
+    "late-deep@256": {
+      "median": 0.7955,
+      "spread": 0.0007
+    },
+    "late-snoek@256": {
+      "median": 0.6817,
+      "spread": 0.02
+    },
+    "early@512": {
+      "median": 0.7945,
+      "spread": 0.0024
+    },
+    "late-deep@512": {
+      "median": 0.795,
+      "spread": 0.0018
+    },
+    "late-snoek@512": {
+      "median": 0.6862,
+      "spread": 0.0212
+    }
+  }
+}

@@ -8,9 +8,10 @@
   always predicting a future it has not seen.
 - **Result:** the served model's median error is **10.1 upvotes** against the 16.2 you get by
   guessing the average every time, and it accounts for 90% of the upvotes that actually happened.
-- **The architecture question:** where the title and the metadata meet is a swept hyperparameter,
-  not two hand-built models. 490 runs say fusing at the first layer is best — but that most of the
-  apparent cost of fusing later is really the cost of narrow per-input blocks.
+- **The architecture question:** early versus late fusion makes no difference here, and 2,000 runs
+  say why — the task is *additive*. Modelling the title and the metadata jointly buys +0.004 over
+  combining two separate scores, against a seed spread of 0.013. A synthetic control shows the same
+  code detecting an interaction the moment one exists, so the null is the data, not the setup.
 - **The ceiling:** Hacker News is substantially a lottery — the same link posted twice scores
   similarly only about a quarter of the time, which bounds what any model can do here.
 
@@ -304,6 +305,94 @@ verbosity.
 This is why the write-up quotes early fusion. It is not that late fusion is a worse idea; it is that
 under proportional allocation late fusion is being asked to work through a bottleneck that early
 fusion never sees.
+
+### Why the architecture question has no answer on this data
+
+Fixing the bottleneck did not make early fusion win. At matched hidden units it beats late fusion
+only at the smallest budget tested — 0.2526 against 0.2288 at 128 units (p=0.045) — and from 256
+units up the two are indistinguishable. Early fusion is flat across the whole range while late
+fusion climbs, because late fusion starts throttled and stops being throttled:
+
+| total hidden units | early | late | p |
+|---|---|---|---|
+| 128 | **0.2526** | 0.2288 | 0.045 |
+| 256 | 0.2499 | 0.2464 | 0.43 |
+| 512 | 0.2481 | 0.2565 | 0.26 |
+| 1024 | 0.2500 | 0.2507 | 0.52 |
+| 2048 | 0.2514 | 0.2604 | 0.85 |
+
+The reason is in the data, not the models. Early fusion's advantage in the literature is that it can
+model *correlation between the modalities in feature space* — [Snoek et
+al.](https://ivi.fnwi.uva.nl/isis/publications/2005/SnoekICM2005/SnoekICM2005.pdf) name losing that
+correlation as late fusion's central disadvantage. So the question is whether this task has any such
+correlation to lose. Reducing each modality to its own score and combining them linearly — which is
+Snoek's late fusion exactly — gives:
+
+```
+title only (unimodal)                  0.1549
+metadata only (unimodal)               0.2118
+combiner over the two scores           0.2348
+early fusion (joint model)             0.2392
+                                       ------
+what modelling them jointly buys       +0.0044
+```
+
+Against a seed spread of 0.013, that is nothing. **Predicting a Hacker News score is an additive
+problem**: `score ≈ f(title) + g(metadata)`. There is no interaction between the title and the
+metadata for early fusion to exploit, so no fusion architecture can beat any other, and every
+comparison above was measuring bottlenecks rather than fusion.
+
+### The control: what it looks like when there *is* something to lose
+
+A null result is only worth reporting if the setup could have detected the alternative. So the same
+two modalities were given a synthetic target with a tunable interaction:
+
+```
+y = g(title) + h(metadata) + α · g(title) × h(metadata) + noise
+```
+
+At `α = 0` the task is additive, as the real one turns out to be; as α grows the signal moves into
+the product, reachable only by a model that sees both modalities at once. Three architectures, ten
+seeds, 1,440 runs — and note that only the third is late fusion in Snoek's sense:
+
+| | can it represent the product? |
+|---|---|
+| **early** — concatenate the raw features | yes |
+| **late-deep** — a tower each, then a *shared* trunk | yes, one layer later |
+| **late-snoek** — each modality reduced to one score | **no, structurally** |
+
+| α | early | late-deep | late-snoek | early − snoek |
+|---|---|---|---|---|
+| 0.0 | 0.7126 | 0.7132 | **0.7133** | −0.0007 |
+| 0.5 | 0.7124 | 0.7127 | **0.7131** | −0.0007 |
+| 0.75 | 0.7129 | 0.7129 | 0.7128 | +0.0002 |
+| 1.0 | 0.7138 | 0.7137 | 0.7123 | +0.0015 |
+| 2.0 | 0.7211 | 0.7212 | 0.7096 | +0.0114 |
+| 4.0 | 0.7452 | 0.7455 | 0.7003 | +0.0449 |
+| 8.0 | 0.7957 | 0.7961 | 0.6776 | **+0.1181** |
+
+**Figure 11.** The interaction sweep: where the architectures separate, and what capacity does about it.
+
+![Two panels. On the left, test Spearman against interaction strength: early fusion and late-deep rise together from 0.71 to 0.80 while Snoek late fusion falls away to 0.68. On the right, the gap between early and Snoek late fusion plotted for four hidden widths, all four curves rising together, showing capacity does not close it.](assets/fusion-interaction.png)
+
+Three things fall out, all against seed spreads of 0.001–0.003:
+
+**The crossover is at α ≈ 0.75.** Below it the architecture that *can only* be additive is very
+slightly ahead — it cannot waste capacity hunting an interaction that is not there. Above it, it
+falls behind without bound.
+
+**Capacity does not rescue it.** The gap at α=8 is +0.118 at 64 hidden units and +0.108 at 512:
+eight times the width buys back nine percent. A linear combination of two scalars cannot represent
+their product at any size, which is what makes this a structural limit rather than a fitting problem.
+
+**Early and late-deep are indistinguishable everywhere** — the largest difference across all 48
+α × width combinations is 0.0006. Delaying the concatenation costs nothing at any interaction
+strength, provided something nonlinear follows it.
+
+That last row is the one that matters for this service. **Every late-fusion model here is the
+`late-deep` kind**, so the comparison in this write-up was never testing what Snoek warns about. The
+null on real data has two independent causes: the task is additive, *and* the architecture being
+called "late fusion" is not the one that loses interactions.
 
 ### Predicting a count
 

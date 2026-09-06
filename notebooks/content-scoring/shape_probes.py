@@ -87,8 +87,16 @@ def _inputs(group: str, splits: Splits, split: str, matrix: torch.Tensor) -> tor
     """One group's raw input columns for a split, the title pooled to its mean vector."""
     tokens, mask, numeric, domain, _ = splits.tensors[split]
     if group == "text":
-        vectors = matrix[tokens] * mask.unsqueeze(-1)
-        return vectors.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        # Chunked: `matrix[tokens]` gathers (rows, max_tokens, dims) before reducing,
+        # which is 27 GB on the training split to produce 0.85 GB. See the note in
+        # `fusion_probes.modalities` -- that allocation panicked the machine.
+        pooled = torch.empty((len(tokens), matrix.shape[1]), dtype=torch.float32)
+        for start in range(0, len(tokens), 4096):
+            stop = min(start + 4096, len(tokens))
+            window = mask[start:stop].unsqueeze(-1)
+            vectors = matrix[tokens[start:stop]] * window
+            pooled[start:stop] = vectors.sum(dim=1) / window.sum(dim=1).clamp(min=1.0)
+        return pooled
     if group == "domain":
         # A flag plus the *id*, which the caller embeds. A one-hot would hand the probe a
         # 1004-column input where the model sees nine, and the shape it preferred would

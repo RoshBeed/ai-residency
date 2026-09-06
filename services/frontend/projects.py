@@ -209,7 +209,8 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "subtitle": "Early vs late fusion of title text and post metadata, on 872k HN posts",
         "description": (
             "Predicts a Hacker News post's score from its title and metadata, four ways: "
-            "text alone, metadata alone, early fusion and late fusion."
+            "text alone, metadata alone, early fusion and late fusion — which score the "
+            "same, because the task turns out to be additive."
         ),
         "techniques": ["NLP", "Embeddings", "Regression", "Transfer Learning", "Feature Fusion"],
         "papers": [
