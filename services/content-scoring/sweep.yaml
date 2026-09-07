@@ -34,6 +34,17 @@ metric:
   # it got.
   name: best/val_mae
   goal: minimize
+# WARNING: this metric is gameable and a 116-run sweep proved it. Hacker News scores are
+# heavily skewed, so a model that systematically under-predicts wins on MAE: the best run
+# found here reached val_mae 17.885 with test Spearman 0.0139 -- chance -- and a
+# total_ratio of 0.15, meaning it accounted for a seventh of the upvotes that happened.
+# Across the whole sweep, total_ratio rises from 0.15 to 1.05 as MAE gets worse.
+#
+# Do not read this sweep's winner as a better configuration without checking
+# `test/total_ratio` and `test/spearman` beside it. The shipped learning rate sits where
+# the model actually predicts counts. Sweeping on Spearman alone has the mirror failure --
+# it ranks well while predicting a fifth of the upvotes -- which is why the metric was
+# moved here in the first place. Neither number is sufficient alone.
 parameters:
   # These names are the Config field names, uppercased and prefixed, because that is
   # what BaseConfig reads from the environment. The agent exports them, so no

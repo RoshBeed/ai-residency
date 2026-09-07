@@ -179,14 +179,14 @@ Both are built, alongside two ablations — **title only** and **metadata only**
 "combining helps" testable. It helps by a wide margin: either input alone lands near a 13–15 upvote
 median error, and together they reach 7.5.
 
-**Where the inputs meet turns out to matter.** Early fusion reaches ρ 0.260 against late fusion's
-0.202, and the three-seed spreads are 0.012 and 0.016 — so the gap is about three times the noise.
-Letting the title and the metadata interact in the first layer is worth real accuracy, and that is
-the one thing the two models differ in.
+**At this width, early fusion wins — and only at this width.** Over 40 and 30 seeds, early reaches
+ρ 0.2487 against late's 0.2291, a gap of 0.020 that a Mann-Whitney test separates cleanly
+(p < 0.001). That is a solid number rather than the three-seed coincidence it started as.
 
-Late fusion keeps a narrow edge on the two ranking metrics (NDCG@10 0.128 against 0.124, top-decile
-lift 2.40 against 2.28) while early fusion is clearly better at predicting the count. Early fusion
-is what the service serves, because the count is what it is for.
+It is also a statement about 256 hidden units, not about fusion. The same comparison at matched
+capacity across 128 to 2048 units finds the gap only at the smallest budget; from 256 up the two are
+indistinguishable, and the sections below show why — the blocks are being throttled, and the task
+has no interaction for early fusion to exploit in the first place.
 
 **Every architecture uses the same width, depth, dropout, learning rate and schedule**, so none is
 tuned at another's expense:
@@ -393,6 +393,69 @@ That last row is the one that matters for this service. **Every late-fusion mode
 `late-deep` kind**, so the comparison in this write-up was never testing what Snoek warns about. The
 null on real data has two independent causes: the task is additive, *and* the architecture being
 called "late fusion" is not the one that loses interactions.
+
+### Where late fusion does earn its place
+
+The surveys credit late fusion with robustness rather than accuracy: it can lean on a surviving
+branch where early fusion has entangled the modalities in its first layer. Same three
+architectures, trained clean, with one modality damaged only at inference:
+
+| damage (additive task) | early | late-snoek | late − early |
+|---|---|---|---|
+| nothing | 0.7126 | 0.7132 | +0.0005 |
+| title half removed | 0.7086 | 0.7112 | +0.0026 |
+| **title fully removed** | 0.6893 | **0.7064** | **+0.0170** |
+| title noised, 1σ | 0.7057 | 0.7070 | +0.0013 |
+| metadata noised, 1σ | 0.4716 | 0.4762 | +0.0047 |
+
+The advantage is real and grows monotonically with damage, and it is **modest** — 0.017 at worst.
+Two details are worth more than the headline. It is asymmetric: removing the *metadata* collapses
+every architecture to about 0.11, because the metadata carries most of the signal, so there is
+nothing for late fusion to fall back on. And absence hurts far more than corruption — 1σ of noise on
+the title costs 0.007 where removing it costs 0.024. A model can learn to discount a noisy channel;
+it cannot recover a missing one.
+
+**Run the same thing with an interaction present and it becomes a trade.** At α=2, late fusion is
+already paying 0.012 for being unable to model the product term:
+
+| | undamaged | title half gone | title fully gone | metadata fully gone |
+|---|---|---|---|---|
+| late − early, α=0 (additive) | +0.0005 | +0.0026 | +0.0170 | +0.0004 |
+| late − early, α=2 (interacting) | **−0.0116** | −0.0035 | **+0.0146** | **+0.0305** |
+
+Undamaged, early fusion wins by 0.012 because it can model the interaction. As a modality
+disappears the sign flips, and by full removal late fusion is ahead by 0.015 — or 0.031 when the
+metadata goes, where the interaction is worth nothing to either model because half of it is gone.
+
+**The trade only pays for absence, not for degradation.** Under noise on the title, late fusion
+stays behind at every level (−0.0126 at 1σ): the interaction is still there to be modelled, the
+signal is merely dirtier, and an architecture that cannot represent it gains nothing. So the rule
+that falls out is narrower than "late fusion is robust" — it is *late fusion buys insurance against
+a modality vanishing, and pays for it in accuracy whenever the modalities interact*.
+
+### The metric a sweep optimises is part of the model
+
+A 116-run Bayes search on validation MAE found a configuration reaching **17.885**, far better than
+the shipped 25.1. It is not better. Its test Spearman is **0.0139** — chance — and it accounts for
+**15%** of the upvotes that actually happened.
+
+Hacker News scores are heavily skewed, so a model that systematically under-predicts wins on MAE:
+it never takes the large loss of guessing high on a post that flops. Across the whole sweep, the
+fraction of upvotes accounted for climbs from 0.15 to 1.05 as MAE gets *worse*.
+
+| val MAE | test ρ | upvotes accounted for |
+|---|---|---|
+| **17.885** | 0.0139 | 15% |
+| 17.990 | 0.2213 | 22% |
+| 20.406 | 0.2604 | 40% |
+| 27.500 | 0.2065 | 105% |
+
+This service has now been caught by the mirror image of this twice. Sweeping on Spearman tunes for
+ranking while the head predicts counts, and produces a model that orders posts well and predicts a
+fifth of the upvotes. Sweeping on MAE produces one that predicts a plausible *total* and cannot rank
+at all. **Neither number is sufficient alone**, and a sweep that reports only one will find the
+degenerate corner of whichever it was given. The shipped learning rate sits where the model actually
+predicts counts, which is why it survives a search that nominally beats it by 28%.
 
 ### Predicting a count
 

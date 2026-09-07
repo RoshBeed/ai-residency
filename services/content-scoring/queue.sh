@@ -20,10 +20,13 @@ step() {
   marker="assets/queue/$name.done"
   [ -f "$marker" ] && { echo "$(date '+%F %T') skip $name (done)"; return 0; }
   echo "$(date '+%F %T') === $name"
-  if $GUARD "$@" >> "/tmp/queue-$name.log" 2>&1; then
+  # `$?` after an `if` reports the *test*, not the command, so a healthy job logged
+  # "failed (exit 0)". Capture the status before branching on it.
+  $GUARD "$@" >> "/tmp/queue-$name.log" 2>&1 && status=0 || status=$?
+  if [ "$status" -eq 0 ]; then
     touch "$marker"; echo "$(date '+%F %T') --- $name complete"
   else
-    echo "$(date '+%F %T') !!! $name failed (exit $?), continuing" >&2
+    echo "$(date '+%F %T') !!! $name failed (exit $status), continuing" >&2
   fi
 }
 
