@@ -429,9 +429,33 @@ metadata goes, where the interaction is worth nothing to either model because ha
 
 **The trade only pays for absence, not for degradation.** Under noise on the title, late fusion
 stays behind at every level (−0.0126 at 1σ): the interaction is still there to be modelled, the
-signal is merely dirtier, and an architecture that cannot represent it gains nothing. So the rule
-that falls out is narrower than "late fusion is robust" — it is *late fusion buys insurance against
-a modality vanishing, and pays for it in accuracy whenever the modalities interact*.
+signal is merely dirtier, and an architecture that cannot represent it gains nothing.
+
+**And the insurance gets worse the more capacity you have.** Repeating the same comparison at 512
+hidden units instead of 128:
+
+| α=2 | 128 units | 512 units |
+|---|---|---|
+| undamaged — the cost | −0.0116 | −0.0103 |
+| title fully gone | +0.0146 | **+0.0059** |
+| metadata fully gone | +0.0305 | **+0.0068** (not significant, p=0.24) |
+| metadata noised 1σ | +0.0032 | **−0.0023** |
+
+The penalty barely moves; the benefit collapses. At 128 units you pay 0.012 to insure 0.031; at 512
+you pay 0.010 to insure 0.006, which is not worth having. The mechanism is that **early fusion
+recovers with capacity and late fusion does not** — with the title removed, early climbs from 0.7022
+to 0.7109 between the two widths while late fusion sits at 0.7167 either way. Given enough room,
+early fusion learns to survive a missing input on its own.
+
+So the rule is narrower still: *late fusion's robustness is a small-model effect*. It buys real
+insurance when capacity is tight, and stops being worth its accuracy cost once both architectures
+have room.
+
+That is the fourth independent measurement on this data to land in the same place. The fusion-point
+curve, the width sweep, the allocation ranking and now robustness all say the same thing: **the
+architectural distinction only matters when something else is constrained.** Remove the constraint
+and early and late fusion converge — which is what makes the additive structure of the task, rather
+than the choice of architecture, the thing worth writing down.
 
 ### The metric a sweep optimises is part of the model
 

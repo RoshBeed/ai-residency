@@ -172,6 +172,14 @@ Snoek's late fusion -- reaches 0.2348 against the joint model's 0.2392, so **mod
 the metadata jointly buys +0.004 against a seed spread of 0.013**. The task is additive, and no
 fusion architecture can beat another when there is no interaction to model.
 
+**Four independent measurements now say the architectural distinction only matters when something
+else is constrained** -- the fusion-point curve, the width sweep, the block-allocation ranking and
+the robustness probe. Late fusion's one remaining advantage, degrading gracefully when a modality
+goes missing, is itself a small-model effect: at 128 hidden units it pays 0.012 undamaged to insure
+0.031, at 512 it pays 0.010 to insure 0.006 and the missing-metadata edge stops being significant
+(p=0.24). Early fusion recovers with capacity where late fusion does not. Do not quote a fusion
+result without the width it was measured at.
+
 That null is only reportable because a synthetic control shows the same code detecting an
 interaction the moment one exists: on `g + h + α·g·h`, Snoek late fusion falls behind by 0.118 at
 α=8 and eight times the width recovers nine percent of that. The same control also found that

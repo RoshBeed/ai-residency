@@ -53,8 +53,22 @@ step interaction-fine uv run python -u ../../notebooks/content-scoring/fusion_pr
 # 4. The hyperparameter search that never finished.
 step bayes sh -c 'id=$(uv run wandb sweep sweep.yaml 2>&1 | grep -oE "[a-z0-9]+/[a-z0-9-]+/[a-z0-9]{8}" | tail -1); [ -n "$id" ] && timeout 6h uv run wandb agent "$id"'
 
-# 5. Backlog empty: keep adding seeds to the fusion grid rather than idling. Each pass
-#    tightens every point it touches; `fusion-curve` skips what it already has.
+# 5. Finish the block-allocation ranking. Screened at three seeds it could not separate
+#    its arms -- the five gaps spanned 0.041 against a within-cell spread of 0.045.
+step allocation ./allocation.sh
+
+# 6. Does the robustness trade-off depend on capacity? The missing-modality result is at
+#    one width, and late fusion's edge could be a small-model effect like every other
+#    fusion difference on this data has turned out to be.
+step robust-wide uv run python -u ../../notebooks/content-scoring/fusion_probes.py \
+  robustness --alpha 2 --hidden 512 --seeds 42 43 44 45 46 47 48 49 50 51 --epochs 3 \
+  --out assets/fusion-robustness-a2-wide.json
+
+# 7. Backlog empty: keep adding seeds to the fusion grid rather than idling. Each pass
+#    tightens every point it touches; `fusion-curve` skips what it already has. This is
+#    the least valuable work in the file -- pass 1 took 11 hours to move the standard
+#    error of a cell from 0.0072 to 0.0058 -- so it sits last, after everything that
+#    answers a question rather than tightening an answer.
 pass=0
 while true; do
   pass=$((pass + 1))
