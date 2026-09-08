@@ -46,7 +46,7 @@ import sys
 from pathlib import Path
 
 import torch
-from scipy.stats import spearmanr
+from scipy.stats import mannwhitneyu, spearmanr
 from torch import nn
 
 sys.path.insert(0, str(Path.cwd()))
@@ -100,14 +100,16 @@ def synthetic_target(
     meta: torch.Tensor,
     alpha: float,
     projections: tuple[torch.Tensor, torch.Tensor],
+    kind: str = "product",
 ) -> torch.Tensor:
-    """`g + h + alpha * g * h + noise`, with `g` and `h` bounded so alpha is comparable.
+    """`g + h + alpha * interaction(g, h) + noise`, on a scale comparable across kinds.
 
     Args:
         title: `(n, 300)` pooled title vectors.
         meta: `(n, k)` metadata columns.
         alpha: Interaction strength. Zero makes the task purely additive.
         projections: The fixed `(w_g, w_h)` random projections.
+        kind: Which interaction to use. See `INTERACTIONS`.
 
     Returns:
         `(n,)` targets.
@@ -119,7 +121,11 @@ def synthetic_target(
     w_g, w_h = projections
     g = torch.tanh(title @ w_g)
     h = torch.tanh(meta @ w_h)
-    signal = g + h + alpha * g * h
+    term = INTERACTIONS[kind](g, h)
+    # Normalised so `alpha` means the same thing whichever interaction is used --
+    # `max` and `product` have very different natural scales.
+    term = (term - term.mean()) / term.std().clamp(min=1e-6)
+    signal = g + h + alpha * term
     return signal + 0.5 * torch.randn(len(signal), generator=torch.Generator().manual_seed(0))
 
 
@@ -193,7 +199,50 @@ class LateSnoek(nn.Module):
         return self.combine(scores).squeeze(-1)
 
 
-ARCHITECTURES = {"early": Early, "late-deep": LateDeep, "late-snoek": LateSnoek}
+class LateDot(nn.Module):
+    """A tower per modality, combined by a dot product. Two-tower retrieval.
+
+    This is what production retrieval actually does -- encode the query, encode the
+    document, take a dot product -- and it is *not* the same as adding two scores. A dot
+    product is a bilinear form, so it can represent any interaction expressible as
+    `sum_k u_k(a) * v_k(b)`: strictly more than a generalised additive model, strictly
+    less than an arbitrary function of both.
+
+    That middle position is the reason two-tower retrieval works as well as it does, and
+    the reason it still needs a cross-encoder to rerank. Which interactions it can and
+    cannot reach is measurable rather than a matter of opinion, which is what this is for.
+    """
+
+    def __init__(self, title_dim: int, meta_dim: int, hidden: int, rank: int = 16) -> None:
+        super().__init__()
+        half = hidden // 2
+        self.title = nn.Sequential(nn.Linear(title_dim, half), nn.ReLU(), nn.Linear(half, rank))
+        self.meta = nn.Sequential(nn.Linear(meta_dim, half), nn.ReLU(), nn.Linear(half, rank))
+        # A bias per branch, so the model keeps the additive part a sum would have given
+        # it and the dot product is free to carry only the interaction.
+        self.title_bias = nn.Sequential(nn.Linear(title_dim, half), nn.ReLU(), nn.Linear(half, 1))
+        self.meta_bias = nn.Sequential(nn.Linear(meta_dim, half), nn.ReLU(), nn.Linear(half, 1))
+
+    def forward(self, title: torch.Tensor, meta: torch.Tensor) -> torch.Tensor:
+        dot = (self.title(title) * self.meta(meta)).sum(dim=1)
+        return dot + self.title_bias(title).squeeze(-1) + self.meta_bias(meta).squeeze(-1)
+
+
+ARCHITECTURES = {
+    "early": Early,
+    "late-deep": LateDeep,
+    "late-dot": LateDot,
+    "late-snoek": LateSnoek,
+}
+
+# How the two modalities are made to interact. `product` is bilinear and a dot product
+# should reach it; the other two are not, and should separate two-tower fusion from the
+# architectures that see the raw features together.
+INTERACTIONS = {
+    "product": lambda g, h: g * h,
+    "max": lambda g, h: torch.maximum(g, h),
+    "disagree": lambda g, h: -(g - h).abs(),
+}
 
 
 def fit(
@@ -226,6 +275,94 @@ def fit(
     return float(spearmanr(predicted, data["test"][2].numpy()).statistic)
 
 
+def run_threshold(arguments: argparse.Namespace) -> None:
+    """How much interaction would the real data need before we could see it?
+
+    Args:
+        arguments: Parsed command line.
+
+    "The task is additive" is a claim about a null, and a null is only as strong as the
+    smallest effect the setup could have found. This bounds it: the *real* upvote target
+    gets a synthetic interaction added on top, scaled to a fraction of the target's own
+    standard deviation, and the sweep finds the smallest addition at which early fusion
+    separates from an architecture that cannot represent it.
+
+    That threshold is the answer to "how do you know there is no interaction" -- there is
+    none stronger than the smallest one this would have caught.
+    """
+    config = Config()
+    payload = load_checkpoint(config.embeddings_path)
+    splits = build_splits(config, payload["extra"]["word_to_index"])
+    matrix = payload["model_state_dict"]["in_embed.weight"]
+    raw = {split: modalities(splits, split, matrix) for split in ("train", "test")}
+
+    generator = torch.Generator().manual_seed(TASK_SEED)
+    projections = (
+        torch.randn(raw["train"][0].shape[1], generator=generator)
+        / raw["train"][0].shape[1] ** 0.5,
+        torch.randn(raw["train"][1].shape[1], generator=generator)
+        / raw["train"][1].shape[1] ** 0.5,
+    )
+
+    results: dict[str, dict[str, list[float]]] = {}
+    for strength in arguments.strengths:
+        data = {}
+        for split in ("train", "test"):
+            title, meta = raw[split]
+            # log1p, because the raw counts are so skewed that an interaction scaled to
+            # their standard deviation would be dominated by a handful of viral posts.
+            real = torch.log1p(
+                torch.tensor(splits.frames[split]["score"].to_numpy(dtype="float32"))
+            )
+            product = torch.tanh(title @ projections[0]) * torch.tanh(meta @ projections[1])
+            # Normalised by the product's *own* spread, not just the target's. Two tanh
+            # terms multiplied have a standard deviation around 0.043, so scaling by the
+            # target's std alone made `strength=1.0` an interaction worth 4% of the
+            # target's spread rather than 100% -- the axis was mislabelled by about 23x
+            # and the sweep could not mean what it said.
+            product = product / product.std().clamp(min=1e-6)
+            data[split] = (title, meta, real + strength * real.std() * product)
+        for architecture in ARCHITECTURES:
+            scores = [
+                fit(
+                    architecture,
+                    data,
+                    arguments.hidden[0],
+                    seed,
+                    arguments.epochs,
+                    arguments.batch,
+                    arguments.learning_rate,
+                )
+                for seed in arguments.seeds
+            ]
+            results.setdefault(f"{strength}", {})[architecture] = scores
+            logger.info(
+                "strength %-5s %-11s median rho %.4f  spread %.4f",
+                strength,
+                architecture,
+                statistics.median(scores),
+                max(scores) - min(scores),
+            )
+
+    Path(arguments.out).write_text(json.dumps(results, indent=2), encoding="utf-8")
+    logger.info("Wrote %s", arguments.out)
+
+    print(
+        f"\n{'added':>7}" + "".join(f"{a:>13}" for a in ARCHITECTURES) + "   early-snoek        p"
+    )
+    for strength in arguments.strengths:
+        row = results[f"{strength}"]
+        medians = {a: statistics.median(row[a]) for a in ARCHITECTURES}
+        gap = medians["early"] - medians["late-snoek"]
+        p = mannwhitneyu(row["early"], row["late-snoek"]).pvalue
+        mark = "  <- detected" if p < 0.05 and gap > 0 else ""
+        print(
+            f"{strength:>7}"
+            + "".join(f"{medians[a]:>13.4f}" for a in ARCHITECTURES)
+            + f"{gap:>+14.4f}{p:>9.3f}{mark}"
+        )
+
+
 def run_interaction(arguments: argparse.Namespace) -> None:
     """Sweep the interaction strength and watch the architectures separate."""
     config = Config()
@@ -245,7 +382,7 @@ def run_interaction(arguments: argparse.Namespace) -> None:
     results: dict[str, dict[str, list[float]]] = {}
     for alpha in arguments.alphas:
         data = {
-            split: (*raw[split], synthetic_target(*raw[split], alpha, projections))
+            split: (*raw[split], synthetic_target(*raw[split], alpha, projections, arguments.kind))
             for split in ("train", "test")
         }
         for hidden in arguments.hidden:
@@ -385,8 +522,23 @@ def run_robustness(arguments: argparse.Namespace) -> None:
 def main() -> None:
     """Run one probe."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("probe", choices=["interaction", "robustness"])
+    parser.add_argument("probe", choices=["interaction", "robustness", "threshold"])
+    parser.add_argument(
+        "--strengths",
+        type=float,
+        nargs="+",
+        default=[0.0, 0.05, 0.1, 0.2, 0.4, 0.8],
+        help="Interaction added to the real target, in units of the target's own standard "
+        "deviation. The product term is normalised first, so 1.0 really is one std.",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite an existing results file.")
+    parser.add_argument(
+        "--kind",
+        choices=list(INTERACTIONS),
+        default="product",
+        help="Which interaction the synthetic target carries. `product` is bilinear and a "
+        "dot product can reach it; `max` and `disagree` are not.",
+    )
     parser.add_argument(
         "--alpha",
         type=float,
@@ -435,6 +587,8 @@ def main() -> None:
         )
     if arguments.probe == "interaction":
         run_interaction(arguments)
+    elif arguments.probe == "threshold":
+        run_threshold(arguments)
     else:
         run_robustness(arguments)
 

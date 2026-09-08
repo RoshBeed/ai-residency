@@ -64,7 +64,26 @@ step robust-wide uv run python -u ../../notebooks/content-scoring/fusion_probes.
   robustness --alpha 2 --hidden 512 --seeds 42 43 44 45 46 47 48 49 50 51 --epochs 3 \
   --out assets/fusion-robustness-a2-wide.json
 
-# 7. Backlog empty: keep adding seeds to the fusion grid rather than idling. Each pass
+# 7. How large an interaction would the real target need before this setup could see it?
+#    "The task is additive" is a claim about a null, and a null is worth only as much as
+#    the smallest effect that would have shown up. This bounds it.
+step threshold uv run python -u ../../notebooks/content-scoring/fusion_probes.py \
+  threshold --strengths 0 0.02 0.05 0.1 0.2 0.4 0.8 --hidden 128 \
+  --seeds 42 43 44 45 46 47 48 49 50 51 --epochs 3 \
+  --out assets/fusion-threshold.json
+
+# 8. Which interactions can a dot product reach? Two-tower retrieval combines its towers
+#    with a dot product, not a sum, so it is a bilinear form -- more expressive than a
+#    generalised additive model, less than a joint network. `product` is bilinear and it
+#    should cope; `max` and `disagree` are not, and should separate it.
+for kind in product max disagree; do
+  step "bilinear-$kind" uv run python -u ../../notebooks/content-scoring/fusion_probes.py \
+    interaction --kind "$kind" --alphas 0 0.5 1 2 4 8 --hidden 128 \
+    --seeds 42 43 44 45 46 47 48 49 50 51 --epochs 3 \
+    --out "assets/fusion-bilinear-$kind.json"
+done
+
+# 9. Backlog empty: keep adding seeds to the fusion grid rather than idling. Each pass
 #    tightens every point it touches; `fusion-curve` skips what it already has. This is
 #    the least valuable work in the file -- pass 1 took 11 hours to move the standard
 #    error of a cell from 0.0072 to 0.0058 -- so it sits last, after everything that

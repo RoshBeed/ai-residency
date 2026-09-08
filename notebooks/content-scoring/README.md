@@ -130,6 +130,57 @@ Raw, the effect saturates and decays — prolific posters have many hits and muc
 Controlled for experience (authors with 5–50 prior posts): **3.9% → 6.7%**, a 1.7× lift. Real,
 repeatable, and much smaller than it feels.
 
+## Fusion: where the title and the metadata should meet
+
+Five scripts, added while turning "early versus late fusion" from two hand-built models
+into something measurable.
+
+**`shape_probes.py`** — does each input group prefer a different tower shape? Each group
+alone, one neuron budget arranged four ways, three budgets so a deep-and-narrow preference
+can be told apart from a narrow first layer. Answer: no. Every group, every budget, "not
+separated". That matters because giving each input the shape it wants is late fusion's one
+structural advantage over early fusion, and here there is nothing to give.
+
+**`shape_specs.py`** — builds matched-neuron architectures for the comparison above, and
+asserts the counts match. Rounding had put three "equal" models at 253, 256 and 288 units.
+
+**`fusion_probes.py`** — the controlled synthetic experiments.
+
+- `interaction` puts a knob on the thing Snoek names as late fusion's weakness. A target
+  `g(title) + h(metadata) + α·interaction`, over real HN features, swept from additive to
+  interaction-dominated. Crossover at α≈0.75; the gap reaches 0.118; eight times the width
+  recovers nine percent of it, so it is a representational limit rather than a fitting one.
+- The same sweep separates three ways of joining two towers: **adding their scores** can
+  represent no interaction, a **dot product** can represent multiplicative ones and tracked
+  full early fusion to within 0.0014 at every strength, and a **shared network** can
+  represent anything. Early fusion and the shared-network form were indistinguishable
+  across all 48 α×width cells — largest difference 0.0006.
+- `robustness` damages one modality at inference. Late fusion degrades more gracefully as a
+  modality disappears, but the advantage is a small-model effect: at 128 units it pays
+  0.012 undamaged to insure 0.031, at 512 it pays 0.010 to insure 0.006.
+- `threshold` adds a synthetic interaction to the *real* target, to bound the null. The
+  real data's gap sits where an added interaction of 0.02–0.05 standard deviations does.
+
+**`hn_interactions.py`** — the Hacker News question itself, rather than a synthetic one.
+For each pairing it fits a model that cannot interact (a tower each, reduced to a score,
+summed) against one that can, on the real upvote target. Eleven pairings: the title against
+each metadata group, and every metadata pair against each other.
+
+Ten of eleven come back zero or negative. The three that reach significance are all
+*negative* — the joint model is worse — which is what a model spending capacity searching
+for structure that is not there looks like. A good title is worth the same at 3am as at
+3pm, on github.com as on a personal blog.
+
+The script also carries the controls that a null needs: `--target` (additive in `log1p` is
+multiplicative in raw counts, so the finding is a statement about a coordinate system until
+checked in more than one), `--epochs` (interactions are harder to learn than main effects),
+`--slice` (an interaction confined to Show HN posts averages away over 69,000 rows), and a
+capacity-matched additive control (the joint model also has more parameters, so a positive
+result could be either).
+
+**`linkedin_figures.py`** — the two diagrams for the write-up's summary, drawn from the
+recovered medians so the post and the README cannot disagree.
+
 ## Things that were wrong for a while
 
 - The eval harness measured RMSE in log space, so nothing was watching whether the service could
@@ -139,3 +190,25 @@ repeatable, and much smaller than it feels.
   15, so it returned 0.0% for every post. It is fitted on validation now.
 - The sweep optimised rank correlation while the objective underneath had moved to counts.
 - The slice table exponentiated actuals that were already raw counts, printing `inf`.
+- **Late fusion was a generalised additive model.** With one hidden layer it had a bare
+  linear head after the concat, so it was `Σ w_g·f_g(x_g)` and could not represent *any*
+  interaction. The early-versus-late gap reported at the time was measuring that, not
+  fusion timing.
+- **Block widths were allocated in proportion to input columns**, giving the 300-d title
+  233 of 256 hidden units and the author's three scalars 2. The title is 300-d because
+  word2vec chose 300, not because it says more; measured, the 29 metadata columns
+  out-predict the 300 title columns. The rule handed the weaker input eight times the
+  capacity, and a fusion sweep on top of it measured the bottleneck.
+- **A sweep on validation MAE found a 28% "improvement" that ranked at chance.** Skewed
+  targets reward systematic under-prediction: the winner accounted for 15% of the upvotes
+  that happened. Across the sweep, upvotes-accounted-for climbed from 0.15 to 1.05 as MAE
+  got *worse*. The mirror of the Spearman mistake above; neither metric is sufficient alone.
+- **A robustness smoke test overwrote 1,440 interaction runs** by taking the same default
+  `--out`. Medians survived in the log; per-seed values did not.
+- **`matrix[tokens] * mask` allocated 27 GB** to produce an 0.85 GB pooled result and
+  kernel-panicked the machine. macOS compresses and swaps until the compressor is out of
+  segments, then the watchdog panics; jetsam never gets a chance. Pool in chunks.
+- **Claims were made from three-seed screenings and two of them were wrong.** The
+  allocation ranking reversed at ten seeds — the arm reported as best was mid-table, the
+  one reported as worse-than-nothing was second-best. The screening had flagged itself as
+  unable to separate its arms, and the write-up went ahead anyway.

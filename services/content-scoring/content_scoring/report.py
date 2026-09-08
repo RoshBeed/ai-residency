@@ -636,7 +636,16 @@ def plot_seed_distribution(records: list[dict[str, Any]], output: Path) -> None:
         return
     apply_style()
     frame = pd.DataFrame(records)
-    shapes = sorted(frame["widths"].unique(), key=lambda w: (len(w.split(",")), w))
+    # Only the shapes the grid was designed around. The project has accumulated others --
+    # one-off runs, a hyperparameter search that set the same field -- and drawing every
+    # shape it can find turns six readable panels into twenty-three, most of them a single
+    # fusion point with a handful of seeds.
+    designed = [shape for _, shapes in CURVE_PANELS for shape in shapes]
+    shapes = [
+        shape
+        for shape in sorted(frame["widths"].unique(), key=lambda w: (len(w.split(",")), w))
+        if shape in designed
+    ]
 
     columns = min(4, len(shapes))
     rows_needed = (len(shapes) + columns - 1) // columns
