@@ -36,6 +36,7 @@ import json
 import statistics
 import sys
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
@@ -50,6 +51,8 @@ from content_scoring.data import Splits, build_splits
 from content_scoring.features import GROUP_SLICES
 
 logger = get_logger(__name__)
+
+Combine = Literal["sum", "product"]
 
 # The title against each metadata group, then every metadata pair against each other.
 # The first set asks whether a good title is worth more in some contexts; the second asks
@@ -105,16 +108,33 @@ class Additive(nn.Module):
     The `title x all metadata` pairing scored +0.005 against a same-hidden-size additive
     model while every one of its constituent pairs was zero or negative -- exactly the
     pattern extra capacity would produce on its own.
+
+    `combine="product"` multiplies the two scores instead of adding them. That is still one
+    number per tower and still no crosstalk, but it can express exactly one interaction: the
+    claim that a good title *multiplies* upvotes rather than adding to them. Whatever fraction
+    of the joint model's advantage it recovers is the fraction that single multiplication
+    explains -- and whatever it leaves on the table is structure richer than one product.
     """
 
-    def __init__(self, a_dim: int, b_dim: int, hidden: int, capacity: int = 1) -> None:
+    def __init__(
+        self,
+        a_dim: int,
+        b_dim: int,
+        hidden: int,
+        capacity: int = 1,
+        combine: Combine = "sum",
+    ) -> None:
         super().__init__()
         wide = hidden * capacity
+        self.combine = combine
         self.a = nn.Sequential(nn.Linear(a_dim, wide), nn.ReLU(), nn.Linear(wide, 1))
         self.b = nn.Sequential(nn.Linear(b_dim, wide), nn.ReLU(), nn.Linear(wide, 1))
 
     def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        return (self.a(a) + self.b(b)).squeeze(-1)
+        left, right = self.a(a), self.b(b)
+        if self.combine == "product":
+            return (left * right).squeeze(-1)
+        return (left + right).squeeze(-1)
 
 
 class Joint(nn.Module):
@@ -293,6 +313,15 @@ def main() -> None:
             # as the joint model. If the joint model still wins, it is the interaction.
             "additive-matched": lambda a=a_dim, b=b_dim: Additive(
                 a, b, arguments.hidden, capacity=arguments.match_capacity
+            ),
+            # One tower each, one number each, multiplied rather than summed. Tests the
+            # stated mechanism directly rather than inferring it from the transforms.
+            "multiplicative": lambda a=a_dim, b=b_dim: Additive(
+                a,
+                b,
+                arguments.hidden,
+                capacity=arguments.match_capacity,
+                combine="product",
             ),
             "joint": lambda a=a_dim, b=b_dim: Joint(a, b, arguments.hidden),
         }
