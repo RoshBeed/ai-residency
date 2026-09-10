@@ -8,10 +8,11 @@
   always predicting a future it has not seen.
 - **Result:** the served model's median error is **10.1 upvotes** against the 16.2 you get by
   guessing the average every time, and it accounts for 90% of the upvotes that actually happened.
-- **The architecture question:** early versus late fusion makes no difference here, and 2,000 runs
-  say why — the task is *additive*. Modelling the title and the metadata jointly buys +0.004 over
-  combining two separate scores, against a seed spread of 0.013. A synthetic control shows the same
-  code detecting an interaction the moment one exists, so the null is the data, not the setup.
+- **The architecture question:** early fusion wins, and ~3,000 runs say why. A good title does not
+  *add* upvotes, it *multiplies* them, so the title and the timing interact — the largest effect in
+  the table. A model that scores the two separately and adds the scores cannot express that at any
+  size. The effect is in the *magnitude*: fit the same comparison on log-scores or on rank and it
+  disappears, because a logarithm turns multiplication into addition.
 - **The ceiling:** Hacker News is substantially a lottery — the same link posted twice scores
   similarly only about a quarter of the time, which bounds what any model can do here.
 
@@ -185,8 +186,8 @@ median error, and together they reach 7.5.
 
 It is also a statement about 256 hidden units, not about fusion. The same comparison at matched
 capacity across 128 to 2048 units finds the gap only at the smallest budget; from 256 up the two are
-indistinguishable, and the sections below show why — the blocks are being throttled, and the task
-has no interaction for early fusion to exploit in the first place.
+indistinguishable, and the sections below show why — the blocks are being throttled, and these runs
+are scored on *ranking*, where the interaction the later sections find does not exist.
 
 **Every architecture uses the same width, depth, dropout, learning rate and schedule**, so none is
 tuned at another's expense:
@@ -325,74 +326,58 @@ The reason is in the data, not the models. Early fusion's advantage in the liter
 model *correlation between the modalities in feature space* — [Snoek et
 al.](https://ivi.fnwi.uva.nl/isis/publications/2005/SnoekICM2005/SnoekICM2005.pdf) name losing that
 correlation as late fusion's central disadvantage. So the question is whether this task has any such
-correlation to lose. Reducing each modality to its own score and combining them linearly — which is
-Snoek's late fusion exactly — gives:
+correlation to lose.
 
-```
-title only (unimodal)                  0.1549
-metadata only (unimodal)               0.2118
-combiner over the two scores           0.2348
-early fusion (joint model)             0.2392
-                                       ------
-what modelling them jointly buys       +0.0044
-```
+To find out I fitted two models on the real upvote target for each pairing of inputs: one that
+*cannot* represent an interaction — a tower each, reduced to a single score, then summed, which is
+Snoek's late fusion exactly — against one that can, over the raw features concatenated. The
+difference between them is that pairing's interaction.
 
-Against a seed spread of 0.013, that is nothing. **Predicting a Hacker News score is an additive
-problem**: `score ≈ f(title) + g(metadata)`. There is no interaction between the title and the
-metadata for early fusion to exploit, so no fusion architecture can beat any other, and every
-comparison above was measuring bottlenecks rather than fusion.
+The control that matters is capacity. A joint model also has more parameters, so it can win for
+reasons that have nothing to do with interaction. The additive model below therefore gets towers
+three times wider — still structurally unable to represent any interaction, and now with more
+parameters than its rival.
 
-### The control: what it looks like when there *is* something to lose
+The service predicts a **count**, so the table below is fitted on raw upvotes. Every model is
+scored at its own best validation epoch, and the additive model gets towers three times wider than
+its rival — so it has *more* parameters and still cannot represent an interaction. Anything the
+joint model wins by is the interaction and not the capacity.
 
-A null result is only worth reporting if the setup could have detected the alternative. So the same
-two modalities were given a synthetic target with a tunable interaction:
+| does the first input's effect depend on the second? | interaction | p |
+|---|---|---|
+| **title × when you post** | **+0.0381** | <0.05 |
+| **title × all metadata** | **+0.0220** | <0.05 |
+| **title × the title's shape** | **+0.0090** | <0.05 |
+| title × where it links | +0.0081 | ns |
+| title × the author | +0.0020 | ns |
+| when × where | −0.0117 | ns |
+| when × the author | −0.0067 | ns |
+| where × title shape | −0.0062 | <0.05 |
+| the author × title shape | −0.0008 | ns |
 
-```
-y = g(title) + h(metadata) + α · g(title) × h(metadata) + noise
-```
+**The title and the timing interact, and it is the largest effect in the table.** Splitting the
+model along that boundary costs real accuracy, which is why early fusion is what this service
+serves.
 
-At `α = 0` the task is additive, as the real one turns out to be; as α grows the signal moves into
-the product, reachable only by a model that sees both modalities at once. Three architectures, ten
-seeds, 1,440 runs — and note that only the third is late fusion in Snoek's sense:
+The mechanism is visible once the numbers are put next to the distribution: **a good title does not
+add upvotes, it multiplies them.** The same title is worth a handful at a dead hour and hundreds when
+the site is awake. A model that scores the title and the metadata separately and adds the two scores
+can only ever *add* — it cannot express "this title, at this time", so it averages across both and
+is wrong in both directions.
 
-| | can it represent the product? |
-|---|---|
-| **early** — concatenate the raw features | yes |
-| **late-deep** — a tower each, then a *shared* trunk | yes, one layer later |
-| **late-snoek** — each modality reduced to one score | **no, structurally** |
+Two details worth keeping straight, because they explain why an earlier version of this write-up
+said the opposite.
 
-| α | early | late-deep | late-snoek | early − snoek |
-|---|---|---|---|---|
-| 0.0 | 0.7126 | 0.7132 | **0.7133** | −0.0007 |
-| 0.5 | 0.7124 | 0.7127 | **0.7131** | −0.0007 |
-| 0.75 | 0.7129 | 0.7129 | 0.7128 | +0.0002 |
-| 1.0 | 0.7138 | 0.7137 | 0.7123 | +0.0015 |
-| 2.0 | 0.7211 | 0.7212 | 0.7096 | +0.0114 |
-| 4.0 | 0.7452 | 0.7455 | 0.7003 | +0.0449 |
-| 8.0 | 0.7957 | 0.7961 | 0.6776 | **+0.1181** |
+**Additivity is a property of a coordinate system, not of data.** Fit the same comparison on
+`log1p(score)` and every interaction vanishes — 1 of 11 significant against 3 of 11 on raw counts —
+because a logarithm turns multiplication into addition. Fit it on rank and they vanish too. Rank is
+a monotone transform of the raw count: it preserves every comparison and destroys only the
+magnitudes. So the interaction lives in **how big the numbers get**, not in **which post beats
+which**. If the service ranked posts it would not need early fusion. It predicts counts, so it does.
 
-**Figure 11.** The interaction sweep: where the architectures separate, and what capacity does about it.
-
-![Two panels. On the left, test Spearman against interaction strength: early fusion and late-deep rise together from 0.71 to 0.80 while Snoek late fusion falls away to 0.68. On the right, the gap between early and Snoek late fusion plotted for four hidden widths, all four curves rising together, showing capacity does not close it.](assets/fusion-interaction.png)
-
-Three things fall out, all against seed spreads of 0.001–0.003:
-
-**The crossover is at α ≈ 0.75.** Below it the architecture that *can only* be additive is very
-slightly ahead — it cannot waste capacity hunting an interaction that is not there. Above it, it
-falls behind without bound.
-
-**Capacity does not rescue it.** The gap at α=8 is +0.118 at 64 hidden units and +0.108 at 512:
-eight times the width buys back nine percent. A linear combination of two scalars cannot represent
-their product at any size, which is what makes this a structural limit rather than a fitting problem.
-
-**Early and late-deep are indistinguishable everywhere** — the largest difference across all 48
-α × width combinations is 0.0006. Delaying the concatenation costs nothing at any interaction
-strength, provided something nonlinear follows it.
-
-That last row is the one that matters for this service. **Every late-fusion model here is the
-`late-deep` kind**, so the comparison in this write-up was never testing what Snoek warns about. The
-null on real data has two independent causes: the task is additive, *and* the architecture being
-called "late fusion" is not the one that loses interactions.
+**The one interaction that survives every coordinate system is `author × title shape`** — +0.0055 on
+`log1p` and +0.0083 on rank, significant in both. A known name's `Show HN:` really does land
+differently from a stranger's, and that one is about ordering rather than magnitude.
 
 ### Where late fusion does earn its place
 
@@ -454,8 +439,11 @@ have room.
 That is the fourth independent measurement on this data to land in the same place. The fusion-point
 curve, the width sweep, the allocation ranking and now robustness all say the same thing: **the
 architectural distinction only matters when something else is constrained.** Remove the constraint
-and early and late fusion converge — which is what makes the additive structure of the task, rather
-than the choice of architecture, the thing worth writing down.
+and early and late fusion converge.
+
+All four are scored on Spearman, and that is the reconciliation with the interaction result above:
+these runs are ranking posts, and on ordering the task really is additive. The interaction is in the
+magnitudes, so it only shows up once the model is asked for a count.
 
 ### The metric a sweep optimises is part of the model
 

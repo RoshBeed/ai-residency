@@ -167,10 +167,17 @@ weights deleted -- same input, width, depth and head -- so the two differ only i
 properly.** At matched hidden units early beats late only at the smallest budget tested (0.2526 vs
 0.2288 at 128 units, p=0.045); from 256 up they are indistinguishable, early is flat across the
 whole range and late climbs, because late starts throttled by its per-group blocks and stops being
-throttled. The reason is the data: reducing each modality to a score and combining them linearly --
-Snoek's late fusion -- reaches 0.2348 against the joint model's 0.2392, so **modelling the title and
-the metadata jointly buys +0.004 against a seed spread of 0.013**. The task is additive, and no
-fusion architecture can beat another when there is no interaction to model.
+throttled. The reason is the data. Fitting a model that *cannot* represent an interaction -- a tower per input
+reduced to a score, then summed -- against one that can, over eleven pairings of the real target:
+**every pairing is null or negative**, and three of the four that reach significance point the wrong
+way, the joint model being worse. The task is additive, and no fusion architecture can beat another
+when there is no interaction to model.
+
+**Use the capacity-matched control.** A joint model has more parameters than a same-hidden-size
+additive one, so it can win for reasons unrelated to interaction. The `title x all metadata` cell
+read +0.0051 (p=0.021) against an unmatched control and +0.0016 (p=0.385) against an additive model
+with towers three times wider. The earlier "+0.004 interaction" figure quoted in this file and the
+README came from the unmatched comparison and did not survive.
 
 **Four independent measurements now say the architectural distinction only matters when something
 else is constrained** -- the fusion-point curve, the width sweep, the block-allocation ranking and

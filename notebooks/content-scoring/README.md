@@ -166,17 +166,36 @@ For each pairing it fits a model that cannot interact (a tower each, reduced to 
 summed) against one that can, on the real upvote target. Eleven pairings: the title against
 each metadata group, and every metadata pair against each other.
 
-Ten of eleven come back zero or negative. The three that reach significance are all
-*negative* — the joint model is worse — which is what a model spending capacity searching
-for structure that is not there looks like. A good title is worth the same at 3am as at
-3pm, on github.com as on a personal blog.
+On the raw upvote target — the one the service actually predicts — **three pairings come
+back positive and significant**, and the largest is `title × when you post` (+0.0381).
+`title × all metadata` (+0.0220) and `title × the title's shape` (+0.0090) follow. A good
+title is worth far more at 3pm than at 3am, and a model that scores the title and the
+timestamp separately and adds the scores cannot say so.
 
-The script also carries the controls that a null needs: `--target` (additive in `log1p` is
-multiplicative in raw counts, so the finding is a statement about a coordinate system until
-checked in more than one), `--epochs` (interactions are harder to learn than main effects),
-`--slice` (an interaction confined to Show HN posts averages away over 69,000 rows), and a
-capacity-matched additive control (the joint model also has more parameters, so a positive
-result could be either).
+Two controls carry the result, and the first version of this section lacked both:
+
+- **Early stopping, per model.** Fitted for a fixed 25 epochs, the additive model's test
+  error *rose* from 0.291 to 0.270 while the joint model held — so the "interaction" was
+  differential overfitting. Each model is now scored at its own validation minimum.
+- **Capacity matching.** The joint model has more parameters by construction, so the
+  additive control gets towers three times wider. It has *more* parameters than its rival
+  and still cannot represent an interaction; whatever the joint model wins by is therefore
+  the interaction. Uncontrolled, `title × all metadata` read +0.0051; matched, +0.0016 on
+  `log1p` — most of the raw gap was capacity.
+
+**The finding is a statement about a coordinate system, and that is the point.** Refit on
+`log1p(score)` and 1 of 11 pairings is significant; on rank, 4 of 11, and only one of those
+overlaps with the raw set. A logarithm turns multiplication into addition, and rank is a
+monotone transform that keeps every comparison while discarding magnitude — so the
+interaction lives in *how large the counts get*, not in *which post beats which*. A ranker
+would not need early fusion here; a count predictor does.
+
+`author × title shape` is the one pairing significant under every transform (+0.0055 on
+`log1p`, +0.0083 on rank), and the only one that is about ordering rather than magnitude.
+
+Slices (`--slice show_hn`, `top_decile`, `has_url`) were run to test whether an interaction
+confined to a subpopulation averages away over 69,000 rows. Results are in
+`services/content-scoring/assets/edge/`.
 
 **`linkedin_figures.py`** — the two diagrams for the write-up's summary, drawn from the
 recovered medians so the post and the README cannot disagree.
@@ -212,3 +231,16 @@ recovered medians so the post and the README cannot disagree.
   allocation ranking reversed at ten seeds — the arm reported as best was mid-table, the
   one reported as worse-than-nothing was second-best. The screening had flagged itself as
   unable to separate its arms, and the write-up went ahead anyway.
+- **A fixed 25-epoch budget turned differential overfitting into an "interaction".** The
+  additive model's test error climbed 0.291 → 0.270 over the run while the joint model
+  held, and the difference at epoch 25 was reported as the interaction. Two models with
+  different capacity cannot share an epoch count; each is scored at its own validation
+  minimum now.
+- **The additive control had fewer parameters than the model it was controlling for**, so
+  a positive result meant "interaction *or* capacity" and there was no way to tell which.
+  Widened 3×, `title × all metadata` fell from +0.0051 to +0.0016 on `log1p` — most of the
+  original gap was capacity, not structure.
+- **"The task is additive" was published from `log1p` alone.** Additivity is a property of
+  a coordinate system: a logarithm turns multiplication into addition, so fitting on
+  `log1p` is choosing the coordinates in which the answer is yes. The service predicts a
+  count, and on counts three pairings interact.

@@ -147,17 +147,38 @@ def fit(
     batch: int,
     lr: float,
 ) -> float:
-    """Train on the real target and return test Spearman."""
+    """Train on the real target and return test Spearman at the best validation epoch.
+
+    **Each model is scored at its own optimum, not at a fixed epoch.** Without that, a
+    long budget compares two models that are both past their best, and the two
+    architectures do not get there at the same time: at 25 epochs the additive model had
+    fallen from 0.291 to 0.270 while the joint model held at 0.285, which reads as the
+    joint model "finding an interaction" when it is really the additive one overfitting
+    sooner. Early stopping is what separates *more training reveals structure* from
+    *these two curves peak at different places*, and the service's own trainer has had it
+    all along.
+    """
     set_seed(seed)
     a, b, y = data["train"]
     optimiser = torch.optim.Adam(model.parameters(), lr=lr)
+    best, best_state = -float("inf"), None
     for _ in range(epochs):
+        model.train()
         order = torch.randperm(len(a))
         for start in range(0, len(order), batch):
             index = order[start : start + batch]
             optimiser.zero_grad()
             nn.functional.mse_loss(model(a[index], b[index]), y[index]).backward()
             optimiser.step()
+        model.eval()
+        with torch.no_grad():
+            scored = model(*data["val"][:2]).numpy()
+        current = float(spearmanr(scored, data["val"][2].numpy()).statistic)
+        if current > best:
+            best = current
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    if best_state is not None:
+        model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
         predicted = model(*data["test"][:2]).numpy()
@@ -230,9 +251,10 @@ def main() -> None:
     payload = load_checkpoint(config.embeddings_path)
     splits = build_splits(config, payload["extra"]["word_to_index"])
     matrix = payload["model_state_dict"]["in_embed.weight"]
-    title = {s: pooled_title(splits, s, matrix) for s in ("train", "test")}
-    target = {s: transform_target(splits, s, arguments.target) for s in ("train", "test")}
-    keep = {s: slice_mask(splits, s, arguments.slice) for s in ("train", "test")}
+    title = {s: pooled_title(splits, s, matrix) for s in ("train", "val", "test")}
+    splits_used = ("train", "val", "test")
+    target = {s: transform_target(splits, s, arguments.target) for s in splits_used}
+    keep = {s: slice_mask(splits, s, arguments.slice) for s in splits_used}
     logger.info(
         "target=%s slice=%s (%d train, %d test rows)",
         arguments.target,
@@ -251,7 +273,7 @@ def main() -> None:
         if right is None:
             data = {
                 s: (title[s][keep[s]], metadata(splits, s, left)[keep[s]], target[s][keep[s]])
-                for s in ("train", "test")
+                for s in splits_used
             }
         else:
             data = {
@@ -260,7 +282,7 @@ def main() -> None:
                     metadata(splits, s, right)[keep[s]],
                     target[s][keep[s]],
                 )
-                for s in ("train", "test")
+                for s in splits_used
             }
         a_dim, b_dim = data["train"][0].shape[1], data["train"][1].shape[1]
         # Defaults bind the loop variables; without them these close over whatever
