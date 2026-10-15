@@ -20,8 +20,14 @@ asks it a question, and cleans up after itself:
 docker run --rm -d --name word-embeddings -p 8000:8000 \
   roshb/ai-residency-word-embeddings-serve
 
-curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
-  http://localhost:8000/ready >/dev/null
+# /ready answers 503 until the checkpoint is in memory, and the first run fetches
+# 165 MB of it from the Hub, which takes anywhere from twenty seconds to a couple
+# of minutes. Watch it arrive with: docker logs -f word-embeddings
+echo -n "waiting for the checkpoint"
+for _ in $(seq 1 150); do
+  curl -fsS http://localhost:8000/ready >/dev/null 2>&1 && break
+  echo -n .; sleep 2
+done; echo " ready"
 
 curl -sS -X POST http://localhost:8000/nearest \
   -H 'Content-Type: application/json' \
@@ -52,7 +58,8 @@ docker run --rm -d --network ai-residency --name frontend -p 8500:8501 \
   -e WORD_EMBEDDINGS_API_URL=http://word-embeddings:8000 \
   roshb/ai-residency-frontend
 
-# http://localhost:8500 -- the page waits on /ready, so give it a few seconds
+# http://localhost:8500 -- the page waits on /ready, and the backend is
+# fetching a 165 MB checkpoint on a cold run, so give it a couple of minutes
 ```
 
 ```bash
