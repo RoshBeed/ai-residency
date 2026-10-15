@@ -45,6 +45,7 @@ dev = [
     "pandas-stubs>=2.2.0",
     "pytest>=8.0",
     "ruff>=0.6",
+    "types-tqdm>=4.70",
 ]
 
 [tool.uv]
