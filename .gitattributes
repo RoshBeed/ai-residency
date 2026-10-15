@@ -1,0 +1,6 @@
+# GitHub's language bar is computed from bytes, and the notebooks under
+# notebooks/ and the service write-ups outweigh the Python they describe --
+# 1.6MB against 1.3MB -- so the repo was labelled "Jupyter Notebook". They are
+# analysis and write-up rather than the thing that ships, which is what
+# linguist-documentation means, so the bar now reflects the services.
+*.ipynb linguist-documentation

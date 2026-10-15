@@ -464,9 +464,15 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 
 ## State
 
-**Nothing here is deployed.** The write-up that is published is the Quarto blog at
-roshbeed.com, which replaced the Streamlit frontend as the public face of these projects;
-this repo is code on GitHub and its images are built but not served anywhere. Serving the
+**Nothing here is deployed, and the repo is public.** The write-up that is published is the
+Quarto blog at roshbeed.com, which replaced the Streamlit frontend as the public face of these
+projects; this repo is code on GitHub and its images are built but not served anywhere.
+
+Going public also fixed CI. Every push-triggered run from 2026-08-29 failed in about five
+seconds without starting a job -- "recent account payments have failed or your spending limit
+needs to be increased" -- and the weekly `schedule` runs stayed green the whole time because
+every job but the vulnerability scan is gated off `schedule`, so a green tick meant nothing had
+run. Actions minutes are free on a public repo. Serving the
 projects again is wanted later, so nothing in `deploy/` or `services/frontend` has been
 removed — it is dormant, not deleted, and `ai-residency-frontend/docs/` holds the
 superseded Streamlit write-ups.
@@ -500,13 +506,9 @@ still drops it, since nothing needs to ship a template image.
 Open:
 - `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
   pipeline, trainer and API are wired and verified.
-- The `base-serve` digest in `deploy/base-image.digest` is single-platform (amd64). Any push touching a
-  shared input rebuilds the base multi-arch and the `lock` job replaces it, so it self-heals; the
-  `images` job now fails with a named error rather than "no match for platform in manifest" if a
-  service-only push ever meets a single-platform base.
 - `content-scoring` ships a `log_mse` objective, which ranks well and predicts about a fifth of the
   upvotes that actually happen. `poisson` is implemented and predicts the count directly; a binary
   head on `score >= 100` finds front-page posts best and cannot rank at all. Which of the three is
   right is a product question the service has not been asked.
-- The eleven predecessor repos are archived on GitHub. `backup/pre-squash-2026-08-23` tags the
-  pre-history-rewrite tip; delete it once the current history is settled.
+- The eleven predecessor repos are archived on GitHub. The four `backup/*` tags that held the
+  pre-rewrite tips are deleted from the remote now the repo is public; they survive locally only.

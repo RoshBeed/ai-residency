@@ -1,5 +1,7 @@
 # AI Residency — ML systems, built end to end
 
+[![CI](https://github.com/RoshBeed/ai-residency/actions/workflows/ci.yml/badge.svg)](https://github.com/RoshBeed/ai-residency/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Nine machine-learning systems, each taken from scratch to a containerized service, plus the
 frontend and the deployment that run all of them. The point isn't only the models — it's the
 engineering around them: real architectures implemented from the ground up, four shared
