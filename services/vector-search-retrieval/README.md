@@ -4,7 +4,9 @@
 
 - **What it is:** a dual-encoder retrieval system — a query tower and a document tower trained end-to-end with triplet loss, with every passage embedded once and indexed for approximate nearest-neighbour search.
 - **Built:** the full offline/online split — CBOW embeddings, triplet-loss training with a W&B sweep, a held-out evaluation harness, and Redis/RediSearch HNSW indexing for live queries.
-- **What I'd do next:** train at real MS MARCO scale, report Recall@K/MRR against a BM25 baseline, add hard-negative mining.
+- **What I'd do next:** move the training loop from triplet loss to in-batch negatives — measured
+  at 3x the recall@10 on real MS MARCO scale (§6) — then report Recall@K/MRR against a BM25
+  baseline.
 
 This repo builds a neural document retrieval system: given a search query, find the most relevant
 passage in a corpus. I trained a query tower and a document tower with a triplet loss on real
@@ -393,6 +395,26 @@ Rank 5 (score=0.6838): "Home » Tramadol Uses, Warnings and Treatment. Tramadol 
 
 That transcript is real — captured live from `run_query()` in `retrieval/query_engine.py` against
 the trained query tower and the actual indexed corpus.
+
+### In-batch negatives beat triplet loss threefold at scale
+
+That transcript is what 444 triples buys. The [published
+post](https://roshbeed.com/posts/2026-06-15-two-tower-search/) runs the same architecture over
+78,964 MS MARCO pairs against 5,000 documents, where chance recall@10 is 0.0020:
+
+| loss | recall@10, 10 epochs | against chance |
+|---|---|---|
+| triplet, one sampled negative | 0.0932 | 46.6x |
+| **in-batch negatives** | **0.2856** | **142.8x** |
+
+Same towers, same pairs, same epochs; the only change is where the negatives come from. Triplet
+loss scores one sampled negative per query, so most of a batch does no work. In-batch negatives
+treat every other document in the batch as a negative, which costs one matrix multiply and gives
+each query hundreds of comparisons instead of one.
+
+That is a smaller change than the hard-negative mining this README used to list as the next step,
+and it should come first. **The service still trains with triplet loss** — the number above is the
+notebook's, not this checkpoint's.
 
 ## 7. Related Work
 

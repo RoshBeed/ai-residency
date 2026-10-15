@@ -363,8 +363,8 @@ At this training scale (100 pairs, 3 epochs, a ~1.58M-parameter adapter bridging
 596M-parameter frozen language model), captions stay fluent — Qwen3 free-associates confidently
 regardless of what the adapter feeds it — but don't yet describe the images. `adapter_flickr_batched.pth`'s
 captions vary by image where the least-trained checkpoint's barely do, a real sign the image token
-is carrying information; more data and epochs is what closes the rest of the gap, and the training
-loop, checkpointing, and serving path are already in place to do that without code changes.
+is carrying information. The training loop, checkpointing and serving path are already in place to
+train it further without code changes — and how far that gets is measured below.
 
 **Evaluation.** `multimodal_captioning/data.py` splits the sample 80/20, and training scores an
 untrained adapter on the held-out half as a baseline before training starts:
@@ -378,6 +378,25 @@ Best held-out loss 6.0981 against baseline 6.4251 (beats baseline)
 ```
 
 Training beats the baseline, with the best epoch first.
+
+**Sixteen times the data closes a quarter of the gap at best.** "More data and epochs" is the
+obvious next move, and the [published post](https://roshbeed.com/posts/2026-06-29-image-captioning/)
+measures how far it gets. Same adapter, 1,600 Flickr30k pairs — sixteen times the largest
+checkpoint here — scored by CLIP agreement between the generated caption and the image rather than
+by loss, with the captions a person wrote as the ceiling:
+
+| | CLIP agreement |
+|---|---|
+| untrained adapter | 0.1882 |
+| trained, three seeds | 0.2007 / 0.2092 / 0.2276 |
+| the captions a person wrote | **0.3280** |
+
+That is 8.6%, 12.6% and 28.2% of the gap to human captions — a mean gain of 0.0228 whose spread is
+wider than two of the three gains. More data moves it, and at this scale the move is both small and
+unstable. The qualitative change is real: the trained adapter writes image-specific sentences
+instead of the free-association above. It is still describing the wrong things much of the time.
+
+Those numbers are the notebook's, not a shipped checkpoint's.
 
 **Training runs on CPU** (`Config.train_on_cpu = True`) for reproducibility — the backward pass
 over the frozen 596M-parameter decoder isn't deterministic on MPS across runs, while CPU runs are

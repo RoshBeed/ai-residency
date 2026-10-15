@@ -464,6 +464,18 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
 
 ## State
 
+**Nothing here is deployed.** The write-up that is published is the Quarto blog at
+roshbeed.com, which replaced the Streamlit frontend as the public face of these projects;
+this repo is code on GitHub and its images are built but not served anywhere. Serving the
+projects again is wanted later, so nothing in `deploy/` or `services/frontend` has been
+removed — it is dormant, not deleted, and `ai-residency-frontend/docs/` holds the
+superseded Streamlit write-ups.
+
+Where a blog post measured something this repo had not, the service README records it and
+says the number is the notebook's rather than a shipped checkpoint's — see
+`vector-search-retrieval` §6 on in-batch negatives and `multimodal-captioning` §6 on how
+much of the captioning gap more data actually closes.
+
 CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
 publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
 Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
