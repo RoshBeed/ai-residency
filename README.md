@@ -17,12 +17,13 @@ No clone, no build, no credentials. This pulls a published image, waits for it t
 asks it a question, and cleans up after itself:
 
 ```bash
-docker run --rm -d --name word-embeddings -p 8000:8000 \
+# --pull always because `docker run` reuses a local `latest` and never re-checks
+# it. An image cached from an earlier visit keeps serving, and a checkpoint the
+# Hub has since re-uploaded can stop matching the reader that old image carries.
+docker run --rm -d --pull always --name word-embeddings -p 8000:8000 \
   roshb/ai-residency-word-embeddings-serve
 
-# 300 not 60: the first run fetches a 165 MB checkpoint from the Hub before it
-# can serve, which is well over a minute on a slow line.
-curl -fsS --retry 300 --retry-delay 1 --retry-all-errors \
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
   http://localhost:8000/ready >/dev/null
 
 curl -sS -X POST http://localhost:8000/nearest \
