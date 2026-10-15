@@ -267,7 +267,13 @@ service shares.
 
 ## Working on it
 
+Everything above runs published images and needs nothing installed. Building or
+testing the source needs [uv](https://docs.astral.sh/uv/), which owns the workspace,
+the lockfile and the virtualenv:
+
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have it
+
 make install    # one venv for the whole workspace
 make check      # ruff, strict mypy, pytest — every service
 ```
