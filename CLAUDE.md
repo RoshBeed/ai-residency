@@ -268,6 +268,35 @@ USER, so a mismatch produces a container that starts and then cannot write.
 actual request, not by inspecting code — a service that builds, starts and passes `/health` can
 still 500 on the first real call. Health checks are not verification.
 
+**Read the error before forming a theory.** `word-embeddings` answered 503 from the published
+image and the first explanation reached for was a slow checkpoint download, so the README's curl
+retry budget got raised from 60 to 300 and then rewritten twice. None of it was the problem. The
+container log said what the problem was, in one line, the whole time:
+
+```
+Pulled cbow_model.pt from roshbeed/ai-residency-word-embeddings
+Loaded checkpoint from /app/services/word-embeddings/checkpoints/cbow/cbow_model.pt
+ERROR  Could not load embeddings, /nearest will return 503: 'word_to_lemma_index'
+```
+
+The download worked and took four seconds. It was a `KeyError`: an image cached from an earlier
+visit carried the vocabulary reader from before the word/lemma index spaces were untangled, while
+the checkpoint on the Hub had since been re-uploaded with the new key. `docker run` reuses a local
+`latest` and never re-checks it, which is why the quickstart now passes `--pull always`.
+
+Two habits follow, and both were broken here.
+
+**Get the output yourself.** `docker logs <container>` is one command. Asking someone else to run
+it, waiting, and theorising in the meantime is slower than running it and is not debugging. If a
+tool genuinely cannot be reached, say so once, plainly, and say what is blocked — do not keep
+asking for output while continuing to guess.
+
+**Do not test around a tool.** `uv` was missing on a laptop, so a shim stood in for `uv run` and
+skipped `uv sync` entirely. Everything passed. CI then failed on `content-scoring`, because the
+stale venv already had `types-tqdm` that the lockfile did not declare — exactly the bug the sync
+would have exposed. Install the tool. A harness that supplies what the real one would have caught
+reports green and means nothing.
+
 **CI runs every image before it publishes it.** The publish job builds native amd64 into the
 runner's docker with `load: true`, smoke-tests it, and only then does the multi-arch push. The
 smoke test asserts the container is non-root, that `/health` *and* `/ready` are both registered,
