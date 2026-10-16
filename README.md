@@ -45,17 +45,23 @@ single-system app rather than the nine-system hub:
 ```bash
 docker network create ai-residency >/dev/null
 
-docker run --rm -d --network ai-residency --name word-embeddings \
-  roshb/ai-residency-word-embeddings-serve
+docker run --rm -d --pull always --network ai-residency --name word-embeddings \
+  -p 8000:8000 roshb/ai-residency-word-embeddings-serve
 
-docker run --rm -d --network ai-residency --name frontend -p 8500:8501 \
+docker run --rm -d --pull always --network ai-residency --name frontend -p 8500:8501 \
   -e AI_RESIDENCY_PAGES=word-embeddings \
   -e WORD_EMBEDDINGS_API_URL=http://word-embeddings:8000 \
   roshb/ai-residency-frontend
+
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
+  http://localhost:8000/ready >/dev/null
+
+open http://localhost:8500
 ```
 
-Then open http://localhost:8500. The page waits on `/ready`, and on a cold run the backend is
-fetching a 165 MB checkpoint, so give it a couple of minutes.
+The backend's port is published here only so that `curl` can wait on it. The frontend reaches it
+over the Docker network by name, and Streamlit answers on `:8500` long before the checkpoint has
+loaded — so without the wait you get the page and a backend-not-ready notice on it.
 
 ```bash
 docker stop frontend word-embeddings >/dev/null
@@ -97,9 +103,9 @@ published yet, this clones the repo and gives you one system plus its UI, built 
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy
-make local-up SERVICES="word-embeddings"     # builds natively, starts it + the UI
+make local-up SERVICES="word-embeddings"
 open http://localhost:8500
-make down                                    # stop it
+make down
 ```
 
 `make local SERVICE=<name>` builds a single image without running anything, and
@@ -116,8 +122,9 @@ compose pulls the same published images.
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy/compose
-docker compose --env-file images.env up -d   # all nine + the UI on http://localhost:8500
-docker compose down                          # stop everything
+docker compose --env-file images.env up -d
+open http://localhost:8500
+docker compose down
 ```
 
 `--env-file images.env` is what pins the digests: `docker-compose.yml` carries
@@ -266,9 +273,11 @@ Each links to its own write-up — architecture, method, results and references.
 The same images orchestrated two ways, on top of the single `docker run` above.
 
 ```bash
-docker compose --env-file images.env up -d   # from deploy/compose, frontend on :8500
-make -C deploy helm-install                 # Kubernetes, frontend on :8500
+docker compose --env-file images.env up -d
+make -C deploy helm-install
 ```
+
+The first runs from `deploy/compose`, the second from anywhere. Both put the frontend on `:8500`.
 
 The chart adds what compose has no equivalent for: liveness and readiness probes, measured memory
 requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
@@ -285,9 +294,12 @@ generated on the chart side at all. CI updates it for whatever it rebuilt, so
 `git log deploy/images.yaml` is the deployment history and `git revert` is the rollback.
 
 ```bash
-make pin-images     # regenerate the compose env file from the manifest
-make local-cluster  # build natively and run the cluster from those images
+make pin-images
+make local-cluster
 ```
+
+`pin-images` regenerates the compose env file from the manifest; `local-cluster` builds natively
+and runs the cluster from those images.
 
 See [`deploy/README.md`](deploy/README.md) for cluster details and the Terraform that provisions a
 spot GPU box for training, and [`libs/common/README.md`](libs/common/README.md) for what every
@@ -300,11 +312,14 @@ testing the source needs [uv](https://docs.astral.sh/uv/), which owns the worksp
 the lockfile and the virtualenv:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-uv sync --all-packages    # one venv for the whole workspace
-make check                # ruff, then mypy and pytest per member
+uv sync --all-packages
+make check
 ```
+
+The first line installs uv if you do not have it. `uv sync --all-packages` creates one venv for
+the whole workspace, and `make check` is ruff, then mypy and pytest.
 
 `make check` is a loop rather than an alias: mypy runs per workspace member instead of once
 over the tree, because nine services each define a top-level `config` package and a single
