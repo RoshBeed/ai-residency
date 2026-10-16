@@ -59,9 +59,8 @@ curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
 open http://localhost:8500
 ```
 
-The backend's port is published here only so that `curl` can wait on it. The frontend reaches it
-over the Docker network by name, and Streamlit answers on `:8500` long before the checkpoint has
-loaded — so without the wait you get the page and a backend-not-ready notice on it.
+The backend's port is published only so `curl` can wait on it; the frontend reaches it by name
+over the Docker network.
 
 ```bash
 docker stop frontend word-embeddings >/dev/null
@@ -72,14 +71,9 @@ docker rmi roshb/ai-residency-word-embeddings-serve roshb/ai-residency-frontend
 From a clone, `docker compose up -d --no-deps frontend word-embeddings` does the same
 through Compose, and without `--no-deps` it starts all nine behind the hub.
 
-The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub,
-which is why the `--retry` loop is there rather than a fixed sleep: `/ready` answers **503** until
-the weights are loaded, so curl retries until the service can genuinely serve.
-
-`--pull always` matters for the same reason. `docker run` reuses a local `latest` and never
-re-checks it, so an image cached from an earlier visit keeps serving — and a checkpoint the Hub
-has since re-uploaded can stop matching the reader that old image carries. `--rm` removes the
-container but not the image, which is why the last line deletes it: 1.8 GB, mostly torch.
+The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
+`/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
+`--pull always` because `docker run` otherwise reuses a cached `latest` without re-checking it.
 
 Swap the image name for any other system — every one is independently deployable and answers plain
 HTTP on `:8000`:
@@ -127,17 +121,9 @@ open http://localhost:8500
 docker compose down
 ```
 
-`--env-file images.env` is what pins the digests: `docker-compose.yml` carries
-`${<SERVICE>_REF:-:latest}` and that file supplies the `@sha256:...` half. Drop the flag and
-every service falls back to `:latest`. It is not named `.env` because that name is gitignored
-repo-wide for credentials, and a committed generated file wearing it would be a trap.
-
-No credentials are needed: the Hub repos are public, and the compose file defaults both
-`HF_TOKEN` and `WANDB_API_KEY` to empty. `make -C deploy up` is a shortcut for the same
-command that also picks up a token from a local `.env` if you have one, and
-`make -C deploy status` adds the one thing compose has no equivalent for — it curls `/health`
-and `/ready` on all nine ports, which is the difference between a container being up and it
-being able to answer.
+`--env-file images.env` pins every image by digest; without it they fall back to `:latest`.
+No credentials needed — the Hub repos are public. `make -C deploy status` curls `/health` and
+`/ready` across all nine ports.
 
 Expect a few minutes on a cold run while each container fetches its weights; each page starts
 working as its backend finishes.
@@ -157,13 +143,9 @@ AI_RESIDENCY_PAGES="word-embeddings vit-classifier" \
   frontend word-embeddings vit-classifier
 ```
 
-`--no-deps` is what makes the subset a subset: the frontend's `depends_on` names all nine, so
-without it compose drags the other seven back in. The frontend handles the absent ones on its
-own — each page checks `/ready` and says that backend is not running. Add `redis` to the list
-for `vector-search-retrieval`, which cannot serve without it.
-
-`make -C deploy up SERVICES="word-embeddings vit-classifier"` is that line with redis added
-for you.
+`--no-deps` is what keeps it a subset — the frontend's `depends_on` names all nine. Pages for
+the ones you left out say so rather than erroring. Add `redis` for `vector-search-retrieval`,
+which cannot serve without it.
 
 The frontend image is the same one the hub runs — it is told which pages to show through
 `AI_RESIDENCY_PAGES`. **No backend contains any UI.**
@@ -277,7 +259,7 @@ docker compose --env-file images.env up -d
 make -C deploy helm-install
 ```
 
-The first runs from `deploy/compose`, the second from anywhere. Both put the frontend on `:8500`.
+Frontend on `:8500` either way; the first runs from `deploy/compose`.
 
 The chart adds what compose has no equivalent for: liveness and readiness probes, measured memory
 requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
@@ -298,8 +280,7 @@ make pin-images
 make local-cluster
 ```
 
-`pin-images` regenerates the compose env file from the manifest; `local-cluster` builds natively
-and runs the cluster from those images.
+`pin-images` regenerates the compose env file from the manifest; `local-cluster` builds natively.
 
 See [`deploy/README.md`](deploy/README.md) for cluster details and the Terraform that provisions a
 spot GPU box for training, and [`libs/common/README.md`](libs/common/README.md) for what every
@@ -318,13 +299,9 @@ uv sync --all-packages
 make check
 ```
 
-The first line installs uv if you do not have it. `uv sync --all-packages` creates one venv for
-the whole workspace, and `make check` is ruff, then mypy and pytest.
-
-`make check` is a loop rather than an alias: mypy runs per workspace member instead of once
-over the tree, because nine services each define a top-level `config` package and a single
-invocation sees nine modules by that name and refuses to start. Narrow it to one with
-`make check SERVICE=word-embeddings`.
+One venv for the workspace, then ruff, mypy and pytest. `make check SERVICE=word-embeddings`
+narrows it. mypy runs per member rather than over the tree, since nine services each define a
+top-level `config`.
 
 Four shared libraries, because three services had grown their own word2vec and two their own
 Whisper layer — one per team that worked on them. Consolidating those found real bugs, not
