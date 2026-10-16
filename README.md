@@ -38,22 +38,31 @@ docker rmi roshb/ai-residency-word-embeddings-serve
 
 ### With the UI
 
-The same backend plus its Streamlit page. Compose reads its file from stdin, so this still
-needs no clone; `AI_RESIDENCY_PAGES` makes the UI a single-system app rather than the
-nine-system hub:
+Any of the nine, plus its Streamlit page. Compose reads its file from stdin, so this still
+needs no clone — set `SERVICE` and the rest is the same every time:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
-  | AI_RESIDENCY_PAGES=word-embeddings docker compose -f - -p ai-residency up -d \
-      --pull always --no-deps frontend word-embeddings
+SERVICE=word-embeddings
 
-curl -fsS --retry 60 --retry-delay 1 --retry-all-errors http://localhost:8001/ready >/dev/null
+curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
+  | AI_RESIDENCY_PAGES=$SERVICE docker compose -f - -p ai-residency up -d --wait \
+      --pull always --no-deps frontend $SERVICE
+
 open http://localhost:8500
 ```
 
+`--wait` blocks until the container's healthcheck passes, and that healthcheck is `/ready` — so
+there is nothing to poll and no per-service port to look up. `AI_RESIDENCY_PAGES` makes the UI a
+single-system app rather than the nine-system hub.
+
+Any of `word-embeddings`, `content-scoring`, `vector-search-retrieval`, `vit-classifier`,
+`vit-seq2seq`, `multimodal-captioning`, `whisper-fine-tuning`, `speech-emotion-recognition`,
+`rlhf-ppo`. Two want a word of warning: add `redis` to the service list for
+`vector-search-retrieval`, and `speech-emotion-recognition` has no trained checkpoint, so its
+`/ready` is a permanent 503 and `--wait` will time out rather than return.
+
 ```bash
 docker compose -p ai-residency down
-docker rmi roshb/ai-residency-word-embeddings-serve roshb/ai-residency-frontend
 ```
 
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
