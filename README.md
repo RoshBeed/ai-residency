@@ -82,7 +82,7 @@ Then:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
   | AI_RESIDENCY_PAGES=$SERVICE docker compose -f - -p ai-residency up -d --wait \
-      --pull always --no-deps frontend $SERVICE
+      --pull always frontend $SERVICE
 
 open http://localhost:8500
 ```
@@ -91,8 +91,7 @@ open http://localhost:8500
 docker compose -p ai-residency down
 ```
 
-Add `redis` to the last line for `vector-search-retrieval`. `speech-emotion-recognition` has no
-checkpoint, so `--wait` times out instead of returning.
+`speech-emotion-recognition` has no checkpoint, so `--wait` times out instead of returning.
 
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
 `/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
@@ -163,13 +162,12 @@ with eight dead pages:
 
 ```bash
 AI_RESIDENCY_PAGES="word-embeddings vit-classifier" \
-  docker compose --env-file images.env up -d --no-deps \
+  docker compose --env-file images.env up -d \
   frontend word-embeddings vit-classifier
 ```
 
-`--no-deps` is what keeps it a subset — the frontend's `depends_on` names all nine. Pages for
-the ones you left out say so rather than erroring. Add `redis` for `vector-search-retrieval`,
-which cannot serve without it.
+Naming services starts those and whatever they declare — `vector-search-retrieval` brings redis
+with it. Pages for the ones you left out say so rather than erroring.
 
 The frontend image is the same one the hub runs — it is told which pages to show through
 `AI_RESIDENCY_PAGES`. **No backend contains any UI.**

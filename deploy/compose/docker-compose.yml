@@ -210,25 +210,21 @@ services:
     # Streamlit watches its own files, but only offers a rerun prompt unless runOnSave is
     # set, and that lives in the image's CMD. Restarting is two seconds and needs no
     # production change.
-    # `docker compose watch frontend` pulls every backend first, because watch resolves
-    # depends_on and does not take --no-deps. Use `--no-up` when the stack is already
-    # running: `docker compose watch --no-up frontend content-scoring`.
     develop:
       watch:
         - action: sync+restart
           path: ../../services/frontend
           target: /app/services/frontend
           ignore: *watch-ignore
-    depends_on:
-      - word-embeddings
-      - content-scoring
-      - vector-search-retrieval
-      - vit-classifier
-      - vit-seq2seq
-      - multimodal-captioning
-      - whisper-fine-tuning
-      - speech-emotion-recognition
-      - rlhf-ppo
+    # No depends_on. A bare `up` starts every service in the file regardless, so listing
+    # the nine bought only start ordering -- and `service_started` does not wait for
+    # readiness, which the frontend handles itself by checking /ready per page. What it
+    # cost was every subset: `up frontend <service>` dragged all nine in, so the one way
+    # to start one system was --no-deps, which also stripped vector-search-retrieval's
+    # genuine dependency on redis and had to be added back by hand. Without this block,
+    # `up frontend <service>` starts exactly that pair plus whatever the service itself
+    # declares. `compose watch` resolves depends_on and takes no --no-deps, so it was
+    # pulling all nine for the same reason.
     environment:
       WORD_EMBEDDINGS_API_URL: http://word-embeddings:8000
       CONTENT_SCORING_API_URL: http://content-scoring:8000

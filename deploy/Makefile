@@ -71,18 +71,16 @@ PORTS := $(shell echo "$(BACKENDS)" | tr ' ' '\n' | cut -d: -f2 | sort)
 # frontend against a chosen subset instead, which is the difference between this being
 # demoable on a 16GB laptop and not.
 #
-# --no-deps is what makes the subset actually a subset; without it depends_on drags the
-# other eight back in. The frontend handles the missing ones on its own: each page
-# checks /ready and says the backend is not running, rather than erroring.
-#
-# Redis is added automatically when vector-search-retrieval is selected, since that one
-# genuinely cannot serve without it.
-SUBSET := $(if $(filter vector-search-retrieval,$(SERVICES)),redis) $(SERVICES)
+# Naming services starts those plus whatever each one declares, so redis arrives with
+# vector-search-retrieval on its own. The frontend used to depends_on all nine, which
+# made every subset need --no-deps -- and that stripped redis back out, so it had to be
+# listed here by hand. The frontend declares no backends now; see docker-compose.yml.
+SUBSET := $(SERVICES)
 
 up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-classifier"
 	@if [ -n "$(SERVICES)" ]; then \
 		AI_RESIDENCY_PAGES="$(SERVICES)" \
-		$(COMPOSE) up -d --no-deps frontend $(SUBSET); \
+		$(COMPOSE) up -d frontend $(SUBSET); \
 	else \
 		$(COMPOSE) up -d; \
 	fi
@@ -162,14 +160,16 @@ local-up: ## Build, run and watch one service with the UI: make local-up SERVICE
 	@# LoadBalancer Service claims it even with its pods scaled to zero --
 	@# `make helm-uninstall` frees it.
 	AI_RESIDENCY_PAGES="$(SERVICES)" $(COMPOSE_LOCAL) \
-		up -d --no-deps --force-recreate frontend $(SUBSET)
+		up -d --force-recreate frontend $(SUBSET)
 	@echo ""
 	@echo "Running. UI: http://localhost:8500"
 	@echo ""
 	@# Watching by default, because the alternative is rebuilding a container to see a
-	@# one-line change. `--no-up`: watch resolves depends_on and takes no --no-deps, so
-	@# the frontend -- which depends on all nine backends -- would pull every published
-	@# image first, and on Apple Silicon that fails outright against amd64-only digests.
+	@# one-line change. `--no-up` because the stack is already up from the line above;
+	@# watch resolves depends_on and takes no --no-deps, so it starts what it is asked
+	@# for. That used to mean every published image, back when the frontend declared all
+	@# nine as dependencies -- and on Apple Silicon it failed outright against the
+	@# amd64-only digests of the day.
 	@#
 	@# WATCH=no leaves the stack up and returns, for anything that is not a dev loop.
 	@if [ "$(WATCH)" = "no" ]; then \
