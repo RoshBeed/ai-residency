@@ -42,47 +42,47 @@ Any of the nine, plus its Streamlit page. No clone — compose reads its file fr
 Pick one:
 
 ```bash
-SERVICE=word-embeddings
+export AI_RESIDENCY_PAGES=word-embeddings
 ```
 
 ```bash
-SERVICE=content-scoring
+export AI_RESIDENCY_PAGES=content-scoring
 ```
 
 ```bash
-SERVICE=vector-search-retrieval
+export AI_RESIDENCY_PAGES=vector-search-retrieval
 ```
 
 ```bash
-SERVICE=vit-classifier
+export AI_RESIDENCY_PAGES=vit-classifier
 ```
 
 ```bash
-SERVICE=vit-seq2seq
+export AI_RESIDENCY_PAGES=vit-seq2seq
 ```
 
 ```bash
-SERVICE=multimodal-captioning
+export AI_RESIDENCY_PAGES=multimodal-captioning
 ```
 
 ```bash
-SERVICE=whisper-fine-tuning
+export AI_RESIDENCY_PAGES=whisper-fine-tuning
 ```
 
 ```bash
-SERVICE=speech-emotion-recognition
+export AI_RESIDENCY_PAGES=speech-emotion-recognition
 ```
 
 ```bash
-SERVICE=rlhf-ppo
+export AI_RESIDENCY_PAGES=rlhf-ppo
 ```
 
 Then:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
-  | AI_RESIDENCY_PAGES=$SERVICE docker compose -f - -p ai-residency up -d --wait \
-      --pull always frontend $SERVICE
+  | docker compose -f - -p ai-residency up -d --wait \
+      --pull always frontend $AI_RESIDENCY_PAGES
 
 open http://localhost:8500
 ```
@@ -128,14 +128,13 @@ make down
 `make -C deploy local-cluster` does the same for the Kubernetes path. Expect the first build to
 take a few minutes — the base image is a full torch install — which is exactly why the published
 images are the faster way in.
-`vector-search-retrieval` is the one exception to running solo — it queries a Redis index, so it
-wants the compose form below, with `redis` named alongside it.
 
 ## Run all of them, behind the UI
 
-A clone here, for the digest pinning in `images.env` — the stdin form above works for all nine
-too, it just resolves `:latest`. Nothing is built either way; compose pulls the same published
-images.
+Leave `AI_RESIDENCY_PAGES` unset and the UI is the nine-system hub instead of one page. This
+one clones, because `images.env` pins every image by digest and that file has to be on disk —
+the stdin form above starts all nine too, it just resolves `:latest`. Nothing is built either
+way; compose pulls the same published images.
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy/compose
@@ -144,7 +143,6 @@ open http://localhost:8500
 docker compose down
 ```
 
-`--env-file images.env` pins every image by digest; without it they fall back to `:latest`.
 No credentials needed — the Hub repos are public. `make -C deploy status` curls `/health` and
 `/ready` across all nine ports.
 
@@ -161,13 +159,13 @@ Everything at once is heavy. Name the systems you want and you get a UI for thos
 with eight dead pages:
 
 ```bash
-AI_RESIDENCY_PAGES="word-embeddings vit-classifier" \
-  docker compose --env-file images.env up -d \
-  frontend word-embeddings vit-classifier
+export AI_RESIDENCY_PAGES="word-embeddings vit-classifier"
+
+docker compose --env-file images.env up -d frontend $AI_RESIDENCY_PAGES
 ```
 
-Naming services starts those and whatever they declare — `vector-search-retrieval` brings redis
-with it. Pages for the ones you left out say so rather than erroring.
+Naming services starts those and whatever they declare — `vector-search-retrieval` brings Redis
+and its index build with it. Pages for the ones you left out say so rather than erroring.
 
 The frontend image is the same one the hub runs — it is told which pages to show through
 `AI_RESIDENCY_PAGES`. **No backend contains any UI.**
@@ -277,11 +275,11 @@ Each links to its own write-up — architecture, method, results and references.
 The same images orchestrated two ways, on top of the single `docker run` above.
 
 ```bash
-docker compose --env-file images.env up -d
+docker compose --env-file images.env up -d    # from deploy/compose
 make -C deploy helm-install
 ```
 
-Frontend on `:8500` either way; the first runs from `deploy/compose`.
+Frontend on `:8500` either way.
 
 The chart adds what compose has no equivalent for: liveness and readiness probes, measured memory
 requests, a non-root pod security context, a ServiceAccount with no mounted API token, and
@@ -298,8 +296,8 @@ generated on the chart side at all. CI updates it for whatever it rebuilt, so
 `git log deploy/images.yaml` is the deployment history and `git revert` is the rollback.
 
 ```bash
-make pin-images
-make local-cluster
+make -C deploy pin-images
+make -C deploy local-cluster
 ```
 
 `pin-images` regenerates the compose env file from the manifest; `local-cluster` builds natively.
