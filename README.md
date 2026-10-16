@@ -31,6 +31,10 @@ curl -sS -X POST http://localhost:8000/nearest \
   -d '{"word":"king","k":3}'
 
 docker stop word-embeddings >/dev/null
+
+# `--rm` removed the container; it does not remove the image, and that is 1.8 GB
+# of mostly torch.
+docker rmi roshb/ai-residency-word-embeddings-serve
 ```
 
 ```json
@@ -62,6 +66,7 @@ docker run --rm -d --network ai-residency --name frontend -p 8500:8501 \
 ```bash
 docker stop frontend word-embeddings >/dev/null
 docker network rm ai-residency >/dev/null
+docker rmi roshb/ai-residency-word-embeddings-serve roshb/ai-residency-frontend
 ```
 
 From a clone, `docker compose up -d --no-deps frontend word-embeddings` does the same
