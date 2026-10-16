@@ -171,7 +171,6 @@ services:
 
   multimodal-captioning:
     image: roshb/ai-residency-multimodal-captioning-serve${MULTIMODAL_CAPTIONING_REF:-:latest}
-    working_dir: /app
     ports:
       - "8004:8000"
     healthcheck: *backend-healthcheck
@@ -323,7 +322,6 @@ services:
   train-multimodal-captioning:
     profiles: [train]
     image: roshb/ai-residency-multimodal-captioning-train:${TRAIN_IMAGE_TAG:-latest}
-    working_dir: /app
     environment:
       <<: *hub-credentials
       AI_RESIDENCY_NUM_EPOCHS: ${AI_RESIDENCY_NUM_EPOCHS:-1}

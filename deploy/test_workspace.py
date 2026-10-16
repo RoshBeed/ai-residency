@@ -238,6 +238,24 @@ def test_the_chart_does_not_restate_hf_home() -> None:
         )
 
 
+def test_compose_does_not_restate_a_working_directory() -> None:
+    """Both Dockerfiles end `WORKDIR /app/services/${SERVICE}`, and both CMDs are
+    resolved relative to it -- `python -m serving.api` for serving, `python -m
+    <train-module>` for training. A `working_dir` in compose silently replaces that.
+
+    `multimodal-captioning` carried `working_dir: /app` on both its serving and its
+    training service, so the published image exited immediately on
+    `ModuleNotFoundError: No module named 'serving'` while the image itself was
+    correct. Nothing caught it: the image builds, CI's smoke test imports the app
+    rather than starting the container, and the chart never restated the path.
+    """
+    compose = yaml.safe_load((ROOT / "deploy/compose/docker-compose.yml").read_text())
+    for name, spec in compose["services"].items():
+        assert "working_dir" not in spec, (
+            f"{name} sets working_dir, which its Dockerfile already sets correctly"
+        )
+
+
 # --- the write-up ---------------------------------------------------------
 #
 # A service README is the write-up *and* the GitHub landing page, and the frontend
