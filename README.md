@@ -17,9 +17,6 @@ No clone, no build, no credentials. This pulls a published image, waits for it t
 asks it a question, and cleans up after itself:
 
 ```bash
-# --pull always because `docker run` reuses a local `latest` and never re-checks
-# it. An image cached from an earlier visit keeps serving, and a checkpoint the
-# Hub has since re-uploaded can stop matching the reader that old image carries.
 docker run --rm -d --pull always --name word-embeddings -p 8000:8000 \
   roshb/ai-residency-word-embeddings-serve
 
@@ -31,9 +28,6 @@ curl -sS -X POST http://localhost:8000/nearest \
   -d '{"word":"king","k":3}'
 
 docker stop word-embeddings >/dev/null
-
-# `--rm` removed the container; it does not remove the image, and that is 1.8 GB
-# of mostly torch.
 docker rmi roshb/ai-residency-word-embeddings-serve
 ```
 
@@ -58,10 +52,10 @@ docker run --rm -d --network ai-residency --name frontend -p 8500:8501 \
   -e AI_RESIDENCY_PAGES=word-embeddings \
   -e WORD_EMBEDDINGS_API_URL=http://word-embeddings:8000 \
   roshb/ai-residency-frontend
-
-# http://localhost:8500 -- the page waits on /ready, and the backend is
-# fetching a 165 MB checkpoint on a cold run, so give it a couple of minutes
 ```
+
+Then open http://localhost:8500. The page waits on `/ready`, and on a cold run the backend is
+fetching a 165 MB checkpoint, so give it a couple of minutes.
 
 ```bash
 docker stop frontend word-embeddings >/dev/null
@@ -75,6 +69,11 @@ through Compose, and without `--no-deps` it starts all nine behind the hub.
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub,
 which is why the `--retry` loop is there rather than a fixed sleep: `/ready` answers **503** until
 the weights are loaded, so curl retries until the service can genuinely serve.
+
+`--pull always` matters for the same reason. `docker run` reuses a local `latest` and never
+re-checks it, so an image cached from an earlier visit keeps serving — and a checkpoint the Hub
+has since re-uploaded can stop matching the reader that old image carries. `--rm` removes the
+container but not the image, which is why the last line deletes it: 1.8 GB, mostly torch.
 
 Swap the image name for any other system — every one is independently deployable and answers plain
 HTTP on `:8000`:
