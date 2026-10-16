@@ -91,15 +91,7 @@ open http://localhost:8500
 docker compose -p ai-residency down
 ```
 
-Two services need a word. `vector-search-retrieval` starts with an empty Redis, so searches
-return nothing until the index is built once — about 20 seconds for 1,498 documents:
-
-```bash
-docker compose -p ai-residency exec vector-search-retrieval \
-  python -m retrieval.save_doc_embeddings_to_redis
-```
-
-And `speech-emotion-recognition` has no checkpoint, so `--wait` times out instead of returning.
+`speech-emotion-recognition` has no checkpoint, so `--wait` times out instead of returning.
 
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
 `/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
@@ -157,8 +149,7 @@ No credentials needed — the Hub repos are public. `make -C deploy status` curl
 `/ready` across all nine ports.
 
 Expect a few minutes on a cold run while each container fetches its weights; each page starts
-working as its backend finishes. `make -C deploy index-retrieval` builds
-`vector-search-retrieval`'s Redis index, which starts empty.
+working as its backend finishes.
 
 If compose reports `Bind for 0.0.0.0:8500 failed`, something else already holds that port —
 most likely a Helm release of this same chart, whose `LoadBalancer` Service claims it even with

@@ -127,6 +127,37 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis here is ephemeral (`--save ""`), so the document index starts empty and every
+  # query answers with no results until something fills it. That something used to be a
+  # person: a Makefile target, a line in deploy/README.md, and a step the root README had
+  # to tell a reader to run after the stack was already up. It is the same image and the
+  # same command, run once -- and `service_completed_successfully` below makes it a
+  # prerequisite of the service rather than something to remember.
+  vector-search-retrieval-index:
+    image: roshb/ai-residency-vector-search-retrieval-serve${VECTOR_SEARCH_RETRIEVAL_REF:-:latest}
+    # Swallows its own failure, the same way the chart's bootstrap init container does.
+    # Populating the index is a convenience, not a precondition for serving: the API
+    # starts either way and answers honestly. Exiting non-zero here would instead fail
+    # the `service_completed_successfully` below and stop the service from starting at
+    # all, so an unreachable Hub would turn a degraded search into no service.
+    command:
+      - sh
+      - -c
+      - |
+        python -m retrieval.save_doc_embeddings_to_redis ||
+          echo "index: skipped, artifacts unavailable -- /query will return no results"
+    # Not `restart: unless-stopped` like the backends: this exits as soon as the index is
+    # built, and a restart policy would read that as a crash and loop it forever.
+    restart: "no"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *hub-credentials
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+
   vector-search-retrieval:
     image: roshb/ai-residency-vector-search-retrieval-serve${VECTOR_SEARCH_RETRIEVAL_REF:-:latest}
     depends_on:
@@ -136,6 +167,8 @@ services:
       # an init container.
       redis:
         condition: service_healthy
+      vector-search-retrieval-index:
+        condition: service_completed_successfully
     environment:
       <<: *hub-credentials
       REDIS_HOST: redis

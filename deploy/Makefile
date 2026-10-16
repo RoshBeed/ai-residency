@@ -93,10 +93,10 @@ up: ## Start everything, or a subset: make up SERVICES="word-embeddings vit-clas
 		echo "Backends: $(BACKENDS)"; \
 	fi
 
-index-retrieval: ## One-time: populate this stack's own (independent, starts-empty) vector-search-retrieval redis index
+index-retrieval: ## Rebuild vector-search-retrieval's redis index (compose builds it on `up`; this is for re-running it)
 	$(COMPOSE) exec vector-search-retrieval python -m retrieval.save_doc_embeddings_to_redis
 
-helm-index-retrieval: ## One-time: populate the k8s cluster's own (independent, starts-empty) vector-search-retrieval redis index
+helm-index-retrieval: ## Rebuild the cluster's vector-search-retrieval redis index (the chart's bootstrapCommand builds it on install)
 	kubectl exec -n $(HELM_NAMESPACE) deploy/vector-search-retrieval -- python -m retrieval.save_doc_embeddings_to_redis
 
 down: ## Stop and remove all containers

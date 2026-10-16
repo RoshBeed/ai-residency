@@ -103,16 +103,12 @@ Then open http://localhost:8500. Each backend is also reachable directly for deb
 word-embeddings `:8001`, content-scoring `:8007`, then vector-search-retrieval `:8002` … rlhf-ppo `:8006`.
 `make status` curls each one's `/health`, which all seven expose.
 
-**One-time step for vector-search-retrieval:** this stack runs its own independent Redis (`redis`), separate
-from — and starting empty, unlike — the original vector-search-retrieval repo's own persistent one. Populate it once
-after the first `up`:
-
-```bash
-docker compose exec vector-search-retrieval uv run python -m retrieval.save_doc_embeddings_to_redis
-```
-
-Without this, vector-search-retrieval's `/query` page returns an empty result set (not an error — just nothing to
-retrieve yet).
+**vector-search-retrieval's index builds itself.** This stack runs its own Redis, ephemeral and
+starting empty, so `/query` had nothing to retrieve until someone ran the indexer by hand. A
+`vector-search-retrieval-index` service now does it: the same image and command, run once, and
+`service_completed_successfully` makes it a prerequisite of the API rather than a step to
+remember. It swallows its own failure, so an unreachable Hub leaves you with an empty index
+rather than no service. `make index-retrieval` re-runs it against a stack that is already up.
 
 All seven backends answering `/health` under compose, and the frontend serving the portfolio
 at `:8500`:
@@ -146,12 +142,9 @@ Then open http://localhost:8500 — Docker Desktop's Kubernetes auto-binds `Load
 localhost, so the frontend Service is reachable with no port-forward needed. The backends are
 deliberately `ClusterIP`-only (mirrors the real shape: only the frontend talks to them directly) —
 reach one directly for debugging with `kubectl port-forward -n ai-residency svc/word-embeddings 8001:8000`
-(repeat per backend, ports 8001–8007 to match compose's numbering). Same one-time step as the compose
-version to populate vector-search-retrieval's (independent, starts-empty) Redis index:
-
-```bash
-kubectl exec -n ai-residency deploy/vector-search-retrieval -- uv run python -m retrieval.save_doc_embeddings_to_redis
-```
+(repeat per backend, ports 8001–8007 to match compose's numbering). The index builds itself here too — `bootstrapCommand`
+in `values.yaml` runs the indexer as an init container, which is what compose's
+`vector-search-retrieval-index` service mirrors. `make helm-index-retrieval` re-runs it.
 
 `make helm-upgrade` re-applies the chart *and* runs `kubectl rollout restart deployment` afterward —
 needed because a fixed `latest` tag means the manifest itself never changes when the underlying
