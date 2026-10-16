@@ -38,38 +38,23 @@ docker rmi roshb/ai-residency-word-embeddings-serve
 
 ### With the UI
 
-The same backend plus the Streamlit page for it. They need a shared network so the
-frontend can resolve the backend by name, and `AI_RESIDENCY_PAGES` makes the UI a
-single-system app rather than the nine-system hub:
+The same backend plus its Streamlit page. Compose reads its file from stdin, so this still
+needs no clone; `AI_RESIDENCY_PAGES` makes the UI a single-system app rather than the
+nine-system hub:
 
 ```bash
-docker network create ai-residency >/dev/null
+curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
+  | AI_RESIDENCY_PAGES=word-embeddings docker compose -f - -p ai-residency up -d \
+      --pull always --no-deps frontend word-embeddings
 
-docker run --rm -d --pull always --network ai-residency --name word-embeddings \
-  -p 8000:8000 roshb/ai-residency-word-embeddings-serve
-
-docker run --rm -d --pull always --network ai-residency --name frontend -p 8500:8501 \
-  -e AI_RESIDENCY_PAGES=word-embeddings \
-  -e WORD_EMBEDDINGS_API_URL=http://word-embeddings:8000 \
-  roshb/ai-residency-frontend
-
-curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
-  http://localhost:8000/ready >/dev/null
-
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors http://localhost:8001/ready >/dev/null
 open http://localhost:8500
 ```
 
-The backend's port is published only so `curl` can wait on it; the frontend reaches it by name
-over the Docker network.
-
 ```bash
-docker stop frontend word-embeddings >/dev/null
-docker network rm ai-residency >/dev/null
+docker compose -p ai-residency down
 docker rmi roshb/ai-residency-word-embeddings-serve roshb/ai-residency-frontend
 ```
-
-From a clone, `docker compose up -d --no-deps frontend word-embeddings` does the same
-through Compose, and without `--no-deps` it starts all nine behind the hub.
 
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
 `/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
@@ -111,8 +96,9 @@ wants the compose form below, with `redis` named alongside it.
 
 ## Run all of them, behind the UI
 
-The frontend needs the compose file, so this one does want a clone. It still builds nothing —
-compose pulls the same published images.
+A clone here, for the digest pinning in `images.env` — the stdin form above works for all nine
+too, it just resolves `:latest`. Nothing is built either way; compose pulls the same published
+images.
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy/compose
