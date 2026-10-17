@@ -12,7 +12,7 @@ import pickle
 
 import requests
 
-from ai_residency_common import get_logger
+from ai_residency_common import get_logger, push_checkpoint
 from config import Config
 
 __all__ = ["build_vocabulary", "download_corpus", "main", "preprocess"]
@@ -111,6 +111,17 @@ def main() -> None:
     with config.ids_to_words_path.open("wb") as handle:
         pickle.dump(ids_to_words, handle)
     logger.info("Wrote corpus and vocabulary to %s", config.data_dir)
+
+    # Published, not just written. The vocabulary, the CBOW embedding matrix and the
+    # two towers are one set: the matrix has a row per word and a tower checkpoint
+    # carries that matrix frozen inside it, so a vocabulary rebuilt without
+    # republishing leaves the Hub holding artifacts from two different runs. That is
+    # not hypothetical -- it is how the Hub came to hold a 63,642-row CBOW checkpoint
+    # beside a 7,692-word vocabulary, which serving can only report as a 503. This
+    # stage is where the set starts, so this is where it gets published.
+    if config.hf_dataset_repo_id is not None:
+        for path in (config.corpus_path, config.words_to_ids_path, config.ids_to_words_path):
+            push_checkpoint(config.hf_dataset_repo_id, path, repo_type="dataset")
 
 
 if __name__ == "__main__":
