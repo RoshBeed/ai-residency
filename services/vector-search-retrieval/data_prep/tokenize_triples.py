@@ -11,7 +11,7 @@ from typing import Any
 
 from tqdm import tqdm
 
-from ai_residency_common import get_logger
+from ai_residency_common import get_logger, push_checkpoint
 from cbow.vocabulary import load_words_to_ids
 from config import Config
 from data_prep.generate_triples import SPLITS
@@ -70,6 +70,18 @@ def tokenize_triples(config: Config) -> dict[str, list[Triple]]:
     with config.tokenized_triples_path.open("w") as handle:
         json.dump(tokenized, handle, indent=2)
     logger.info("Wrote %s", config.tokenized_triples_path)
+
+    # Published for the same reason the vocabulary is: these token ids only mean
+    # anything against the vocabulary that produced them, and `save_doc_embeddings_to_redis`
+    # resolves this file from the Hub. A stale copy there does not fail -- it indexes
+    # documents whose ids point into a different vocabulary than the towers' frozen
+    # embedding matrix, and reports nothing. That is worse than the 503 a mismatched
+    # checkpoint gives, because there is no symptom at all.
+    if config.hf_dataset_repo_id is not None:
+        push_checkpoint(
+            config.hf_dataset_repo_id, config.tokenized_triples_path, repo_type="dataset"
+        )
+
     return tokenized
 
 
