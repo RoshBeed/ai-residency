@@ -21,11 +21,11 @@ backends:
   vit-seq2seq:
     digest: sha256:7982fa8fba0b74293ce95a8cc65c47072fa438764f85a3fcb6792b89f65b92a3
   multimodal-captioning:
-    digest: sha256:8abd0a47feafb1cffdbe1900fd848ee25b41db2642bc7b300f1e5a941e22a38a
+    digest: sha256:97ea1f77059f9c37932ccc6fc919c14fd99e9b03b055e4ef7a6f95a60cbb8f42
   whisper-fine-tuning:
     digest: sha256:bbf8290b8ff71fef2ab5322b6a786feb14e538335bfa59927530a3793e07fabf
   speech-emotion-recognition:
-    digest: sha256:2cd4b1b630be41ef338d916244b2b2f82e0fe6128dbbcfd3d84917e346f760e6
+    digest: sha256:03e5e18ae1477bcca36629893ac2b4448f803983895f14312bc3703790bbd857
   rlhf-ppo:
     digest: sha256:61b3fcc6f29124ef0adb1f6b22c1eb3cbfae70af8b986d08050993f5332ee213
 frontend:
