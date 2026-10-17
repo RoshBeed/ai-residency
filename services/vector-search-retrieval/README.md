@@ -11,8 +11,11 @@
 - **Built:** the full offline/online split — CBOW embeddings, both training objectives behind one
   config field, a recall@K harness against a fixed document pool, and Redis/RediSearch HNSW
   indexing for live queries.
-- **What I'd do next:** report Recall@K/MRR against a BM25 baseline, which is the comparison that
-  says whether any of this beats term matching.
+- **What I'd do next:** fix the vocabulary, not the loss. 30% of real queries contain a word the
+  text8-trained vocabulary never saw, and those score 0.2477 recall@10 against 0.4626 for queries
+  it covers (§6) — a bigger lever than anything left in the objective. Then report Recall@K/MRR
+  against a BM25 baseline, which is the comparison that says whether any of this beats term
+  matching.
 
 This repo builds a neural document retrieval system: given a search query, find the most relevant
 passage in a corpus. I trained a query tower and a document tower on real search queries
@@ -398,56 +401,79 @@ against untrained towers of the same shape, and prints the chance rate beside bo
 The shipped checkpoint trains on **88,523 MS MARCO triples** for ten epochs and is scored on
 10,783 held-out ones:
 
-| | recall@10 | pairwise accuracy |
-|---|--:|--:|
-| chance | 0.0020 | 0.5000 |
-| untrained towers, same shape | 0.0018 | 0.5090 |
-| **shipped (in-batch negatives)** | **0.3983** | **0.9470** |
+| | recall@10 | recall@1 | median rank | pairwise accuracy |
+|---|--:|--:|--:|--:|
+| chance | 0.0020 | 0.0002 | 2,500 | 0.5000 |
+| untrained towers, same shape | 0.0028 | 0.0006 | 2,573 | 0.4960 |
+| **shipped (in-batch negatives)** | **0.3983** | **0.1774** | **26** | **0.9470** |
 
 Recall@10 is the metric that matters, and the pool is what makes it mean anything. Each held-out
 query is ranked against 5,000 distinct documents with exactly one correct answer among them, so
-chance is 10/5000 = 0.0020 and the shipped towers are 199x it. The untrained column is the control
-that makes the number readable: towers of the same architecture over the same frozen CBOW
-embeddings, with only the GRU weights random, land at 0.0018 — chance, as they should.
+chance is 10/5000 = 0.0020 and the shipped towers are 199x it.
+
+The untrained row is the control that makes the number readable: the same architecture over the
+same frozen CBOW embeddings, with only the GRU weights random. It lands at 0.0028 against a 0.0020
+chance floor — a touch above chance rather than exactly on it, because the embeddings underneath
+are trained and carry real word similarity even when the recurrence on top is noise. Those towers
+are seeded, so that floor is the same number on every run.
 
 **Pairwise accuracy would have hidden most of this.** Asking only whether a query is closer to its
 positive than to its one sampled negative starts at 50% chance, and on that metric the two
 objectives below are 0.9470 and 0.9037 — nearly tied. Against a real pool they differ threefold.
 A retrieval metric has to make the model pick its answer out of a crowd.
 
-On the training queries, positive-document cosine similarity is consistently well above
-negative-document similarity:
+### What 0.3983 looks like
 
-| Query | sim(query, positive doc) | sim(query, negative doc) |
-|---|---|---|
-| "what is rba" | 0.2801 | −0.4856 |
-| "was ronald reagan a democrat" | 0.3507 | −0.2441 |
-| "price to install tile in shower" | 0.3726 | −0.1499 |
+An aggregate hides the shape of the result, so here is the rank every held-out query's own
+document actually reaches, and two queries from each end. Both examples below are chosen to match
+the measured hit rate rather than picked — the first four queries in dataset order happen to be
+four misses, which understates the model as much as four hits would flatter it.
 
-A held-out evaluation harness (`pairwise_accuracy()` in `models/training.py`) checks generalization
-directly — whether the query lands closer to its positive document than its negative one, on
-triples the training loop never saw — rather than trusting the training loss alone.
+| | share of 5,034 held-out queries |
+|---|--:|
+| rank 1 (recall@1 0.1774) | 893 |
+| ranks 1–10 (recall@10 0.3983) | 2,005 |
+| ranks 11–100 | 1,375 |
+| past rank 100 | 1,654 |
 
-A live query against the full indexed corpus (1,498 documents in Redis), through the trained query
-tower and Redis's HNSW search:
+Median rank is 26 of 5,000.
 
 ```
-Enter your query: was ronald reagan a democrat
-Top 5 results:
-Rank 1 (score=0.5999): "[ 2 syll. kei (l), ke-il ] The baby boy name Keil is also used as a girl
-  name. Its pronunciation is..."
-Rank 2 (score=0.6432): "You should consult the doctor immediately. In the abdomen many organs are
-  covered and kept in a bag..."
-Rank 3 (score=0.6476): "CUPRO \¦k(y)ueˈprō\. üˈprō. n 1: A a regenerated cellulose fiber derived
-  from cotton (linter the, ul..."
-Rank 4 (score=0.6757): "System Costs. As mentioned in the introduction, residential solar systems
-  are typically sized from 3..."
-Rank 5 (score=0.6838): "Home » Tramadol Uses, Warnings and Treatment. Tramadol is a
-  narcotic-like pain reliever. Tramadol hy..."
+query: "where was movie the birds filmed"        (its own document ranks 1 of 5,000)
+  1. 0.5105  "The Birds filming location: the Schoolhouse: Bodega Lane, Bodega, Northern..."  <- correct
+  2. 0.4683  "The First Battle of Bull Run was the First major battle of the Civil War..."
+  3. 0.4592  "On July 31, 2014, scientists reported details of the evolution of birds..."
+
+query: "walgreens store sales average"            (its own document ranks 784 of 5,000)
+  1. 0.3891  "Employees of Air India are likely to undergo another round of pay cuts..."
+  2. 0.3793  "Best Answer: Hourly rate at Verizon is between $11 and $14 for basic Sales Reps..."
+  3. 0.3711  "Typically a mobile notary goes to anywhere from one to eight places per day..."
 ```
 
-That transcript is real — captured live from `run_query()` in `retrieval/query_engine.py` against
-the trained query tower and the actual indexed corpus.
+The miss is the informative one. Every document it returned is about pay, so the towers found the
+*topic* and not the answer — and the reason is visible in the query: `walgreens` is not in the
+vocabulary.
+
+### The vocabulary is the next ceiling, not the objective
+
+The CBOW embeddings are trained on text8, a Wikipedia dump, while the queries are real search
+traffic. `tokenize_text` maps an unknown word to token 0, which is also the padding id, so an
+out-of-vocabulary word does not merely lose its meaning — it arrives at the GRU indistinguishable
+from padding. Splitting the held-out queries on whether that happens:
+
+| | queries | recall@10 | recall@1 | median rank |
+|---|--:|--:|--:|--:|
+| every word in the vocabulary | 3,528 | **0.4626** | 0.2194 | 15 |
+| one or more words unknown | 1,506 | **0.2477** | 0.0790 | 76 |
+
+**Thirty percent of real queries contain a word text8 never used, and those score barely half as
+well.** The three sampled misses above are each a single missing content word — `walgreens`,
+`furuncle`, `urinalysis` — and in each case it is the most discriminative word in the query.
+
+That is a bigger lever than anything left in the loss function, and it points somewhere specific:
+subword tokenization, or building the vocabulary from the corpus being searched rather than from
+Wikipedia. Both are changes to the *representation*, which is where `content-scoring` also found
+its ceiling after exhausting its architecture.
 
 ### In-batch negatives beat triplet loss threefold
 
