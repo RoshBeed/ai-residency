@@ -1,8 +1,11 @@
 .DEFAULT_GOAL := help
-.PHONY: train serve test help
+.PHONY: train-loop train serve test help
 
-train:  ## Run ONE PPO step on two example prompts (this repo has no multi-epoch loop)
+train:  ## Run ONE PPO step on two example prompts
 	uv run python -m training.run_ppo
+
+train-loop:  ## Run a PPO loop on real TL;DR prompts, reward measured before and after
+	uv run python -m rlhf_ppo.training.run_ppo_loop
 
 serve:  ## Run the FastAPI generation service on :8000 (no trained PPO checkpoint — see README)
 	uv run python -m serving.api

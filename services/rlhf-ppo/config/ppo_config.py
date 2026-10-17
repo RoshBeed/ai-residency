@@ -42,6 +42,17 @@ class PPOConfig(BaseConfig):
         temperature: Sampling temperature during generation.
         top_k: Top-k filter during generation.
         top_p: Nucleus sampling threshold during generation.
+        prompt_dataset_repo_id: Where real TL;DR prompts come from. The two prompts
+            `run_ppo` ships are illustrative and have a literal "POST: ..." where the
+            post should be, which is fine for showing the algorithm executes and
+            useless for showing reward moving.
+        prompt_dataset_split: Split to read prompts from.
+        num_iterations: PPO steps in a loop run. Each one generates, scores and
+            updates on `prompt_batch_size` prompts.
+        prompt_batch_size: Prompts generated from per PPO step.
+        eval_prompts: Held-out prompts the before/after reward is measured on. Fixed
+            across the run, and never trained on, so the two numbers are comparable.
+        eval_every: PPO steps between reward measurements.
     """
 
     # Model
@@ -65,6 +76,15 @@ class PPOConfig(BaseConfig):
     temperature: float = 1.0
     top_k: int = 50
     top_p: float = 0.95
+
+    # A real loop. `make train` still runs the single documented step; `make train-loop`
+    # runs this.
+    prompt_dataset_repo_id: str = "CarperAI/openai_summarize_tldr"
+    prompt_dataset_split: str = "train"
+    num_iterations: int = 60
+    prompt_batch_size: int = 4
+    eval_prompts: int = 16
+    eval_every: int = 10
 
     # The step does update the policy's LoRA weights, so there is an artifact worth
     # persisting -- but be clear about what it is. One step against a reward model
