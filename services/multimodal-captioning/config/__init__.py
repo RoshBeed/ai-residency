@@ -40,7 +40,18 @@ class CheckpointInfo:
 
 # The three checkpoints, hosted on the Hub (gitignored locally). Listed rather than
 # globbed so the UI can describe each one honestly instead of showing bare file names.
+# The three `adapter*.pth` below all predate the patch-grid change: they were trained
+# when the image reached the decoder as one pooled soft token, so the inference path now
+# feeds them 49 tokens where they only ever saw one. They still load -- the adapter is
+# per-token and its shape is unchanged -- but that is shape compatibility, not the input
+# distribution they fit. They are kept because Section 6 reports their captions and
+# because they are what the single-token result was measured on; they are not the
+# default any more.
 CHECKPOINTS: dict[str, CheckpointInfo] = {
+    "adapter_patches.pth": CheckpointInfo(
+        description="Flickr30k, 49 patch tokens per image (current architecture)",
+        final_layer_norm=True,
+    ),
     "adapter_flickr_batched.pth": CheckpointInfo(
         description="Flickr30k, 100 pairs / 3 epochs, batched (best-trained)",
         final_layer_norm=True,
@@ -60,7 +71,7 @@ CHECKPOINTS: dict[str, CheckpointInfo] = {
     ),
 }
 
-DEFAULT_CHECKPOINT = "adapter_flickr_batched.pth"
+DEFAULT_CHECKPOINT = "adapter_patches.pth"
 
 
 @dataclass

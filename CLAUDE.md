@@ -540,6 +540,58 @@ unchanged and still Streamlit-free.
 every new service was linted, typed and tested on a laptop and nowhere else; the publish matrix
 still drops it, since nothing needs to ship a template image.
 
+## Getting every service to a meaningful checkpoint
+
+The current pass: each service should show that its mechanism works, not that it is
+state of the art. Results need to beat a stated baseline and be reproducible from the
+Hub, cheaply -- not perfect, and not a long training run. Order of work per service:
+
+1. Find the quickest change that makes the result meaningful. Measure the obvious lever
+   before spending hours on it: for captioning, Section 6 had already shown 16x the data
+   buys almost nothing, and the real bottleneck was a single pooled image token.
+2. **Resumable training first.** This Mac dies when it runs out of RAM, so a run that
+   cannot resume will eventually lose a night's work. The trainer must write a
+   `*_resume.pth` every epoch with the optimizer state, and refuse to resume across
+   different settings. Only `multimodal-captioning` has this so far.
+3. Train, with the baseline logged beside the metric every epoch.
+4. Push to the Hub on best. Serving pulls credential-free, so the repo must be public --
+   see the `push_checkpoint` note above.
+5. Verify through the container, not the local venv: `up -d --wait` and a real request.
+6. Then update every place the old result is written down.
+
+Step 6 is the one that gets forgotten. The places a result appears:
+
+- the service's own `README.md` -- its results section, and any figure showing captions,
+  predictions or scores
+- the root `README.md` -- the systems table and the resident-memory table
+- `CLAUDE.md` -- the standing notes and the Open list below
+- the frontend, where a page describes what the model does
+- the published image, which CI rebuilds on push -- so the service only serves the new
+  checkpoint once that lands
+
+Status:
+
+- [x] `word-embeddings` -- trained on text8, scored against WordSim-353/SimLex-999/Google
+      analogies with published numbers beside them.
+- [x] `content-scoring` -- trained on 872,554 Hacker News posts, four fusion architectures
+      against four baselines.
+- [x] `speech-emotion-recognition` -- whisper-tiny on English CREMA-D, val_acc 0.7225
+      against a 0.1708 baseline. Was one epoch of German EmoDB at below chance.
+- [ ] `speech-emotion-recognition` -- write-up and both READMEs still describe the German
+      at-chance checkpoint; the resident-memory row still says "no trained checkpoint".
+- [ ] `speech-emotion-recognition` -- no resume support in its trainer.
+- [ ] `speech-emotion-recognition` -- CREMA-D comes from `myleslinder/crema-d`, a
+      third-party account. Mirror it under `roshbeed/` like text8, and create the
+      `-data` repo, which does not exist.
+- [ ] `multimodal-captioning` -- 49 patch tokens instead of one pooled token; training on
+      5,000 Flickr30k pairs. Then: score with CLIP agreement against the published 0.1882
+      untrained / 0.3280 human numbers, rewrite Section 3.2, Figure 5 and Section 6,
+      and decide whether `adapter_patches.pth` stays the default.
+- [ ] `vit-classifier`, `vit-seq2seq`, `whisper-fine-tuning`, `rlhf-ppo`,
+      `vector-search-retrieval` -- not yet assessed in this pass. For each: what does it
+      currently answer, what is its baseline, and what is the cheapest change that makes
+      the answer meaningful.
+
 Open:
 - `speech-emotion-recognition` has a checkpoint now and answers 200, but it is one epoch on
   EmoDB alone and **scores at chance**: val_acc 0.2342 against a majority-class baseline of
