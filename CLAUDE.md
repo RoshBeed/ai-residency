@@ -647,10 +647,33 @@ Status:
 - [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
       the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
       ~40x in both directions.
-- [ ] `vit-classifier`, `vit-seq2seq`, `whisper-fine-tuning`, `rlhf-ppo`,
-      `vector-search-retrieval` -- not yet assessed in this pass. For each: what does it
-      currently answer, what is its baseline, and what is the cheapest change that makes
-      the answer meaningful.
+- [x] `vit-classifier` -- already meaningful, no work needed. 91.78% on the 10,000-image
+      MNIST test set against an 11.35% majority-class baseline, from a shipped checkpoint
+      after one epoch from scratch.
+- [x] `vit-seq2seq` -- already meaningful, no work needed. 68.00% exact-sequence accuracy
+      on 500 held-out three-digit numbers against 0.10% for uniform guessing. Exact-sequence
+      is the strict metric: two correct digits out of three scores zero.
+- [ ] `vector-search-retrieval` -- the clearest remaining win, and it is already measured.
+      The service trains with triplet loss on 444 triples; §6 records in-batch negatives at
+      **0.2856 recall@10 against triplet's 0.0932** on 78,964 MS MARCO pairs, same towers,
+      same pairs, same epochs. The README already names it as the next step. Triplet scores
+      one sampled negative per query so most of a batch does no work; in-batch negatives
+      treat every other document in the batch as a negative for one matrix multiply. The
+      towers do not change, so this is a loss-function swap plus a training slice, and the
+      number to beat is a notebook's, which makes it a reproduction rather than a guess.
+- [ ] `rlhf-ppo` -- the mechanics are verified and tested, but the service reports no
+      result: its own TL;DR says "what I'd do next: run a real multi-epoch PPO loop and
+      measure reward before/after". That before/after mean reward *is* the missing number,
+      and it is the cheapest one -- the reward model is inference-only, the policy is
+      already SmolLM2-135M with LoRA, so a short run on a slice is enough to show reward
+      moving. Log the pre-PPO mean reward as the baseline beside it.
+- [x] `whisper-fine-tuning` -- meaningful by its own design and needs no training run. It
+      fine-tunes on a single clip so the effect of five gradient steps is visible rather
+      than statistical: `"My name is Roosh."` becomes `"My name is Rosh"`, with the base
+      model's own output as the baseline. The one cheap strengthener, if it is ever worth
+      it: transcribe a few *other* clips before and after to show the five steps did not
+      damage general transcription. That is the honest counterweight to a demo that is
+      deliberately overfitting, and it is a handful of forward passes.
 
 ### Backbone sizing, researched 2026-10-17
 
