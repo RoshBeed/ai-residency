@@ -15,7 +15,7 @@ backends:
   content-scoring:
     digest: sha256:caa00786166b13c8e6f730cc89dd6d8466a472edfdd69ef905f1412b5bb0cd71
   vector-search-retrieval:
-    digest: sha256:e3ec25dc41e6120300b0a7b6d677278be76d2fcc8fdd5f2f8408ebbc17bfe8e2
+    digest: sha256:6d93093d4174f90aa58d8f032c86e548f4bfda98fa8730846068d7313168ae7d
   vit-classifier:
     digest: sha256:cc8c135866368dec5cb33c8b7431bf7e47b0c800d91a4502a00cc052f149ffb7
   vit-seq2seq:
