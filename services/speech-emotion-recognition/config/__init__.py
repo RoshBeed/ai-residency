@@ -98,7 +98,10 @@ class Config(BaseConfig):
 
     Attributes:
         learning_rate: AdamW learning rate.
-        num_epochs: Passes over the training manifest.
+        num_epochs: Passes over the training manifest, an upper bound now that
+            training stops early.
+        early_stopping_patience: Stop after this many epochs without a new best.
+            0 runs every epoch. Three is enough here: see `BestMetric`.
         batch_size: Clips per optimizer step.
         model_name: Hugging Face Whisper checkpoint to fine-tune. The tokenizer the
             emotion tokens are added to comes from the same model, so the extended
@@ -118,6 +121,7 @@ class Config(BaseConfig):
 
     learning_rate: float = 1e-5
     num_epochs: int = 3
+    early_stopping_patience: int = 3
     batch_size: int = 4
 
     # whisper-tiny, not -small. This service demonstrates a mechanism -- emotion as a

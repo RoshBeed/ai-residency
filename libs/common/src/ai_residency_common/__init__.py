@@ -19,6 +19,7 @@ from ai_residency_common.checkpoints import (
 )
 from ai_residency_common.config import BaseConfig, set_seed
 from ai_residency_common.device import get_device
+from ai_residency_common.early_stopping import BestMetric, Mode
 from ai_residency_common.env import load_env
 from ai_residency_common.hub import (
     ResolvedCheckpoint,
@@ -56,6 +57,8 @@ load_env()
 
 __all__ = [
     "BaseConfig",
+    "BestMetric",
+    "Mode",
     "ResolvedCheckpoint",
     "Resumed",
     "add_health_routes",

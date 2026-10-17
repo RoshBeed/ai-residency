@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from ai_residency_common import (
+    BestMetric,
     finish_tracking,
     get_device,
     get_logger,
@@ -230,15 +231,23 @@ def train(config: Config) -> float:
         adapter,
         optimizer,
         fingerprint=fingerprint,
-        default_best=float("inf"),
+        default_best=BestMetric.worst_for("min"),
         map_location=str(device),
     )
-    best_loss, start_epoch = resumed.best_metric, resumed.start_epoch
+    # `mode="min"`: this ranks on held-out loss, where speech-emotion ranks on
+    # accuracy. Seeded from the resumed best so a restart cannot overwrite a better
+    # checkpoint an earlier attempt already saved.
+    best = BestMetric(
+        mode="min",
+        patience=config.early_stopping_patience or None,
+        best=resumed.best_metric,
+    )
+    start_epoch = resumed.start_epoch
 
     if start_epoch > config.num_epochs:
         logger.info("Already at epoch %d of %d; nothing to do.", start_epoch - 1, config.num_epochs)
         finish_tracking()
-        return best_loss
+        return best.best
 
     for epoch in range(start_epoch, config.num_epochs + 1):
         adapter.train()
@@ -267,8 +276,7 @@ def train(config: Config) -> float:
             val_loss,
         )
 
-        if val_loss < best_loss:
-            best_loss = val_loss
+        if best.improved(val_loss):
             save_checkpoint(
                 config.checkpoint_path,
                 adapter,
@@ -296,19 +304,22 @@ def train(config: Config) -> float:
             adapter,
             optimizer,
             epoch=epoch,
-            best_metric=best_loss,
+            best_metric=best.best,
             fingerprint=fingerprint,
             metrics={"val_loss": val_loss, "baseline_loss": baseline_loss},
         )
 
+        if best.should_stop:
+            break
+
     finish_tracking()
     logger.info(
         "Best held-out loss %.4f against baseline %.4f (%s)",
-        best_loss,
+        best.best,
         baseline_loss,
-        "beats baseline" if best_loss < baseline_loss else "does NOT beat baseline",
+        "beats baseline" if best.best < baseline_loss else "does NOT beat baseline",
     )
-    return best_loss
+    return best.best
 
 
 def main() -> None:

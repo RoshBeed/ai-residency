@@ -109,6 +109,7 @@ class Config(BaseConfig):
     batch_size: int = 8
     learning_rate: float = 1e-4
     num_epochs: int = 3
+    early_stopping_patience: int = 3
 
     clip_model_name: str = "openai/clip-vit-base-patch32"
     qwen_model_name: str = "Qwen/Qwen3-0.6B-Base"

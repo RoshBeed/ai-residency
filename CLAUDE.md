@@ -556,7 +556,11 @@ Hub, cheaply -- not perfect, and not a long training run. Order of work per serv
    lines: derive the path, declare a `fingerprint` of what makes this the same run, and
    call `save_resume` every epoch rather than only on an improvement. `default_best` is
    `0.0` for accuracy-ranked trainers and `inf` for loss-ranked ones.
-3. Train, with the baseline logged beside the metric every epoch.
+3. Train, with the baseline logged beside the metric every epoch. Epoch counts are an
+   upper bound, not a plan: `BestMetric` from `ai_residency_common` ranks epochs and
+   stops after `patience` without a new best. Both guesses this pass were poor --
+   speech-emotion ran 20 epochs where 9 would have done, captioning 12 where the
+   curve turned at 3.
 4. Push to the Hub on best. Serving pulls credential-free, so the repo must be public --
    see the `push_checkpoint` note above.
 5. Verify through the container, not the local venv: `up -d --wait` and a real request.

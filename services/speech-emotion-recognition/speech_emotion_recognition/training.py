@@ -20,6 +20,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ai_residency_common import (
+    BestMetric,
     finish_tracking,
     get_logger,
     init_tracking,
@@ -152,14 +153,21 @@ def train(config: Config) -> float:
         model,
         optimizer,
         fingerprint=fingerprint,
-        default_best=0.0,
+        default_best=BestMetric.worst_for("max"),
         map_location=str(device),
     )
-    best_accuracy, start_epoch = resumed.best_metric, resumed.start_epoch
+    # `mode="max"`: this ranks on accuracy. Seeded from the resumed best so a restart
+    # cannot overwrite a better checkpoint an earlier attempt already saved.
+    best = BestMetric(
+        mode="max",
+        patience=config.early_stopping_patience or None,
+        best=resumed.best_metric,
+    )
+    start_epoch = resumed.start_epoch
     if start_epoch > config.num_epochs:
         logger.info("Already at epoch %d of %d; nothing to do.", start_epoch - 1, config.num_epochs)
         finish_tracking()
-        return best_accuracy
+        return best.best
 
     for epoch in range(start_epoch, config.num_epochs + 1):
         model.train()
@@ -187,8 +195,7 @@ def train(config: Config) -> float:
             step=epoch,
         )
 
-        if val_accuracy > best_accuracy:
-            best_accuracy = val_accuracy
+        if best.improved(val_accuracy):
             save_checkpoint(
                 checkpoint_path,
                 model,
@@ -210,13 +217,16 @@ def train(config: Config) -> float:
             model,
             optimizer,
             epoch=epoch,
-            best_metric=best_accuracy,
+            best_metric=best.best,
             fingerprint=fingerprint,
             metrics={"val_accuracy": val_accuracy, "val_loss": val_loss},
         )
 
+        if best.should_stop:
+            break
+
     finish_tracking()
-    return best_accuracy
+    return best.best
 
 
 def main() -> None:
