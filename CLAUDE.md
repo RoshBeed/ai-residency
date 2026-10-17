@@ -577,8 +577,9 @@ Status:
       against four baselines.
 - [x] `speech-emotion-recognition` -- whisper-tiny on English CREMA-D, val_acc 0.7225
       against a 0.1708 baseline. Was one epoch of German EmoDB at below chance.
-- [ ] `speech-emotion-recognition` -- write-up and both READMEs still describe the German
-      at-chance checkpoint; the resident-memory row still says "no trained checkpoint".
+- [x] `speech-emotion-recognition` -- Section 6 rewritten with the real numbers; root README's
+      resident-memory row now reads 0.9 GB and 0.7225 vs 0.1708. Verified through the container
+      before updating either.
 - [ ] `speech-emotion-recognition` -- no resume support in its trainer.
 - [ ] `speech-emotion-recognition` -- CREMA-D comes from `myleslinder/crema-d`, a
       third-party account. Mirror it under `roshbeed/` like text8, and create the
@@ -593,10 +594,15 @@ Status:
       the answer meaningful.
 
 Open:
-- `speech-emotion-recognition` has a checkpoint now and answers 200, but it is one epoch on
-  EmoDB alone and **scores at chance**: val_acc 0.2342 against a majority-class baseline of
-  0.2382, and `/predict` returns a near-uniform distribution over the six emotions. It was
-  pushed to make the page demonstrable, not because it works.
+- `speech-emotion-recognition` is trained for real now: whisper-tiny on English CREMA-D,
+  **0.7225 held-out accuracy against a 0.1708 majority-class baseline**, 4.2x chance over six
+  emotions, and 20/30 held-out clips correct through the container. Held-out loss bottoms at
+  epoch 6 and accuracy peaks at 10, with training loss down to 0.0178 by then, so eight to ten
+  epochs is the useful range rather than twenty.
+
+  Getting there corrected two earlier mistakes worth keeping written down. The first attempt was
+  one epoch of German EmoDB scoring 0.2342 against a 0.2382 baseline -- *below* chance -- pushed
+  to make the page demonstrable rather than because it worked.
 
   That first run took 2h50m for one epoch, which got blamed on the laptop and should not have
   been. **Whisper's feature extractor pads every clip to 30 seconds** -- 3000 mel frames -- and
