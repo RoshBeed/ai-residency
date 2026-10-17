@@ -656,6 +656,12 @@ Status:
 
       Measured and rejected: `no_repeat_ngram_size=3` at decode time, 0.2270 against 0.2266.
       Decoding stays greedy.
+- [ ] Dataset sources, checked 2026-10-17: every `load_dataset` id in the workspace is
+      namespace-qualified now, and `microsoft/ms_marco`, `CarperAI/openai_summarize_tldr`
+      are org-hosted. The one that is not is `nlphuji/flickr30k`, a community re-upload
+      standing in the same place a teammate's text8 repo once did. Mirroring it is ~4GB
+      against text8's 100MB, so it is a judgement call rather than an obvious yes --
+      record the decision either way rather than leaving it unexamined.
 - [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
       the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
       ~40x in both directions.
