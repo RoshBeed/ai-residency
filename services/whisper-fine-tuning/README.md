@@ -235,18 +235,24 @@ neutral-emotion clip per sentence, lowest actor id, so the set is the same every
 | | WER over 12 held-out sentences | sentences altered |
 |---|--:|--:|
 | Whisper-tiny, base weights | 0.1642 | — |
-| after 1 step (what ships) | **0.1642** | 0/12 |
-| after 5 steps | 0.2687 | 4/12 |
+| after 1 step (`make demo`, `num_epochs`) | **0.1642** | 0/12 |
+| after 5 steps (`/transcribe`, `serve_num_steps`) | 0.2687 | 4/12 |
 
-**One step is free, and the step count is the whole difference.** At `num_epochs=1` the
-demo clip is corrected and not one of the twelve held-out transcripts changes by a single
-word. Five steps corrects the same clip and costs 64% relative WER: "The airplane is
-almost full" becomes "The airplay is almost full", and "Don't forget a jacket" collapses
-to "Go for it".
+**One step is free, and the step count is the whole difference.** At one step the demo
+clip is corrected and not one of the twelve held-out transcripts changes by a single word.
+Five steps corrects the same clip and costs 64% relative WER: "The airplane is almost
+full" becomes "The airplay is almost full", and "Don't forget a jacket" collapses to "Go
+for it".
 
-That is overfitting arriving on schedule, and it is the reason the shipped configuration
-takes one step rather than a handful. The loss falling to near zero on a single example is
-the thing to be suspicious of, not the thing to run further.
+The two paths differ deliberately. `/transcribe` streams a transcript between every step, so
+five steps show more of the trajectory than one does, and the fine-tune is per-request and
+thrown away — that WER lands on the response, never on a stored checkpoint. `make demo`
+takes the single step, which is all the correction needs.
+
+That split is worth stating rather than smoothing over: the number this service exists to
+show up is reached at step one, and everything after it is presentation. The loss falling
+to near zero on a single example is the thing to be suspicious of, not the thing to run
+further.
 
 Word error rate here is computed on normalised words, punctuation dropped. The target text
 has no final period, so after the step the model stops emitting one and every raw

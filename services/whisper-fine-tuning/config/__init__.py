@@ -20,7 +20,16 @@ class Config(BaseConfig):
 
     Attributes:
         learning_rate: Adam learning rate for the fine-tuning steps.
-        num_epochs: Fine-tuning steps taken on the single example.
+        num_epochs: Fine-tuning steps taken on the single example by `make demo`
+            and `make train`.
+        serve_num_steps: Steps `/transcribe` takes per request. Higher than
+            `num_epochs` on purpose -- the endpoint streams a transcript between every
+            step, so more steps show more of the trajectory -- and it was a literal
+            written out twice in `serving/api.py` before it was a field. The cost is
+            measured: one step corrects the demo clip and leaves word error rate on
+            twelve held-out sentences at 0.1642, five steps takes it to 0.2687. The
+            fine-tune is per-request and discarded, so that cost lands on the
+            response, not on a stored checkpoint.
         model_name: Which Whisper checkpoint to fine-tune, as a Hugging Face id.
             Was a bare `"tiny"` while this service used `openai-whisper`; that
             package names its checkpoints differently from the Hub.
@@ -33,6 +42,7 @@ class Config(BaseConfig):
 
     learning_rate: float = 1e-4
     num_epochs: int = 1
+    serve_num_steps: int = 5
 
     model_name: str = "openai/whisper-tiny"
     checkpoint_name: str = "whisper_finetuned.pth"

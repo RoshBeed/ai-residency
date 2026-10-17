@@ -191,7 +191,7 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
             tmp_path,
             request.target_text,
             learning_rate=config.learning_rate,
-            num_steps=5,
+            num_steps=config.serve_num_steps,
             on_step=on_step,
         )
         ft_output = decode_audio(whisper, tmp_path)
@@ -263,7 +263,7 @@ def transcribe_stream(request: TranscribeRequest) -> StreamingResponse:
                 tmp_path,
                 request.target_text,
                 learning_rate=config.learning_rate,
-                num_steps=5,
+                num_steps=config.serve_num_steps,
                 on_step=on_step,
             )
             ft_output = decode_audio(whisper, tmp_path)
