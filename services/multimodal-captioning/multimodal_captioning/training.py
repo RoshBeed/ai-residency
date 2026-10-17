@@ -33,10 +33,12 @@ from ai_residency_common import (
     get_device,
     get_logger,
     init_tracking,
-    load_checkpoint,
     log_metrics,
     push_checkpoint,
+    resume_from,
+    resume_path_for,
     save_checkpoint,
+    save_resume,
     set_seed,
 )
 from config import Config
@@ -211,9 +213,7 @@ def train(config: Config) -> float:
     # all of them. The best-checkpoint save below is for serving and only fires on an
     # improvement; this one fires every epoch and carries the optimizer, so AdamW's
     # moments survive too -- restarting without them is not the same run continued.
-    resume_path = config.checkpoint_path.with_name(
-        f"{config.checkpoint_path.stem}_resume{config.checkpoint_path.suffix}"
-    )
+    resume_path = resume_path_for(config.checkpoint_path)
     # What makes two runs the same run. Resuming across a different corpus size or a
     # different adapter shape would silently average two experiments together.
     fingerprint = {
@@ -225,31 +225,16 @@ def train(config: Config) -> float:
         "learning_rate": config.learning_rate,
     }
 
-    best_loss = float("inf")
-    start_epoch = 1
-    if resume_path.exists():
-        # Read the payload before loading anything into the adapter: a mismatch has to
-        # leave the freshly built adapter untouched, not half-overwritten.
-        peek = load_checkpoint(resume_path, map_location=str(device))
-        saved = peek.get("extra") or {}
-        if saved.get("fingerprint") == fingerprint:
-            load_checkpoint(resume_path, adapter, optimizer=optimizer, map_location=str(device))
-            start_epoch = int(peek.get("epoch", 0)) + 1
-            best_loss = float(saved.get("best_loss", float("inf")))
-            logger.info(
-                "Resuming from %s: starting at epoch %d, best held-out loss so far %.4f",
-                resume_path,
-                start_epoch,
-                best_loss,
-            )
-        else:
-            logger.warning(
-                "Ignoring %s: it was written by a run with different settings (%s vs %s). "
-                "Starting from scratch.",
-                resume_path,
-                saved.get("fingerprint"),
-                fingerprint,
-            )
+    resumed = resume_from(
+        resume_path,
+        adapter,
+        optimizer,
+        fingerprint=fingerprint,
+        default_best=float("inf"),
+        map_location=str(device),
+    )
+    best_loss, start_epoch = resumed.best_metric, resumed.start_epoch
+
     if start_epoch > config.num_epochs:
         logger.info("Already at epoch %d of %d; nothing to do.", start_epoch - 1, config.num_epochs)
         finish_tracking()
@@ -306,13 +291,14 @@ def train(config: Config) -> float:
         # Every epoch, improvement or not. The best checkpoint above is what gets
         # served; this is what lets the run continue, so it has to record the epoch
         # that finished even when that epoch was worse.
-        save_checkpoint(
+        save_resume(
             resume_path,
             adapter,
-            optimizer=optimizer,
+            optimizer,
             epoch=epoch,
+            best_metric=best_loss,
+            fingerprint=fingerprint,
             metrics={"val_loss": val_loss, "baseline_loss": baseline_loss},
-            extra={"fingerprint": fingerprint, "best_loss": best_loss},
         )
 
     finish_tracking()

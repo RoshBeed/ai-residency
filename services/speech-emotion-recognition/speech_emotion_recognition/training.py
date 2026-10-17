@@ -25,7 +25,10 @@ from ai_residency_common import (
     init_tracking,
     log_metrics,
     push_checkpoint,
+    resume_from,
+    resume_path_for,
     save_checkpoint,
+    save_resume,
     set_seed,
 )
 from config import Config
@@ -130,9 +133,35 @@ def train(config: Config) -> float:
     )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
-    best_accuracy = 0.0
 
-    for epoch in range(1, config.num_epochs + 1):
+    # Resume state, shared with every other trainer via `ai_residency_common`. This
+    # machine dies when it runs out of RAM, and a full fine-tune here is long enough
+    # that losing a run to that matters.
+    checkpoint_path = config.checkpoint_dir / config.checkpoint_name
+    resume_path = resume_path_for(checkpoint_path)
+    fingerprint = {
+        "model_name": config.model_name,
+        "dataset_keys": list(config.dataset_keys),
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate,
+    }
+    # `default_best=0.0`: this ranks on accuracy, where higher is better, unlike the
+    # loss-ranked trainers that pass `inf`.
+    resumed = resume_from(
+        resume_path,
+        model,
+        optimizer,
+        fingerprint=fingerprint,
+        default_best=0.0,
+        map_location=str(device),
+    )
+    best_accuracy, start_epoch = resumed.best_metric, resumed.start_epoch
+    if start_epoch > config.num_epochs:
+        logger.info("Already at epoch %d of %d; nothing to do.", start_epoch - 1, config.num_epochs)
+        finish_tracking()
+        return best_accuracy
+
+    for epoch in range(start_epoch, config.num_epochs + 1):
         model.train()
         epoch_loss = 0.0
         for features, labels in train_loader:
@@ -160,7 +189,6 @@ def train(config: Config) -> float:
 
         if val_accuracy > best_accuracy:
             best_accuracy = val_accuracy
-            checkpoint_path = config.checkpoint_dir / config.checkpoint_name
             save_checkpoint(
                 checkpoint_path,
                 model,
@@ -174,6 +202,18 @@ def train(config: Config) -> float:
             )
             if config.hf_repo_id is not None:
                 push_checkpoint(config.hf_repo_id, checkpoint_path)
+
+        # Every epoch, improvement or not, so a crash costs one epoch rather than
+        # restarting from the last epoch that happened to be an improvement.
+        save_resume(
+            resume_path,
+            model,
+            optimizer,
+            epoch=epoch,
+            best_metric=best_accuracy,
+            fingerprint=fingerprint,
+            metrics={"val_accuracy": val_accuracy, "val_loss": val_loss},
+        )
 
     finish_tracking()
     return best_accuracy

@@ -9,6 +9,7 @@ portfolio deploys to.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,14 @@ from torch.optim import Optimizer
 
 from ai_residency_common.logging import get_logger
 
-__all__ = ["load_checkpoint", "save_checkpoint"]
+__all__ = [
+    "Resumed",
+    "load_checkpoint",
+    "resume_from",
+    "resume_path_for",
+    "save_checkpoint",
+    "save_resume",
+]
 
 logger = get_logger(__name__)
 
@@ -93,3 +101,132 @@ def load_checkpoint(
 
     logger.info("Loaded checkpoint from %s", path)
     return payload
+
+
+@dataclass(frozen=True)
+class Resumed:
+    """Where a resumed run should pick up.
+
+    Attributes:
+        start_epoch: First epoch still to run. 1 for a fresh start.
+        best_metric: The best score seen so far, so the "is this a new best?"
+            test survives the restart and a worse epoch cannot overwrite a better
+            checkpoint that a previous attempt already saved.
+        resumed: Whether state was actually restored, rather than this being a
+            fresh start or a refused mismatch.
+    """
+
+    start_epoch: int
+    best_metric: float
+    resumed: bool
+
+
+def resume_path_for(checkpoint_path: str | Path) -> Path:
+    """The resume file that sits beside a service's best-checkpoint path."""
+    path = Path(checkpoint_path)
+    return path.with_name(f"{path.stem}_resume{path.suffix}")
+
+
+def save_resume(
+    path: str | Path,
+    model: nn.Module,
+    optimizer: Optimizer,
+    *,
+    epoch: int,
+    best_metric: float,
+    fingerprint: Mapping[str, Any],
+    metrics: Mapping[str, float] | None = None,
+    state_dict: Mapping[str, Any] | None = None,
+) -> None:
+    """Write the state a run needs to continue, every epoch.
+
+    Distinct from `save_checkpoint`, which every trainer calls only on an
+    improvement because that file is what gets served and pushed. A run that dies
+    after a worse epoch would otherwise restart from the last *better* one and
+    repeat work -- or, where nothing had improved yet, from scratch.
+
+    The optimizer goes in because AdamW's moments are part of the run: restoring
+    weights alone gives a different trajectory, not the same one continued.
+
+    Args:
+        path: Where to write. Use `resume_path_for` to derive it.
+        model: Model whose weights to save.
+        optimizer: Optimizer whose state to save.
+        epoch: The epoch that just *finished*, so resuming starts at epoch + 1.
+        best_metric: Best score so far, by whatever measure the caller ranks on.
+        fingerprint: What makes this the same run -- see `resume_from`.
+        metrics: Extra scalars worth keeping.
+        state_dict: Weights to save instead of the model's own, for a small
+            trainable module on a frozen backbone.
+    """
+    save_checkpoint(
+        path,
+        model,
+        optimizer=optimizer,
+        epoch=epoch,
+        metrics=dict(metrics) if metrics else None,
+        extra={"fingerprint": dict(fingerprint), "best_metric": best_metric},
+        state_dict=state_dict,
+    )
+
+
+def resume_from(
+    path: str | Path,
+    model: nn.Module,
+    optimizer: Optimizer,
+    *,
+    fingerprint: Mapping[str, Any],
+    default_best: float,
+    map_location: str = "cpu",
+) -> Resumed:
+    """Restore a run in progress, or report that there is nothing to restore.
+
+    Written once here rather than per trainer: every service in this repo trains on
+    a machine that can die mid-run, and a resume that each trainer re-implements is
+    a resume that each trainer gets subtly wrong.
+
+    `fingerprint` is what makes two runs the same run -- corpus size, model shape,
+    batch size, learning rate. Without it a resume file from a different experiment
+    loads cleanly and silently averages two runs together. On a mismatch this warns
+    and starts fresh instead.
+
+    The payload is read before anything is loaded into `model`, so a refused resume
+    leaves the freshly built model untouched rather than half-overwritten.
+
+    Args:
+        path: The resume file, from `resume_path_for`.
+        model: Model to restore in place.
+        optimizer: Optimizer to restore in place.
+        fingerprint: The current run's settings, compared for equality.
+        default_best: What `best_metric` should be for a fresh start -- `0.0` when
+            ranking on accuracy, `float("inf")` when ranking on loss.
+        map_location: Device to map tensors onto, as a string.
+
+    Returns:
+        Where to pick up, and whether anything was restored.
+    """
+    resume = Path(path)
+    if not resume.exists():
+        return Resumed(start_epoch=1, best_metric=default_best, resumed=False)
+
+    peek = load_checkpoint(resume, map_location=map_location)
+    saved = peek.get("extra") or {}
+    if saved.get("fingerprint") != dict(fingerprint):
+        logger.warning(
+            "Ignoring %s: written by a run with different settings (%s, now %s). Starting fresh.",
+            resume,
+            saved.get("fingerprint"),
+            dict(fingerprint),
+        )
+        return Resumed(start_epoch=1, best_metric=default_best, resumed=False)
+
+    load_checkpoint(resume, model, optimizer=optimizer, map_location=map_location)
+    start_epoch = int(peek.get("epoch") or 0) + 1
+    best_metric = float(saved.get("best_metric", default_best))
+    logger.info(
+        "Resuming from %s: starting at epoch %d, best metric so far %.4f",
+        resume,
+        start_epoch,
+        best_metric,
+    )
+    return Resumed(start_epoch=start_epoch, best_metric=best_metric, resumed=True)

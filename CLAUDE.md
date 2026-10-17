@@ -550,9 +550,12 @@ Hub, cheaply -- not perfect, and not a long training run. Order of work per serv
    before spending hours on it: for captioning, Section 6 had already shown 16x the data
    buys almost nothing, and the real bottleneck was a single pooled image token.
 2. **Resumable training first.** This Mac dies when it runs out of RAM, so a run that
-   cannot resume will eventually lose a night's work. The trainer must write a
-   `*_resume.pth` every epoch with the optimizer state, and refuse to resume across
-   different settings. Only `multimodal-captioning` has this so far.
+   cannot resume will eventually lose a night's work. Use `resume_from`, `save_resume`
+   and `resume_path_for` from `ai_residency_common` -- one implementation, tested in
+   `libs/common/tests/test_resume.py`, not re-written per trainer. A trainer needs three
+   lines: derive the path, declare a `fingerprint` of what makes this the same run, and
+   call `save_resume` every epoch rather than only on an improvement. `default_best` is
+   `0.0` for accuracy-ranked trainers and `inf` for loss-ranked ones.
 3. Train, with the baseline logged beside the metric every epoch.
 4. Push to the Hub on best. Serving pulls credential-free, so the repo must be public --
    see the `push_checkpoint` note above.
@@ -580,7 +583,7 @@ Status:
 - [x] `speech-emotion-recognition` -- Section 6 rewritten with the real numbers; root README's
       resident-memory row now reads 0.9 GB and 0.7225 vs 0.1708. Verified through the container
       before updating either.
-- [ ] `speech-emotion-recognition` -- no resume support in its trainer.
+- [x] `speech-emotion-recognition` -- resume support, on the shared mechanism.
 - [ ] `speech-emotion-recognition` -- CREMA-D comes from `myleslinder/crema-d`, a
       third-party account. Mirror it under `roshbeed/` like text8, and create the
       `-data` repo, which does not exist.

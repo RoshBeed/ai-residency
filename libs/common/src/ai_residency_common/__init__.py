@@ -9,7 +9,14 @@ Importing this package loads a `.env` file if one is nearby, so `HF_TOKEN` and
 hand. See `env.py` for how the file is located and why real environment wins.
 """
 
-from ai_residency_common.checkpoints import load_checkpoint, save_checkpoint
+from ai_residency_common.checkpoints import (
+    Resumed,
+    load_checkpoint,
+    resume_from,
+    resume_path_for,
+    save_checkpoint,
+    save_resume,
+)
 from ai_residency_common.config import BaseConfig, set_seed
 from ai_residency_common.device import get_device
 from ai_residency_common.env import load_env
@@ -50,6 +57,7 @@ load_env()
 __all__ = [
     "BaseConfig",
     "ResolvedCheckpoint",
+    "Resumed",
     "add_health_routes",
     "decode_audio",
     "decode_image",
@@ -70,9 +78,12 @@ __all__ = [
     "push_checkpoint",
     "resolve_checkpoint",
     "resolve_required",
+    "resume_from",
+    "resume_path_for",
     "retrying",
     "run_app",
     "save_checkpoint",
+    "save_resume",
     "set_seed",
     "set_summary",
     "stream_sse",
