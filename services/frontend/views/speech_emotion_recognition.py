@@ -12,22 +12,29 @@ SERVICE = "speech-emotion-recognition"
 def render() -> None:
     with service_page(SERVICE):
         st.caption(
-            "Upload a clip. The model predicts which of six emotions it hears, by scoring the "
-            "emotion tokens its decoder can emit."
+            "Record a clip or upload one. The model predicts which of six emotions it hears, "
+            "by scoring the emotion tokens its decoder can emit."
         )
-        emotion_upload = st.file_uploader(
-            "Upload audio (WAV/MP3)", type=["wav", "mp3", "m4a"], label_visibility="collapsed"
-        )
-        if emotion_upload is not None:
-            st.audio(emotion_upload)
+        # The browser records at its own rate, usually 48kHz, and the clip goes to the API
+        # as-is. `speech.load_audio` resamples to the model's 16kHz on the way in, so this
+        # needs no conversion here -- and must not do one, or there would be two places
+        # that decide the sample rate.
+        recorded = st.audio_input("Record a clip")
+        emotion_upload = st.file_uploader("Or upload audio (WAV/MP3)", type=["wav", "mp3", "m4a"])
 
-        if emotion_upload is not None and st.button("Predict emotion", type="primary"):
+        # A recording wins when both are present: it is the thing just produced, and the
+        # uploader keeps its file across reruns.
+        clip = recorded or emotion_upload
+        if clip is not None:
+            st.audio(clip)
+
+        if clip is not None and st.button("Predict emotion", type="primary"):
             # 120s: this one loads Whisper and runs it per request.
             result = show(
                 call(
                     SERVICE,
                     "/predict",
-                    {"audio_data": bytes_to_b64(emotion_upload.getvalue())},
+                    {"audio_data": bytes_to_b64(clip.getvalue())},
                     timeout=120,
                 )
             )

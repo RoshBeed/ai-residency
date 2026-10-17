@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Unified Streamlit frontend calling every AI Residency backend API directly"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.30.0",
+    # 1.41 for `st.audio_input`, the mic widget the speech-emotion page uses. The old
+    # >=1.30.0 floor resolved fine against the lockfile and would have failed for anyone
+    # resolving afresh.
+    "streamlit>=1.41.0",
     "requests>=2.31.0",
     "pillow>=12.3.0",
     "streamlit-drawable-canvas>=0.9.3",

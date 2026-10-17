@@ -212,7 +212,7 @@ dev = [
 requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "streamlit", specifier = ">=1.30.0" },
+    { name = "streamlit", specifier = ">=1.41.0" },
     { name = "streamlit-drawable-canvas", specifier = ">=0.9.3" },
 ]
 
