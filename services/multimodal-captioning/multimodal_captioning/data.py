@@ -14,7 +14,7 @@ from typing import Any
 
 import torch
 from PIL.Image import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset, random_split
 
 from ai_residency_common import get_logger
 from config import Config
@@ -70,7 +70,7 @@ class FlickrDataset(Dataset[Example]):
         return image, str(caption)
 
 
-def build_datasets(config: Config) -> tuple[Dataset[Example], Dataset[Example]]:
+def build_datasets(config: Config) -> tuple[Subset[Example], Subset[Example]]:
     """Build the train and held-out datasets.
 
     The split uses torch's global RNG, so `set_seed` must run first for it to be

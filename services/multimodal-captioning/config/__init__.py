@@ -132,6 +132,12 @@ class Config(BaseConfig):
     # eight decimal places), so inference keeps using `get_device()`; it is the backward
     # pass over a frozen 596M-parameter decoder that misbehaves. At this scale CPU costs
     # about 45 seconds against 15, which is not worth a silently wrong checkpoint.
+    #
+    # Re-tested 2026-10-17 and this still stands. Five steps on each backend agree to
+    # three decimal places and MPS is 1.56x faster (1.11s against 1.73s a step), which
+    # looks like a reason to switch and is not one: five steps cannot see a failure that
+    # showed up in two runs out of ten. The expensive half of that rate is a checkpoint
+    # reporting a perfect loss and being saved as the best one.
     train_on_cpu: bool = True
 
     prompt: str = "This is a photo of:"

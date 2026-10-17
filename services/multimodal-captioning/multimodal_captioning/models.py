@@ -52,6 +52,10 @@ class Backbones:
         qwen_tokenizer: Tokenizer for prompts and captions.
         clip_dim: Width of CLIP's projected image embedding, the adapter's input.
         qwen_dim: Width of Qwen3's token embeddings, the adapter's output.
+        embedding_scale: Standard deviation of the decoder's token embeddings, used to
+            put the adapter's soft tokens on the same scale as real ones. Measured once
+            at load because the embedding table is 151k x 1024 and this is a reduction
+            over all of it.
         device: Where these models live. Carried on the dataclass so callers do not each
             re-derive it and risk putting the adapter somewhere the backbones are not.
     """
@@ -65,6 +69,7 @@ class Backbones:
     qwen_tokenizer: AutoTokenizer
     clip_dim: int
     qwen_dim: int
+    embedding_scale: float
     device: torch.device
 
 
@@ -100,6 +105,7 @@ def _load_backbones(clip_model_name: str, qwen_model_name: str, device: torch.de
         qwen_tokenizer=qwen_tokenizer,
         clip_dim=int(clip_model.visual_projection.out_features),
         qwen_dim=int(qwen_model.model.embed_tokens.embedding_dim),
+        embedding_scale=float(qwen_model.model.embed_tokens.weight.detach().float().std()),
         device=device,
     )
     logger.info(
@@ -246,4 +252,16 @@ def image_soft_tokens(
     hidden = backbones.vision_encoder.post_layernorm(hidden)
     projected = backbones.clip_model.visual_projection(hidden)
     tokens: torch.Tensor = adapter(projected)
-    return tokens
+    # Scaled to the decoder's embedding distribution. The adapter ends in a LayerNorm,
+    # so its output is unit variance by construction, while Qwen3's token embeddings
+    # have std 0.030 -- the soft tokens arrived ~33x larger than any real token. That is
+    # not a small mismatch: the decoder saw vectors far outside the space it was trained
+    # on, and the cheapest way for the adapter to lower loss was to stop varying with
+    # the image at all. It worked. Held-out loss fell 6.6358 to 2.2043 while CLIP
+    # agreement went from 0.1974 untrained to 0.1948 trained, and the per-image spread
+    # of the adapter's own output *halved* against an untrained one: the thing it learned
+    # was to emit a constant and leave the language model alone.
+    #
+    # A multiply rather than a learned scale, so no parameter is added and every
+    # existing adapter checkpoint still loads.
+    return tokens * backbones.embedding_scale

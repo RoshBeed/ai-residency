@@ -544,7 +544,23 @@ still drops it, since nothing needs to ship a template image.
 
 The current pass: each service should show that its mechanism works, not that it is
 state of the art. Results need to beat a stated baseline and be reproducible from the
-Hub, cheaply -- not perfect, and not a long training run. Order of work per service:
+Hub, cheaply -- not perfect, and not a long training run.
+
+**The architecture is the deliverable; its scale is not.** Hyperparameters, backbone
+sizes and corpus sizes are all free to change in whatever direction makes a run cheap,
+as long as the mechanism the service demonstrates survives intact -- a smaller
+pretrained model, a slice of the data, a larger batch, anything that trains more
+efficiently. whisper-small to whisper-tiny was the model for this: the mechanism was
+untouched and the result went from below-chance to 4.2x baseline. What is *not* free is
+the mechanism itself: late fusion stays late fusion, attention stays written out, the
+adapter stays the only thing that trains.
+
+**Train natively, never in a container.** Docker on this Mac has no GPU access, so a
+containerized run lands on CPU and gives up MPS entirely. Containers are for *serving*
+and for verifying a checkpoint through the deployed path. Training is `uv run` on the
+host.
+
+Order of work per service:
 
 1. Find the quickest change that makes the result meaningful. Measure the obvious lever
    before spending hours on it: for captioning, Section 6 had already shown 16x the data
