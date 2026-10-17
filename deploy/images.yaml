@@ -25,7 +25,7 @@ backends:
   whisper-fine-tuning:
     digest: sha256:bbf8290b8ff71fef2ab5322b6a786feb14e538335bfa59927530a3793e07fabf
   speech-emotion-recognition:
-    digest: sha256:03e5e18ae1477bcca36629893ac2b4448f803983895f14312bc3703790bbd857
+    digest: sha256:3cc9d3695a2350cb91b36299f6dc60fccd7fdd774a5140c4218665c41b32e2a9
   rlhf-ppo:
     digest: sha256:61b3fcc6f29124ef0adb1f6b22c1eb3cbfae70af8b986d08050993f5332ee213
 frontend:
