@@ -588,6 +588,18 @@ Status:
       5,000 Flickr30k pairs. Then: score with CLIP agreement against the published 0.1882
       untrained / 0.3280 human numbers, rewrite Section 3.2, Figure 5 and Section 6,
       and decide whether `adapter_patches.pth` stays the default.
+
+      **The write-up must not claim the patch grid caused the improvement.** Section 6's
+      published loss numbers (6.4251 baseline, 6.0981 best) come from 100 pairs over 3
+      epochs; this run is 5,000 pairs over 12. Three things changed at once -- image tokens
+      1 to 49, data 50x, epochs 4x -- so the loss comparison attributes nothing. It was
+      presented as an isolated measurement of the patch grid once, and it is not one.
+      Isolating it would mean training the single-token path at the same 5,000 pairs and 12
+      epochs, roughly four more hours, for an attribution this phase does not need. What
+      the result has to clear is CLIP agreement against 0.1882 untrained and 0.3280 human.
+- [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
+      the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
+      ~40x in both directions.
 - [ ] `vit-classifier`, `vit-seq2seq`, `whisper-fine-tuning`, `rlhf-ppo`,
       `vector-search-retrieval` -- not yet assessed in this pass. For each: what does it
       currently answer, what is its baseline, and what is the cheapest change that makes
