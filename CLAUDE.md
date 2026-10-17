@@ -597,6 +597,20 @@ containerized run lands on CPU and gives up MPS entirely. Containers are for *se
 and for verifying a checkpoint through the deployed path. Training is `uv run` on the
 host.
 
+**MPS is the default, not always the right device, and `AI_RESIDENCY_DEVICE` overrides
+it.** `rlhf-ppo` is the counterexample: a PPO step holds activations for four model roles
+across twelve stages, and on MPS that accumulates past the backend's high-watermark
+ceiling and dies mid-step with `MPS backend out of memory (MPS allocated: 42.45 GiB, max
+allowed: 42.43 GiB)` -- after 252-413s in the value update alone. The same step on CPU
+finishes in **70s total** with every stage finite, so CPU is both the faster and the only
+working device there, and `make -C services/rlhf-ppo train-loop` pins it. Two wrong
+theories came before that measurement: that the waste was the causal LM building
+full-vocabulary logits to read one position (real, worth fixing, 143s to 103s on one
+stage, did not stop the OOM), and that the batch size was too large (a 200x cliff between
+16 and 32 on MPS, which was the ceiling showing up rather than the cause). Time the
+stages before shrinking anything -- `ppo_step` takes an `on_stage` callback that makes
+this one run.
+
 Order of work per service:
 
 1. Find the quickest change that makes the result meaningful. Measure the obvious lever

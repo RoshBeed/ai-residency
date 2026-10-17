@@ -36,11 +36,18 @@ class ValueModel(BaseModel):
         Returns:
             A value estimate per sequence, shaped (batch,).
         """
+        # This head reads a hidden state and never looks at a logit, but the wrapped
+        # model is an `AutoModelForCausalLM` and will build the full logits tensor
+        # unless told otherwise. `logits_to_keep=1` is the smallest it will compute.
+        # Worth having, and not sufficient: this update is still the most expensive
+        # stage of a PPO step, because what dominates is the per-layer activations
+        # held for the backward pass rather than the logits at the end of it.
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=True,
+            logits_to_keep=1,
         )
         last_hidden = outputs.hidden_states[-1]
         # Read the hidden state of the last *real* token, which is not the last

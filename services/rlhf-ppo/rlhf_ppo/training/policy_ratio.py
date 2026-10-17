@@ -75,7 +75,14 @@ class PolicyRatio:
                 )
                 attention_mask[row, width - len(ids) :] = 1
 
-            outputs = policy_model(input_ids, attention_mask=attention_mask)
+            # `logits_to_keep=1` because only the last position is read. Without it the
+            # causal LM builds logits for every position: at 32 states of ~450 tokens
+            # over a 49,152-token vocabulary that is ~700M floats, built and
+            # backpropagated through to read 32 numbers. Measured at 143s for this stage
+            # before and 103s after, so it is worth having -- but it is not the reason a
+            # step is slow. The dominant cost is the activations kept for the backward,
+            # which scale with batch x sequence, not with the vocabulary.
+            outputs = policy_model(input_ids, attention_mask=attention_mask, logits_to_keep=1)
             log_probs = F.log_softmax(outputs.logits[:, -1, :], dim=-1)
 
             action_ids = torch.tensor(batch_action_ids, dtype=torch.long, device=device)

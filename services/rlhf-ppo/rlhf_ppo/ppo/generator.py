@@ -64,7 +64,13 @@ class SequenceGenerator:
             The log-probability of that action under that model.
         """
         with torch.no_grad():
-            outputs = model(state_ids.unsqueeze(0), attention_mask=state_mask.unsqueeze(0))
+            # Only the last position is read, so only the last position is computed --
+            # see the note in `PolicyRatio.get_new_logprobs`.
+            outputs = model(
+                state_ids.unsqueeze(0),
+                attention_mask=state_mask.unsqueeze(0),
+                logits_to_keep=1,
+            )
             log_probs = F.log_softmax(outputs.logits[0, -1, :], dim=-1)
             return float(log_probs[action_id].item())
 

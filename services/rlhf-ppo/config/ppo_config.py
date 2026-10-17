@@ -84,6 +84,13 @@ class PPOConfig(BaseConfig):
     prompt_dataset_repo_id: str = "CarperAI/openai_summarize_tldr"
     prompt_dataset_split: str = "train"
     num_iterations: int = 60
+    # Inherited from BaseConfig as 32, lowered to 16 after measuring the value
+    # update's forward+backward over (batch x ~450-token state) on MPS: 0.26s at
+    # batch 4, 0.23s at 8, 0.26s at 16 and 55.16s at 32, a 200x cliff with no
+    # gradual climb before it. The cliff turned out to be a symptom rather than the
+    # disease -- see the `make train-loop` note on why this service runs on CPU --
+    # but 16 is measured safe on both devices and 32 is not, so it stays.
+    batch_size: int = 16
     prompt_batch_size: int = 4
     eval_prompts: int = 16
     eval_every: int = 10
