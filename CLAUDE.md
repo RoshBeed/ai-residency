@@ -715,14 +715,32 @@ Status:
 - [x] `vit-seq2seq` -- already meaningful, no work needed. 68.00% exact-sequence accuracy
       on 500 held-out three-digit numbers against 0.10% for uniform guessing. Exact-sequence
       is the strict metric: two correct digits out of three scores zero.
-- [ ] `vector-search-retrieval` -- the clearest remaining win, and it is already measured.
-      The service trains with triplet loss on 444 triples; §6 records in-batch negatives at
-      **0.2856 recall@10 against triplet's 0.0932** on 78,964 MS MARCO pairs, same towers,
-      same pairs, same epochs. The README already names it as the next step. Triplet scores
-      one sampled negative per query so most of a batch does no work; in-batch negatives
-      treat every other document in the batch as a negative for one matrix multiply. The
-      towers do not change, so this is a loss-function swap plus a training slice, and the
-      number to beat is a notebook's, which makes it a reproduction rather than a guess.
+- [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
+      triples. **Recall@10 0.3983 against a 0.0020 chance floor and 0.0018 for untrained
+      towers of the same shape**: 199x chance. Triplet loss on the same triples, same ten
+      epochs, same frozen embeddings reaches 0.1250, so the notebook's threefold claim
+      reproduces (3.19x here against its 3.06x, both arms higher on the larger corpus).
+      `make evaluate` prints all of it from the shipped checkpoint, and the towers are on
+      the Hub.
+
+      **Triplet's final loss is a hundred times lower than in-batch's and its retrieval is
+      three times worse** -- 0.0108 from an untrained 0.2004, against 1.0827 from an
+      untrained 5.0689. A satisfied margin contributes exactly zero, so an easy negative
+      drives triplet's loss toward nothing while teaching the towers nothing. Never rank
+      checkpoints on a loss compared across objectives. Same lesson as captioning's, from
+      the opposite direction.
+
+      **Pairwise accuracy nearly hid the whole effect**: 0.9470 against 0.9037, on a metric
+      whose chance is 0.5. Recall@K against a fixed pool is what separated them, which is
+      why the harness builds a 5,000-document pool with exactly one right answer per query.
+
+      Three artifacts that have to ship together were not: the vocabulary, the CBOW
+      embedding matrix and the towers. The tokenizer and tokenize stages wrote their
+      outputs locally and uploaded nothing, so a rebuild left the Hub holding a 63,642-row
+      CBOW checkpoint beside a 7,692-word vocabulary. Both stages publish now. The tower
+      half of that mismatch is an honest 503; the *triples* half is worse and has no
+      symptom at all -- stale ids index documents against a vocabulary the towers never
+      saw, and nothing errors.
 - [ ] `rlhf-ppo` -- the mechanics are verified and tested, but the service reports no
       result: its own TL;DR says "what I'd do next: run a real multi-epoch PPO loop and
       measure reward before/after". That before/after mean reward *is* the missing number,
