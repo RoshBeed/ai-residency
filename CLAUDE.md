@@ -472,6 +472,18 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
   does -- and it validates the value against the allowed set while it is there. Before that, a
   `Literal` field silently could not be set from the environment, which excluded it from every
   sweep.
+- **An unqualified Hub dataset name no longer resolves.** `load_dataset("ms_marco")` had
+  worked for as long as the Hub accepted bare names; current `huggingface_hub` refuses with
+  `Repository id must be 'namespace/name'`, which killed every `vector-search-retrieval`
+  stage that reads the corpus. It is `microsoft/ms_marco` now, named once in `Config` rather
+  than in each of three modules. Any other bare name in this repo is a latent version of the
+  same break.
+- **`tar -t` on macOS hides what Python's `tarfile` sees.** A tarball built with bsdtar from
+  a directory with extended attributes carries one `._name` AppleDouble member per file, and
+  `tar -tzf` does not list them -- it folds them back into metadata -- so a listing looks
+  clean while `tarfile` iterates twice the members. The first CREMA-D mirror shipped 7,442 of
+  them. Build published archives with `COPYFILE_DISABLE=1 tar --exclude='._*'`, and count
+  members with Python rather than with `tar -t`.
 - **`.python-version` pins 3.11.** Without it uv picks per-host and mypy rejects numpy's stubs.
 - **buildx resolves a base-image tag against the registry, not the local store.** `make base`
   followed by `make build SERVICE=x` silently built against the *published* base until the Makefile
