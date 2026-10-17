@@ -501,6 +501,14 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
   run. `vit-classifier` uses `classifier_epochs`, so it needs `AI_RESIDENCY_CLASSIFIER_EPOCHS`.
 - **Docker Desktop's VM goes read-only when the host disk fills**, and stays read-only until the VM
   itself restarts — quitting the app is not enough unless `com.docker.virtualization` actually exits.
+- **Homebrew's `node` is currently broken on this machine, which blocks Mermaid validation.**
+  `node` aborts before running anything: `Library not loaded:
+  /opt/homebrew/opt/simdutf/lib/libsimdutf.36.dylib` (and the same for `libsimdjson.33`). The
+  Cellar has simdutf 37, so a dependency upgrade moved out from under the installed node
+  binary. `npx @mermaid-js/mermaid-cli` therefore cannot run at all, and the writing
+  convention above depends on it -- so do not add a Mermaid block while this is broken, because
+  it cannot be validated. `brew reinstall node` is the fix; it is a toolchain change rather than
+  a repo one.
 
 ## Writing conventions
 
