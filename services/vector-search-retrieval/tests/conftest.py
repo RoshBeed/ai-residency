@@ -16,7 +16,23 @@ from ai_residency_common import save_checkpoint
 from cbow.model import build_cbow
 from config import Config
 
-VOCABULARY = ["<PAD>", "reagan", "democrat", "was", "a", "party", "rust", "nails", "shower"]
+VOCABULARY = [
+    "<PAD>",
+    "reagan",
+    "democrat",
+    "was",
+    "a",
+    "party",
+    "rust",
+    "nails",
+    "shower",
+    "bread",
+    "yeast",
+    "oven",
+    "comet",
+    "orbit",
+    "ice",
+]
 
 
 @pytest.fixture
@@ -74,27 +90,63 @@ def cbow_checkpoint(config: Config, vocabulary: dict[str, int]) -> Path:
     return path
 
 
-def _triple(query: list[int], positive: list[int], negative: list[int]) -> dict[str, object]:
-    """Build one tokenized triple in the shape `tokenize_triples` writes."""
+# Four distinct topics, so that a batch of these has something to tell apart. Under the
+# in-batch objective a batch of identical pairs is degenerate: every document is the
+# correct answer to every query, and cross-entropy sits at log(batch) by construction
+# however well the towers train. The earlier fixture repeated one triple six times,
+# which was fine for a triplet margin and measured nothing at all for this loss.
+TOPICS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("was", "reagan", "a", "democrat"), ("reagan", "was", "a", "democrat", "party")),
+    (("rust", "nails"), ("rust", "nails", "shower")),
+    (("bread", "yeast"), ("bread", "yeast", "oven")),
+    (("comet", "orbit"), ("comet", "orbit", "ice")),
+)
+
+
+def _triple(
+    query: list[int],
+    positive: list[int],
+    negative: list[int],
+    *,
+    query_text: str = "was reagan a democrat",
+    positive_text: str = "reagan was a democrat before switching party",
+    negative_text: str = "rust forms on nails left in a wet shower",
+) -> dict[str, object]:
+    """Build one tokenized triple in the shape `tokenize_triples` writes.
+
+    The text fields are not decoration: the evaluator deduplicates the document pool by
+    `positive_document`, so triples sharing one string collapse to a single document to
+    rank against.
+    """
     return {
         "query_tokens": query,
         "positive_document_tokens": positive,
         "negative_document_tokens": negative,
-        "query": "was reagan a democrat",
-        "positive_document": "reagan was a democrat before switching party",
-        "negative_document": "rust forms on nails left in a wet shower",
+        "query": query_text,
+        "positive_document": positive_text,
+        "negative_document": negative_text,
     }
 
 
 @pytest.fixture
 def triples(config: Config, vocabulary: dict[str, int]) -> Iterator[Path]:
     """Write a small set of tokenized triples across all three splits."""
-    positive = [vocabulary[word] for word in ("reagan", "was", "a", "democrat", "party")]
-    negative = [vocabulary[word] for word in ("rust", "nails", "shower")]
-    query = [vocabulary[word] for word in ("was", "reagan", "a", "democrat")]
 
-    data = {split: [_triple(query, positive, negative)] * 6 for split in ("train", "validation")}
-    data["test"] = [_triple(query, negative, positive)]
+    def build(index: int) -> dict[str, object]:
+        query_words, positive_words = TOPICS[index % len(TOPICS)]
+        # The negative is another topic's document, so it is wrong but not nonsense.
+        _, negative_words = TOPICS[(index + 1) % len(TOPICS)]
+        return _triple(
+            [vocabulary[word] for word in query_words],
+            [vocabulary[word] for word in positive_words],
+            [vocabulary[word] for word in negative_words],
+            query_text=" ".join(query_words),
+            positive_text=" ".join(positive_words),
+            negative_text=" ".join(negative_words),
+        )
+
+    data = {split: [build(index) for index in range(6)] for split in ("train", "validation")}
+    data["test"] = [build(0)]
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     with config.tokenized_triples_path.open("w") as handle:

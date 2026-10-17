@@ -21,6 +21,7 @@ configure the same object.
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 
@@ -40,10 +41,21 @@ class Config(BaseConfig):
     Attributes:
         learning_rate: Adam learning rate for the GRU towers.
         num_epochs: Passes over the training triples.
-        batch_size: Triples per optimizer step. This is 1 because the towers consume
-            one variable-length token list at a time; it is not a tuning knob so much
-            as a statement of how the model is written.
-        margin: Triplet-loss margin the positive must beat the negative by.
+        batch_size: Triples per optimizer step. Under `in_batch` this is also how
+            many negatives each query is scored against, so it is a property of the
+            objective rather than only a throughput knob.
+        loss: `in_batch` scores every query against every other document in the batch;
+            `triplet` scores it against the one sampled negative in its own triple.
+        temperature: Softmax temperature for the `in_batch` loss. Cosine similarities
+            live in [-1, 1], so without dividing by something small the logits are too
+            flat for cross-entropy to separate them.
+        margin: Triplet-loss margin the positive must beat the negative by. Unused
+            under `in_batch`.
+        recall_at_k: K for the recall@K the evaluator reports.
+        document_pool_size: Documents a held-out query is ranked against. Recall@K is
+            meaningless without it: against 10 documents it is nearly free, against
+            5,000 it is not.
+        early_stopping_patience: Epochs without a new best before training stops.
         embedding_dim: Width of the CBOW word embeddings the towers sit on.
         hidden_size: Width of each tower's GRU hidden state, and therefore of the
             vectors stored in the Redis index.
@@ -71,10 +83,18 @@ class Config(BaseConfig):
     # what `config/sweep.yaml` sweeps over.
     learning_rate: float = 0.001
     num_epochs: int = 10
-    batch_size: int = 1
+    batch_size: int = 64
+    loss: Literal["in_batch", "triplet"] = "in_batch"
+    temperature: float = 0.05
     margin: float = 0.2
     embedding_dim: int = 128
     hidden_size: int = 128
+    early_stopping_patience: int = 3
+
+    # Evaluation. 5,000 documents is the pool the published comparison used, which is
+    # what makes its 0.0020 chance recall@10 the right floor to read these against.
+    recall_at_k: int = 10
+    document_pool_size: int = 5000
 
     # CBOW word embeddings.
     min_word_count: int = 5
@@ -101,6 +121,13 @@ class Config(BaseConfig):
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+
+    # MS MARCO's canonical home. The bare name `ms_marco` worked for as long as the Hub
+    # resolved unqualified dataset names; current huggingface_hub rejects it outright
+    # ("Repository id must be 'namespace/name'"), which broke every stage that reads the
+    # corpus. Named once here rather than in each of the three data-prep modules.
+    source_dataset_repo_id: str = "microsoft/ms_marco"
+    source_dataset_config: str = "v1.1"
 
     hf_repo_id: str | None = "roshbeed/ai-residency-vector-search-retrieval"
     # The tokenizer vocabulary, the CBOW corpus and the tokenized triples. All are

@@ -41,7 +41,7 @@ def extract_queries_and_documents(config: Config) -> dict[str, list[ExtractedQue
         The extracted data, keyed by split.
     """
     logger.info("Loading MS MARCO")
-    dataset = load_dataset("ms_marco", "v1.1")
+    dataset = load_dataset(config.source_dataset_repo_id, config.source_dataset_config)
 
     extracted: dict[str, list[ExtractedQuery]] = {split: [] for split in SPLITS}
     for split in SPLITS:

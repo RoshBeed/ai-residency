@@ -19,7 +19,7 @@ cosine similarity between their outputs to mean anything.
 import torch
 from torch import nn
 
-__all__ = ["GruTower", "encode"]
+__all__ = ["GruTower", "encode", "encode_batch"]
 
 
 class GruTower(nn.Module):
@@ -81,3 +81,35 @@ def encode(tower: GruTower, token_ids: list[int]) -> torch.Tensor | None:
     tokens = torch.tensor(token_ids, dtype=torch.long).unsqueeze(0)
     encoding: torch.Tensor = tower(tokens)
     return encoding
+
+
+def encode_batch(tower: GruTower, batch: list[list[int]]) -> torch.Tensor:
+    """Encode several token sequences at once.
+
+    The sequences have different lengths, so they are padded to the longest and then
+    packed. Packing is not an optimization here, it is the correctness requirement: a
+    GRU run over a padded batch returns the hidden state after the *padding*, so every
+    short sequence in the batch would be encoded as whatever the pad token drives the
+    state to. `pack_padded_sequence` makes the GRU stop each row at its real length.
+
+    Args:
+        tower: Tower to encode with.
+        batch: Token id lists, none of them empty. Callers drop empty sequences before
+            batching, the same rule `encode` applies one at a time.
+
+    Returns:
+        Encodings of shape `(batch, hidden_size)`, in the order given.
+    """
+    lengths = torch.tensor([len(tokens) for tokens in batch], dtype=torch.long)
+    width = int(lengths.max())
+    padded = torch.zeros(len(batch), width, dtype=torch.long)
+    for row, tokens in enumerate(batch):
+        padded[row, : len(tokens)] = torch.tensor(tokens, dtype=torch.long)
+
+    embeddings = tower.embedding(padded)
+    packed = nn.utils.rnn.pack_padded_sequence(
+        embeddings, lengths, batch_first=True, enforce_sorted=False
+    )
+    _, hidden = tower.rnn(packed)
+    encodings: torch.Tensor = hidden.squeeze(0)
+    return encodings

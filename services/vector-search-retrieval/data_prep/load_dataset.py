@@ -5,6 +5,7 @@ before spending time on the stages that consume it.
 """
 
 from ai_residency_common import get_logger
+from config import Config
 from data_prep.generate_triples import SPLITS
 from datasets import load_dataset
 
@@ -13,10 +14,14 @@ __all__ = ["describe_dataset", "main"]
 logger = get_logger(__name__)
 
 
-def describe_dataset() -> None:
-    """Log split sizes, average lengths and a sample query per split."""
+def describe_dataset(config: Config) -> None:
+    """Log split sizes, average lengths and a sample query per split.
+
+    Args:
+        config: Supplies the source dataset to read.
+    """
     logger.info("Loading MS MARCO")
-    dataset = load_dataset("ms_marco", "v1.1")
+    dataset = load_dataset(config.source_dataset_repo_id, config.source_dataset_config)
 
     for split in SPLITS:
         split_data = dataset[split]
@@ -44,7 +49,7 @@ def describe_dataset() -> None:
 
 def main() -> None:
     """Entry point for the dataset inspection script."""
-    describe_dataset()
+    describe_dataset(Config())
 
 
 if __name__ == "__main__":

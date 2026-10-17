@@ -7,7 +7,9 @@ number has to describe the checkpoint on disk.
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import torch
@@ -176,11 +178,24 @@ def test_reported_accuracy_describes_the_saved_checkpoint(
     assert accuracy == result.trained_accuracy
 
 
-def test_training_reduces_the_triplet_loss(
-    config: Config, cbow_checkpoint: Path, triples: Path
+@pytest.mark.parametrize("loss", ["triplet", "in_batch"])
+def test_training_beats_each_objective_s_own_floor(
+    config: Config, cbow_checkpoint: Path, triples: Path, loss: Literal["in_batch", "triplet"]
 ) -> None:
-    result = train(config)
-    assert result.best_loss < config.margin
+    """Both objectives must beat the loss their own untrained towers score.
+
+    The two losses are not on one scale, and no constant works for both: a triplet
+    hinge is bounded by `margin`, while in-batch cross-entropy has no fixed range at
+    all. log(batch) is not its floor either -- that is a *uniform* predictor, and an
+    untrained model at this temperature is confidently wrong rather than uniform, so
+    it scores worse. The untrained run is the only honest reference.
+    """
+    result = train(replace(config, loss=loss))
+    assert result.best_loss < result.baseline_loss
+    if loss == "triplet":
+        # A hinge is zero once the margin is satisfied, so the margin is also the score
+        # of a model that has learned the ordering. Cross-entropy has no such point.
+        assert result.best_loss < config.margin
 
 
 # --- Search-result parsing ---------------------------------------------------------
@@ -312,7 +327,9 @@ def test_documents_are_deduplicated_by_token_sequence(
     total = sum(len(split) for split in raw.values())
 
     documents = unique_documents(config)
-    assert len(documents) == 2
+    # Four distinct passages across thirteen triples, each appearing as some queries'
+    # positive and others' negative.
+    assert len(documents) == 4
     assert len(documents) < total
 
 

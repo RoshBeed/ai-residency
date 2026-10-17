@@ -35,7 +35,7 @@ def generate_triples(config: Config) -> dict[str, list[dict[str, str]]]:
     """
     set_seed(config.seed)
     logger.info("Loading MS MARCO")
-    dataset = load_dataset("ms_marco", "v1.1")
+    dataset = load_dataset(config.source_dataset_repo_id, config.source_dataset_config)
 
     triples: dict[str, list[dict[str, str]]] = {split: [] for split in SPLITS}
     for split in SPLITS:
