@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: download-data prepare-data add-tokens train serve test help
 
-download-data:  ## Fetch the raw corpora (EmoDB downloads; CREMA-D is a slow git-lfs clone)
+download-data:  ## Fetch the raw corpora (CREMA-D from the project's mirror, EmoDB zip)
 	uv run python -m data_prep.download_dataset
 
 prepare-data:  ## Organize by emotion, split train/val, write manifests, then explore

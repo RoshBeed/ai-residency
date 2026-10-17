@@ -26,7 +26,7 @@ make serve SERVICE=speech-emotion-recognition
 Training needs the corpora and the extended tokenizer first:
 
 ```bash
-make -C services/speech-emotion-recognition download-data   # EmoDB downloads; CREMA-D is a slow clone
+make -C services/speech-emotion-recognition download-data   # CREMA-D, ~20s
 make -C services/speech-emotion-recognition prepare-data    # organize, split, manifest, explore
 make -C services/speech-emotion-recognition add-tokens      # extend the Whisper tokenizer
 make train SERVICE=speech-emotion-recognition
@@ -59,7 +59,7 @@ corpus a clip came from.
 ```mermaid
 flowchart TD
     subgraph prep["Data pipeline (offline, run once)"]
-        dl["data_prep/download_dataset.py<br/>EmoDB zip, CREMA-D git-lfs"]
+        dl["data_prep/download_dataset.py<br/>CREMA-D tarball, EmoDB zip"]
         org["data_prep/prepare_dataset.py<br/>reorganize by emotion, split train/val"]
         man["data_prep/create_manifest.py<br/>audio_path,label CSVs"]
         eda["data_prep/explore_data.py<br/>duration and class balance"]
@@ -145,20 +145,20 @@ becomes the token sequence `[50258, 50259, 50359, 50363, 15947, 11, 452, 1315, 3
 
 ### 3.3 The Data Pipeline
 
-The larger goal is teaching Whisper to output an emotion tag alongside the transcript, by adding
-special tokens like `<emotion_happy>` to the tokenizer and training on labelled emotional speech.
-This part of the repo builds everything up to (but not including) that training run:
+The goal is teaching Whisper to output an emotion tag alongside the transcript, by adding special
+tokens like `<emotion_happy>` to the tokenizer and training on labelled emotional speech. This is
+the data path feeding that training run:
 
-**Figure 6.** The emotion data pipeline, and where it actually got to.
+**Figure 6.** The emotion data pipeline.
 ```mermaid
 flowchart TD
     subgraph Sources["Dataset sources"]
-        crema[("CREMA-D<br/>never actually downloaded —<br/>git-lfs clone not run")]
-        emodb[("EmoDB<br/>535 clips, 7 emotions<br/>— downloaded and organized")]
+        crema[("CREMA-D<br/>7,441 clips, 6 emotions, English<br/>— what the checkpoint is trained on")]
+        emodb[("EmoDB<br/>535 clips, 7 emotions, German<br/>— configured, not used by default")]
         ravdess[("RAVDESS<br/>scaffolded only — requires manual registration")]
     end
 
-    crema -.-> download["data_prep/download_dataset.py"]
+    crema --> download["data_prep/download_dataset.py"]
     emodb --> download
 
     download --> organize["data_prep/prepare_dataset.py<br/>parse filenames -> organize by emotion label"]
@@ -167,16 +167,23 @@ flowchart TD
 
     split --> explore["data_prep/explore_data.py<br/>stats read from each corpus's own metadata"]
 
-    tokenizer["openai/whisper-small tokenizer"] --> addtok["speech_emotion_recognition/add_emotion_tokens.py<br/>+ emotion_happy, emotion_sad, ...<br/>as special tokens"]
+    tokenizer["openai/whisper-tiny tokenizer"] --> addtok["speech_emotion_recognition/add_emotion_tokens.py<br/>+ emotion_happy, emotion_sad, ...<br/>as special tokens"]
     addtok --> saved[("checkpoints/whisper_tokenizer_emotion/<br/>saved tokenizer")]
 
     style Sources fill:#e1f5fe,stroke:#01579b
 ```
 
-CREMA-D (7,442 clips) needs a `git lfs clone` of a multi-gigabyte GitHub repo; EmoDB (535 clips) is
-a single ~40MB zip and downloads in seconds. Every stage in this pipeline loops over whichever
-configured datasets are present on disk, so pointing it at CREMA-D or RAVDESS instead needs no code
-changes. Section 6 runs the real pipeline end to end on EmoDB.
+CREMA-D's own repository puts its audio behind a multi-gigabyte `git lfs clone`, alongside video
+and perceptual ratings this service never reads. `download-data` fetches the audio from
+[a mirror under this project's account](https://huggingface.co/datasets/roshbeed/ai-residency-speech-emotion-recognition-data)
+instead — one 473MB tarball, no git-lfs and no account, about 20 seconds. That follows the same
+rule as the text8 corpus: a published dataset the pipeline depends on should not be reachable only
+through infrastructure outside this project. The mirror is the audio half only, redistributed
+under CREMA-D's own ODbL licence, and its clips are byte-identical to the ones the shipped
+checkpoint was trained on.
+
+EmoDB (535 clips) is a single ~40MB zip. Every stage loops over whichever configured datasets are
+present on disk, so switching corpora needs no code changes — `AI_RESIDENCY_DATASET_KEYS` picks.
 
 
 ### 3.4 Training Target
@@ -228,7 +235,7 @@ function that loads either one, so they cannot drift apart.
 ## 5. Usage
 
 ```bash
-# 1. Fetch the corpora. EmoDB is a ~40MB zip; CREMA-D is a multi-gigabyte git-lfs clone.
+# 1. Fetch the corpora. CREMA-D is a 473MB tarball; EmoDB a ~40MB zip.
 make -C services/speech-emotion-recognition download-data
 
 # 2. Reorganize by emotion, split train/val, write manifests, profile the audio.

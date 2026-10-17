@@ -6,8 +6,11 @@ the reason this stage exists as its own step:
 - **EmoDB** downloads directly as a ~40MB zip with no authentication. It is the only
   one that reliably lands on a fresh machine, and it is what every artifact in this
   repo was actually produced from.
-- **CREMA-D** needs a multi-gigabyte `git lfs clone`. It works, but it is slow enough
-  that nothing downstream should assume it is present.
+- **CREMA-D** is what the shipped checkpoint was trained on. Its own repository holds
+  video, audio and perceptual ratings behind a multi-gigabyte `git lfs clone`, so this
+  fetches the audio from the project's own mirror instead: one 473MB tarball, no git-lfs,
+  no account. Mirroring it is the same call made for text8 — a published corpus the
+  pipeline must not depend on someone else's infrastructure to reach.
 - **RAVDESS** needs registration, so this only creates the directory shape and points
   at the download page. It cannot fetch the audio.
 
@@ -16,12 +19,14 @@ running this stage is optional.
 """
 
 import json
+import re
 import shutil
-import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
 import requests
+from huggingface_hub import hf_hub_download
 
 from ai_residency_common import get_logger
 from config import Config
@@ -37,7 +42,13 @@ __all__ = [
 logger = get_logger(__name__)
 
 EMODB_URL = "http://emodb.bilderbar.info/download/download.zip"
-CREMA_D_REPO = "https://github.com/CheyneyComputerScience/CREMA-D.git"
+# CREMA-D's own repository carries video, audio and perceptual ratings, and needs a
+# multi-gigabyte `git lfs clone` to get at the WAVs. This mirror is the audio only,
+# as one tarball, under the same ODbL licence. See the dataset card for attribution.
+CREMA_D_MIRROR = "roshbeed/ai-residency-speech-emotion-recognition-data"
+CREMA_D_ARCHIVE = "crema_d.tar.gz"
+CREMA_D_SOURCE = "https://github.com/CheyneyComputerScience/CREMA-D"
+CREMA_D_CLIP = re.compile(r"^\d{4}_[A-Z]{3}_[A-Z]{3}_[A-Z]{2}\.wav$")
 RAVDESS_URL = "https://zenodo.org/record/1188976"
 
 RAVDESS_EMOTIONS = (
@@ -102,40 +113,53 @@ def setup_ravdess(config: Config) -> Path:
 
 
 def setup_crema_d(config: Config) -> Path | None:
-    """Clone CREMA-D via git-lfs.
+    """Fetch CREMA-D's audio from the project's own mirror.
 
     Args:
-        config: Supplies the dataset root.
+        config: Supplies the dataset root and the mirror's repo id.
 
     Returns:
-        The cloned directory, or None if git-lfs is unavailable or the clone failed.
+        The directory holding the WAVs, or None if the download failed.
     """
     dataset_dir = config.datasets_dir / "crema_d"
+    audio_dir = dataset_dir / "AudioWAV"
 
+    if audio_dir.exists() and any(audio_dir.glob("*.wav")):
+        logger.info("CREMA-D already present at %s", audio_dir)
+        return dataset_dir
+
+    logger.info("Downloading CREMA-D audio from %s (473MB)", CREMA_D_MIRROR)
     try:
-        subprocess.run(["git", "lfs", "version"], check=True, capture_output=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.error("git-lfs is not installed. Install it with: brew install git-lfs")
+        tar_path = hf_hub_download(
+            CREMA_D_MIRROR, CREMA_D_ARCHIVE, repo_type="dataset", local_dir=str(dataset_dir)
+        )
+    except Exception as error:
+        # Downstream stages treat a missing corpus as a skip, so a failure here must not
+        # take the whole download stage down with it.
+        logger.error("Failed to download CREMA-D: %s", error)
         return None
 
-    if dataset_dir.exists():
-        shutil.rmtree(dataset_dir)
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    kept = skipped = 0
+    with tarfile.open(tar_path) as archive:
+        for member in archive:
+            # Extract by basename against CREMA-D's own naming, and only plain files.
+            # A tarball is attacker-controlled input in general: this drops directory
+            # entries, links, and any path that would escape `audio_dir`.
+            name = Path(member.name).name
+            if not member.isfile() or not CREMA_D_CLIP.match(name):
+                skipped += 1
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                skipped += 1
+                continue
+            with open(audio_dir / name, "wb") as target:
+                shutil.copyfileobj(source, target)
+            kept += 1
 
-    logger.info("Cloning CREMA-D (multi-gigabyte git-lfs clone, this is slow)")
-    try:
-        subprocess.run(["git", "lfs", "clone", CREMA_D_REPO, str(dataset_dir)], check=True)
-    except subprocess.CalledProcessError as error:
-        logger.error("Failed to clone CREMA-D: %s", error)
-        return None
-
-    # The repo nests everything one level deeper than the paths downstream expect.
-    nested = dataset_dir / "CREMA-D"
-    if nested.exists():
-        for item in nested.iterdir():
-            shutil.move(str(item), str(dataset_dir))
-        nested.rmdir()
-
-    logger.info("CREMA-D ready at %s", dataset_dir)
+    Path(tar_path).unlink(missing_ok=True)
+    logger.info("CREMA-D ready at %s: %d clips (%d members skipped)", audio_dir, kept, skipped)
     return dataset_dir
 
 
