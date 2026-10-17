@@ -551,7 +551,7 @@ much of the captioning gap more data actually closes.
 CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
 publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
 Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
-Security, which a private repo does not have). 380 tests.
+Security, which a private repo does not have). 420 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
