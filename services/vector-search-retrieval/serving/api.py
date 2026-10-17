@@ -106,6 +106,15 @@ def ensure_loaded() -> bool:
     except FileNotFoundError as error:
         logger.warning("Model not ready, will retry: %s", error)
         return False
+    except RuntimeError as error:
+        # A tower checkpoint carries the frozen embedding matrix, so it is only loadable
+        # against the vocabulary that produced it. Rebuild the vocabulary without
+        # retraining the towers and `load_state_dict` raises a size mismatch -- an
+        # unusable checkpoint, which is a not-ready condition, not a reason to take the
+        # process down on startup. Logged with the shapes, because the message is the
+        # only thing that says the two artifacts are from different runs.
+        logger.error("Checkpoint does not fit this vocabulary, /query will 503: %s", error)
+        return False
     return query_engine.query_tower_source != "none"
 
 
@@ -152,6 +161,10 @@ def query(request: QueryRequest) -> QueryResponse:
         embedding = embed_query(request.text)
         raw_results = run_query(request.text, top_k=request.top_k)
     except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail=f"Model not ready: {error}") from error
+    except RuntimeError as error:
+        # A checkpoint that does not fit the current vocabulary is unusable in the same
+        # way a missing one is, and must answer the same 503 rather than a 500.
         raise HTTPException(status_code=503, detail=f"Model not ready: {error}") from error
     except redis.exceptions.RedisError as error:
         raise HTTPException(status_code=503, detail=f"Redis unreachable: {error}") from error
