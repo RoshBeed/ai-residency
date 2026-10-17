@@ -5,7 +5,8 @@
 - **What it is:** Whisper-tiny fine-tuned on one clip, live, so the effect of a handful of
   gradient steps is visible rather than statistical.
 - **Result:** `"My name is Roosh."` becomes `"My name is Rosh"` — a name the base model
-  consistently mishears, corrected in five steps.
+  consistently mishears, corrected in one gradient step, and word error rate on twelve
+  held-out sentences of other speech does not move (0.1642 before, 0.1642 after).
 
 Fine-tuning is usually reported as a number moving on a held-out set, which is honest and
 completely opaque. One example makes the mechanism visible instead: the base model mishears a
@@ -220,6 +221,36 @@ The base model mishears the uncommon name as "Roosh"; one Adam step (`lr=1e-4`) 
 **2.882 → 1.574** and corrects it to "Rosh." Whisper-tiny has no dropout anywhere in its
 architecture, so the forward/backward pass is deterministic given fixed weights and input — this
 result reproduces byte-for-byte on rerun.
+
+### What the step costs everywhere else
+
+A demo that memorizes one clip owes an answer about the other speech. `make collateral`
+transcribes twelve sentences the model never trained on, before and after the step, and
+reports word error rate against the base model as the baseline.
+
+The clips are CREMA-D, chosen because the corpus is twelve fixed sentences read by 91
+actors with the sentence encoded in every filename, so a known reference comes free. One
+neutral-emotion clip per sentence, lowest actor id, so the set is the same every run.
+
+| | WER over 12 held-out sentences | sentences altered |
+|---|--:|--:|
+| Whisper-tiny, base weights | 0.1642 | — |
+| after 1 step (what ships) | **0.1642** | 0/12 |
+| after 5 steps | 0.2687 | 4/12 |
+
+**One step is free, and the step count is the whole difference.** At `num_epochs=1` the
+demo clip is corrected and not one of the twelve held-out transcripts changes by a single
+word. Five steps corrects the same clip and costs 64% relative WER: "The airplane is
+almost full" becomes "The airplay is almost full", and "Don't forget a jacket" collapses
+to "Go for it".
+
+That is overfitting arriving on schedule, and it is the reason the shipped configuration
+takes one step rather than a handful. The loss falling to near zero on a single example is
+the thing to be suspicious of, not the thing to run further.
+
+Word error rate here is computed on normalised words, punctuation dropped. The target text
+has no final period, so after the step the model stops emitting one and every raw
+transcript differs while no word does — counting that would report damage that isn't there.
 
 **Figure 8.** The Streamlit UI (now in `services/frontend`).
 ![Whisper fine-tuning Streamlit UI](assets/streamlit_ui.png)

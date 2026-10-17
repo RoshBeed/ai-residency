@@ -112,3 +112,35 @@ def test_undecodable_audio_is_422_not_500() -> None:
     for name, payload in payloads.items():
         response = client.post("/transcribe", json={"audio_data": payload})
         assert response.status_code == 422, f"{name} gave {response.status_code}"
+
+
+def test_word_error_rate_ignores_the_punctuation_the_step_removes() -> None:
+    """The fine-tuning target has no final period, so after the step the model stops
+    emitting one. Every raw transcript differs while no word does, and counting that
+    would report damage where there is none -- which is the whole claim §6 makes about
+    one step being free.
+    """
+    from whisper_fine_tuning.collateral import word_errors
+
+    assert word_errors("Don't forget a jacket", "Don't forget a jacket.") == (0, 4)
+    assert word_errors("The surface is slick", "the Surface IS slick!") == (0, 4)
+
+
+def test_word_error_rate_counts_real_substitutions() -> None:
+    """The counterweight is only worth reporting if it can see damage when it is there.
+
+    These are the two substitutions five steps actually produced on held-out clips.
+    """
+    from whisper_fine_tuning.collateral import word_errors
+
+    assert word_errors("The airplane is almost full", "The airplay is almost full") == (1, 5)
+    assert word_errors("Don't forget a jacket", "Go for it") == (4, 4)
+
+
+def test_every_crema_d_sentence_has_a_reference() -> None:
+    """CREMA-D is twelve sentences; a missing one silently shrinks the held-out set."""
+    from whisper_fine_tuning.collateral import SENTENCES
+
+    assert len(SENTENCES) == 12
+    assert all(len(code) == 3 and code.isupper() for code in SENTENCES)
+    assert all(text and text[0].isupper() for text in SENTENCES.values())
