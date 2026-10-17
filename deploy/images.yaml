@@ -21,7 +21,7 @@ backends:
   vit-seq2seq:
     digest: sha256:b217728610e647bf2c7747654ff62ec900fcf066f18a7498fd2528cab834d129
   multimodal-captioning:
-    digest: sha256:d8f1a46e84e3ae7a147459ed7a012d46d6ee07082fc3b61c31ffcd8a63844154
+    digest: sha256:b253846dcf9a4efa66a3d47362c098473a53cafc5c4f1280c2b58f789c12f098
   whisper-fine-tuning:
     digest: sha256:42adfe1c0432d685edde975627eb38ab182179fa8055fda938a8e0a29aab330c
   speech-emotion-recognition:
