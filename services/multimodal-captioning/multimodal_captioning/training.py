@@ -33,6 +33,7 @@ from ai_residency_common import (
     get_device,
     get_logger,
     init_tracking,
+    load_checkpoint,
     log_metrics,
     push_checkpoint,
     save_checkpoint,
@@ -48,6 +49,7 @@ from multimodal_captioning.data import (
 from multimodal_captioning.models import (
     Backbones,
     build_adapter,
+    image_soft_tokens,
     load_backbones,
 )
 
@@ -83,23 +85,23 @@ def caption_loss(
     attention_mask = tokenized["attention_mask"].to(device)
     batch_size, seq_length = input_ids.shape
 
-    with torch.no_grad():
-        image_features = backbones.vision_encoder(**image_inputs).pooler_output
-        image_features_proj = backbones.clip_model.visual_projection(image_features)
-
-    image_latent = adapter(image_features_proj).unsqueeze(1)
+    image_latent = image_soft_tokens(adapter, backbones, image_inputs)
+    image_tokens = image_latent.shape[1]
 
     with torch.no_grad():
         text_embeddings = backbones.qwen_model.model.embed_tokens(input_ids)
 
     full_embeddings = torch.cat([image_latent, text_embeddings], dim=1)
 
-    # -100 at position 0 keeps the image's soft token out of the loss: it has no target
-    # token, only the caption that follows it does.
-    labels = torch.full((batch_size, seq_length + 1), -100, dtype=torch.long, device=device)
-    labels[:, 1:] = input_ids
+    # -100 across the image positions keeps the soft tokens out of the loss: they have
+    # no target tokens, only the caption that follows them does. Widened from a single
+    # position when the image became a patch sequence rather than one pooled vector.
+    labels = torch.full(
+        (batch_size, seq_length + image_tokens), -100, dtype=torch.long, device=device
+    )
+    labels[:, image_tokens:] = input_ids
 
-    image_mask = torch.ones((batch_size, 1), dtype=torch.long, device=device)
+    image_mask = torch.ones((batch_size, image_tokens), dtype=torch.long, device=device)
     outputs = backbones.qwen_model(
         inputs_embeds=full_embeddings,
         labels=labels,
@@ -205,8 +207,55 @@ def train(config: Config) -> float:
         config={"baseline_loss": baseline_loss, **vars(config)},
     )
 
+    # Resume state, so a run that dies overnight loses at most one epoch rather than
+    # all of them. The best-checkpoint save below is for serving and only fires on an
+    # improvement; this one fires every epoch and carries the optimizer, so AdamW's
+    # moments survive too -- restarting without them is not the same run continued.
+    resume_path = config.checkpoint_path.with_name(
+        f"{config.checkpoint_path.stem}_resume{config.checkpoint_path.suffix}"
+    )
+    # What makes two runs the same run. Resuming across a different corpus size or a
+    # different adapter shape would silently average two experiments together.
+    fingerprint = {
+        "clip_dim": backbones.clip_dim,
+        "qwen_dim": backbones.qwen_dim,
+        "final_layer_norm": config.final_layer_norm,
+        "num_samples": config.num_samples,
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate,
+    }
+
     best_loss = float("inf")
-    for epoch in range(1, config.num_epochs + 1):
+    start_epoch = 1
+    if resume_path.exists():
+        # Read the payload before loading anything into the adapter: a mismatch has to
+        # leave the freshly built adapter untouched, not half-overwritten.
+        peek = load_checkpoint(resume_path, map_location=str(device))
+        saved = peek.get("extra") or {}
+        if saved.get("fingerprint") == fingerprint:
+            load_checkpoint(resume_path, adapter, optimizer=optimizer, map_location=str(device))
+            start_epoch = int(peek.get("epoch", 0)) + 1
+            best_loss = float(saved.get("best_loss", float("inf")))
+            logger.info(
+                "Resuming from %s: starting at epoch %d, best held-out loss so far %.4f",
+                resume_path,
+                start_epoch,
+                best_loss,
+            )
+        else:
+            logger.warning(
+                "Ignoring %s: it was written by a run with different settings (%s vs %s). "
+                "Starting from scratch.",
+                resume_path,
+                saved.get("fingerprint"),
+                fingerprint,
+            )
+    if start_epoch > config.num_epochs:
+        logger.info("Already at epoch %d of %d; nothing to do.", start_epoch - 1, config.num_epochs)
+        finish_tracking()
+        return best_loss
+
+    for epoch in range(start_epoch, config.num_epochs + 1):
         adapter.train()
         epoch_loss = 0.0
         examples_seen = 0
@@ -253,6 +302,18 @@ def train(config: Config) -> float:
             # improvement would dominate the run.
             if config.hf_repo_id is not None:
                 push_checkpoint(config.hf_repo_id, config.checkpoint_path)
+
+        # Every epoch, improvement or not. The best checkpoint above is what gets
+        # served; this is what lets the run continue, so it has to record the epoch
+        # that finished even when that epoch was worse.
+        save_checkpoint(
+            resume_path,
+            adapter,
+            optimizer=optimizer,
+            epoch=epoch,
+            metrics={"val_loss": val_loss, "baseline_loss": baseline_loss},
+            extra={"fingerprint": fingerprint, "best_loss": best_loss},
+        )
 
     finish_tracking()
     logger.info(

@@ -27,6 +27,7 @@ from ai_residency_common import get_logger
 from config import Config
 from multimodal_captioning.models import (
     Backbones,
+    image_soft_tokens,
     load_adapter,
     load_backbones,
 )
@@ -96,9 +97,7 @@ def caption_image(
     image_inputs = {key: value.to(device) for key, value in processed.items()}
 
     with torch.no_grad():
-        image_features = backbones.vision_encoder(**image_inputs).pooler_output
-        image_features_proj = backbones.clip_model.visual_projection(image_features)
-        image_latent = adapter(image_features_proj).unsqueeze(1)
+        image_latent = image_soft_tokens(adapter, backbones, image_inputs)
 
         input_ids = backbones.qwen_tokenizer(prompt, return_tensors="pt").input_ids.to(device)
         text_embeddings = backbones.qwen_model.model.embed_tokens(input_ids)
@@ -171,9 +170,7 @@ def caption_image_with_callback(
     image_inputs = {key: value.to(device) for key, value in processed.items()}
 
     with torch.no_grad():
-        image_features = backbones.vision_encoder(**image_inputs).pooler_output
-        image_features_proj = backbones.clip_model.visual_projection(image_features)
-        image_latent = adapter(image_features_proj).unsqueeze(1)
+        image_latent = image_soft_tokens(adapter, backbones, image_inputs)
 
         input_ids = backbones.qwen_tokenizer(prompt, return_tensors="pt").input_ids.to(device)
         text_embeddings = backbones.qwen_model.model.embed_tokens(input_ids)

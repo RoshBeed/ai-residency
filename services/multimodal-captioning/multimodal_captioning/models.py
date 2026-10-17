@@ -33,7 +33,7 @@ from transformers import (
 from ai_residency_common import get_device, get_logger, load_checkpoint, resolve_checkpoint
 from config import CHECKPOINTS, Config
 
-__all__ = ["Backbones", "build_adapter", "load_adapter", "load_backbones"]
+__all__ = ["Backbones", "build_adapter", "image_soft_tokens", "load_adapter", "load_backbones"]
 
 logger = get_logger(__name__)
 
@@ -210,3 +210,40 @@ def load_adapter(config: Config, checkpoint_name: str, backbones: Backbones) -> 
     adapter.to(backbones.device)
     adapter.eval()
     return adapter
+
+
+def image_soft_tokens(
+    adapter: nn.Module, backbones: "Backbones", image_inputs: dict[str, torch.Tensor]
+) -> torch.Tensor:
+    """Project one image into a sequence of soft tokens for the decoder.
+
+    CLIP's `pooler_output` is the CLS vector: a whole image as one 768-d summary.
+    Feeding the decoder a single token is what made captions fluent and generic --
+    Qwen3 free-associates confidently when there is almost nothing to condition on,
+    which is what Section 6's results show. This takes `last_hidden_state[:, 1:]`
+    instead, the 7x7 patch grid, 49 tokens, which is the LLaVA recipe Section 3.2
+    says this service follows.
+
+    `post_layernorm` is applied by hand, because `pooler_output` has it applied and
+    `last_hidden_state` does not: `pooled == post_layernorm(last_hidden_state[:, 0])`
+    holds and the raw comparison does not. Skipping it would feed the adapter
+    activations on a different scale from the ones it trained on, and nothing would
+    fail loudly.
+
+    The adapter needs no change: it is `Linear`/`LayerNorm`/`GELU`, all per-token, so
+    it maps `[batch, 49, clip_dim]` without a single new parameter -- and the three
+    committed checkpoints still load.
+
+    Args:
+        adapter: The trained projection.
+        backbones: Supplies the vision tower and CLIP's visual projection.
+        image_inputs: Processed pixel values for one batch.
+
+    Returns:
+        `[batch, 49, qwen_dim]` soft tokens.
+    """
+    hidden = backbones.vision_encoder(**image_inputs).last_hidden_state[:, 1:]
+    hidden = backbones.vision_encoder.post_layernorm(hidden)
+    projected = backbones.clip_model.visual_projection(hidden)
+    tokens: torch.Tensor = adapter(projected)
+    return tokens
