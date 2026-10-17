@@ -47,6 +47,8 @@ class PPOConfig(BaseConfig):
             post should be, which is fine for showing the algorithm executes and
             useless for showing reward moving.
         prompt_dataset_split: Split to read prompts from.
+        loop_checkpoint_name: Filename `make train-loop` writes, kept distinct from
+            the single-step one so neither can be mistaken for the other.
         num_iterations: PPO steps in a loop run. Each one generates, scores and
             updates on `prompt_batch_size` prompts.
         prompt_batch_size: Prompts generated from per PPO step.
@@ -91,10 +93,19 @@ class PPOConfig(BaseConfig):
     # nothing here trains is a demonstration that the algorithm runs end to end, not
     # a model whose behaviour has meaningfully improved. The file name says so.
     checkpoint_name: str = "policy_after_one_ppo_step.pth"
+    # A loop run must not overwrite the one-step artifact or inherit its name. The
+    # filename is the only thing a downstream puller sees, and "after_one_ppo_step"
+    # on a 60-step adapter is a lie that nothing else would catch.
+    loop_checkpoint_name: str = "policy_after_ppo_loop.pth"
     hf_repo_id: str | None = "roshbeed/ai-residency-rlhf-ppo"
     wandb_project: str | None = "ai-residency-rlhf-ppo"
 
     @property
     def checkpoint_path(self) -> Path:
-        """Full path to the policy checkpoint a step writes."""
+        """Full path to the policy checkpoint a single step writes."""
         return self.checkpoint_dir / self.checkpoint_name
+
+    @property
+    def loop_checkpoint_path(self) -> Path:
+        """Full path to the policy checkpoint a loop run writes."""
+        return self.checkpoint_dir / self.loop_checkpoint_name

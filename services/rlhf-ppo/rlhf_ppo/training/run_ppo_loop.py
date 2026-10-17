@@ -164,7 +164,7 @@ def run_loop(config: PPOConfig) -> dict[str, float]:
 
     adapter_weights = get_peft_model_state_dict(trainer.policy_model.model)
     save_checkpoint(
-        config.checkpoint_path,
+        config.loop_checkpoint_path,
         trainer.policy_model,
         epoch=config.num_iterations,
         metrics={"baseline_mean_reward": baseline, "final_mean_reward": latest},
@@ -176,7 +176,7 @@ def run_loop(config: PPOConfig) -> dict[str, float]:
         state_dict=adapter_weights,
     )
     if config.hf_repo_id is not None:
-        push_checkpoint(config.hf_repo_id, config.checkpoint_path)
+        push_checkpoint(config.hf_repo_id, config.loop_checkpoint_path)
 
     logger.info(
         "Mean reward %.4f -> %.4f on held-out prompts (%s)",
