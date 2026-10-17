@@ -593,6 +593,50 @@ Status:
       currently answer, what is its baseline, and what is the cheapest change that makes
       the answer meaningful.
 
+### Backbone sizing, researched 2026-10-17
+
+Smaller backbones were strictly better for `speech-emotion-recognition`: whisper-small to
+whisper-tiny went from below-chance to 4.2x baseline *and* from 2h50m to 4 minutes an epoch.
+So the question got asked of every service. Most are already minimal:
+
+| service | backbone | params | verdict |
+|---|---|--:|---|
+| `speech-emotion-recognition` | whisper-tiny | 39M | done |
+| `whisper-fine-tuning` | whisper-tiny | 39M | already minimal |
+| `rlhf-ppo` policy | SmolLM2-135M-Instruct | 135M | already minimal |
+| `rlhf-ppo` reward | deberta-v3-large-v2 | 435M | inference only; see below |
+| `multimodal-captioning` | CLIP ViT-B/32 + Qwen3-0.6B | 151M + 596M | decoder is the one real candidate |
+
+**Swap the captioning decoder for `HuggingFaceTB/SmolLM2-135M-Instruct`, not the vision
+encoder.** SmolVLM-256M -- the smallest working VLM -- is SmolLM2-135M plus SigLIP, so a
+135M decoder is proven for exactly this job. 596M to 135M params, but the honest figure is
+compute: layers x hidden^2 is 28x1024^2 = 29.4M against 30x576^2 = 10.0M, so **2.9x, not
+4.4x**. SmolLM2 is *deeper* (30 layers vs 28) and much narrower, and most of Qwen3-0.6B's
+parameter advantage is a 151k-token embedding table that costs almost nothing per token.
+The adapter's output width drops 1024 to 576 with it, which invalidates every existing
+adapter checkpoint.
+
+**Do not swap CLIP for SigLIP, tempting as the better features are.** It is the wrong
+direction twice: `siglip-base-patch16-224` is 203M and `siglip2-base` 375M against CLIP
+ViT-B/32's 151M, and patch16 at 224px yields **196 image tokens against CLIP patch32's
+49**. Training cost here is the backward pass through the frozen decoder over the image
+sequence, so 4x the image tokens would more than cancel a 2.9x smaller decoder. CLIP also
+does double duty: Part 1 of that service is CLIP zero-shot classification at 10/10.
+
+**The reward model has a same-recipe smaller sibling, `OpenAssistant/reward-model-deberta-v3-base`**
+-- compute 7.1M against 25.2M, 3.5x cheaper, and still "a real preference-trained reward
+model". Two reasons to measure before taking it: it is inference-only inside PPO, so it may
+not be the bottleneck at all, and reward quality shapes what PPO learns, so a weaker reward
+model means a worse-behaved demo. 10,803 downloads against 2,038 says large-v2 is the
+better-validated one.
+
+**Measure, do not extrapolate.** Tonight's estimates were wrong by more than an order of
+magnitude in both directions: whisper-small to tiny was predicted at 12x and measured at
+~500x per step, and "one epoch needs hours" turned into 4 minutes. There is a timing probe
+pattern that works -- build the real model and dataloader, time 8 steps after 3 warmup
+steps, at a couple of batch sizes -- and it costs minutes.
+
+
 Open:
 - `speech-emotion-recognition` is trained for real now: whisper-tiny on English CREMA-D,
   **0.7225 held-out accuracy against a 0.1708 majority-class baseline**, 4.2x chance over six
