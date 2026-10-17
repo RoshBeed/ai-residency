@@ -91,8 +91,6 @@ open http://localhost:8500
 docker compose -p ai-residency down
 ```
 
-`speech-emotion-recognition` has no checkpoint, so `--wait` times out instead of returning.
-
 The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
 `/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
 `--pull always` because `docker run` otherwise reuses a cached `latest` without re-checking it.
@@ -182,7 +180,7 @@ working interface generated from its own OpenAPI schema.
 | `content-scoring` | 1.3 GB | |
 | `whisper-fine-tuning` | 1.8 GB | Fine-tunes live, per request |
 | `word-embeddings` | 2.3 GB | Nearest neighbours and analogies |
-| `speech-emotion-recognition` | — | No trained checkpoint yet, so it answers 503 by design |
+| `speech-emotion-recognition` | 2.9 GB | Checkpoint is one epoch on EmoDB and scores at chance |
 | `rlhf-ppo` | 4.6 GB | Heaviest, and the most interesting trace |
 | `multimodal-captioning` | 5.4 GB | CLIP + Qwen3 |
 | the frontend | 0.4 GB | Always started |

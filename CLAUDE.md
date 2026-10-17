@@ -397,11 +397,12 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
   `--platform linux/amd64` for them. Built on an Apple Silicon Mac without it they come out
   linux/arm64 and will not run on an x86-64 instance.
 - **`helm upgrade --wait` cannot succeed while a service is deliberately unready.**
-  `--wait` blocks until every Deployment reports available, and
-  `speech-emotion-recognition` has no checkpoint, so its `/ready` is an honest
-  permanent 503 and the rollout hits the progress deadline. Helm then marks the
-  release `failed` even though all ten pods rolled out on the new tag. That is why
-  `make helm-upgrade` does not pass `--wait`; don't add it back until every service
+  `--wait` blocks until every Deployment reports available, and a service with no
+  checkpoint answers an honest permanent 503, so the rollout hits the progress
+  deadline. Helm then marks the release `failed` even though all ten pods rolled out
+  on the new tag. Every service has a checkpoint as of the speech-emotion push, so
+  this is latent rather than active -- it returns the moment one does not. That is
+  why `make helm-upgrade` does not pass `--wait`; don't add it back until every service
   has a checkpoint.
 - **`helm uninstall` returns before deletion finishes.** An install started right after can have
   its objects deleted by the tail of the previous release — a reinstall once came up with all
@@ -435,6 +436,13 @@ tag. Pin a run with `--set train.imageTag=sha-<commit>`.
   finishes anywhere between half and double the budget. `make sweep SWEEP=<id> HOURS=12` wraps the
   agent in `caffeinate -is timeout 12h`; stopping early costs nothing, since finished runs are
   recorded and the next agent reads them back.
+- **A newly pushed checkpoint repo has to be public, or serving cannot see it.**
+  `push_checkpoint` defaulted to `private=True`, so the first push for a service created a
+  private repo; the push logged success, and every container then failed with `Repository Not
+  Found ... make sure you are authenticated`, which reads like a broken token rather than a
+  visibility setting. Serving is credential-free by design, so private is never the right
+  default here. It is `private=False` now. The existing repos were public already, which is why
+  this only showed up on `speech-emotion-recognition`, the first new one in a long time.
 - **A credential in the environment is not the only credential.** `get_hf_token` checked
   `HF_TOKEN`/`HUGGINGFACE_TOKEN` only and `init_tracking` checked `WANDB_API_KEY` only, so on a
   machine logged in through `huggingface-cli login` or `wandb login` a run trained for hours, then
@@ -533,8 +541,12 @@ every new service was linted, typed and tested on a laptop and nowhere else; the
 still drops it, since nothing needs to ship a template image.
 
 Open:
-- `speech-emotion-recognition` has no trained checkpoint, so it answers 503 from `/ready`. Its
-  pipeline, trainer and API are wired and verified.
+- `speech-emotion-recognition` has a checkpoint now and answers 200, but it is one epoch on
+  EmoDB alone and **scores at chance**: val_acc 0.2342 against a majority-class baseline of
+  0.2382, and `/predict` returns a near-uniform distribution over the six emotions. It was
+  pushed to make the page demonstrable, not because it works. CREMA-D (the larger corpus) was
+  skipped -- `make download-data` clones it over git-lfs by the gigabyte -- and one epoch of
+  whisper-small on MPS took 2h50m, so more epochs need the GPU host, not a laptop.
 - `content-scoring` ships a `log_mse` objective, which ranks well and predicts about a fifth of the
   upvotes that actually happen. `poisson` is implemented and predicts the count directly; a binary
   head on `score >= 100` finds front-page posts best and cannot rank at all. Which of the three is

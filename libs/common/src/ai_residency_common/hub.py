@@ -81,7 +81,7 @@ def push_checkpoint(
     path: str | Path,
     *,
     path_in_repo: str | None = None,
-    private: bool = True,
+    private: bool = False,
     repo_type: RepoType = "model",
 ) -> bool:
     """Upload a checkpoint file to a model repo on the Hub.
@@ -94,7 +94,12 @@ def push_checkpoint(
         repo_id: Target model repo, e.g. `"roshbeed/ai-residency-word-embeddings"`.
         path: Local checkpoint file to upload.
         path_in_repo: Name to store it under. Defaults to the local file name.
-        private: Whether to create the repo private if it does not yet exist.
+        private: Whether to create the repo private if it does not yet exist. Defaults
+            to False, because serving pulls these with no credentials at all: a repo
+            created private is one every container reports as `Repository Not Found`,
+            and the push that created it looks like a success. Only the first push for
+            a repo is affected -- this does not change the visibility of an existing
+            one.
         repo_type: `"model"` for weights, `"dataset"` for the inputs that produced
             them. Both are files this run needs; the Hub just files them differently.
 
