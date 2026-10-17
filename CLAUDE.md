@@ -139,6 +139,15 @@ a single point of failure outside this project's control — it is mirrored at
 mattmahoney.net. Re-hosting a *standard public corpus* is right; the earlier "don't re-host
 third-party data" note was about not copying someone's proprietary dataset, and it got misapplied.
 
+The same rule covers a corpus that is nominally reachable but not *practically* so. CREMA-D's
+audio sat behind a multi-gigabyte `git lfs clone` of a repo carrying video and perceptual ratings
+this project never reads, so the documented `download-data` had never once been run and the
+shipped checkpoint was not reproducible from the shipped pipeline. The audio half is mirrored at
+`roshbeed/ai-residency-speech-emotion-recognition-data` under CREMA-D's own ODbL, verified
+byte-identical to the clips that trained the checkpoint. When you mirror a corpus: check the
+licence, put it and the citation on the dataset card, and verify the copy against the original
+rather than assuming the download was faithful.
+
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
 Hub, serving pulls from it. **The model and dataset repos are public**, so serving needs no
 credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
@@ -604,15 +613,14 @@ Status:
       resident-memory row now reads 0.9 GB and 0.7225 vs 0.1708. Verified through the container
       before updating either.
 - [x] `speech-emotion-recognition` -- resume support, on the shared mechanism.
-- [ ] `speech-emotion-recognition` -- the committed `download-data` path clones
-      `CheyneyComputerScience/CREMA-D` by git-lfs, multi-gigabyte and slow, and it has never
-      actually been run: the trained checkpoint came from a Hub tarball fetched by hand, and
-      the README's own data-flow figure still says CREMA-D was "never actually downloaded".
-      So the shipped result is not reproducible from the shipped pipeline. Mirror the corpus
-      under `roshbeed/` like text8 -- it is ODbL, so redistribution needs the licence notice
-      and the citation -- create the `-data` repo, which does not exist, and point
-      `download-data` at it. (An earlier note here said the data came from the third-party
-      `myleslinder/crema-d`; that was a scratchpad script of mine, never the repo.)
+- [x] `speech-emotion-recognition` -- CREMA-D's audio is mirrored at
+      `roshbeed/ai-residency-speech-emotion-recognition-data` (7,441 clips, one 473MB
+      tarball, ~20s), and `download-data` fetches it instead of a multi-gigabyte git-lfs
+      clone that had never actually been run. Verified byte-identical to the clips the
+      0.7225 checkpoint was trained on. ODbL, so the card carries the licence, the citation
+      and a pointer to the authors' form. (An earlier note here said the data came from the
+      third-party `myleslinder/crema-d`; that was a scratchpad script of mine, never the
+      repo -- the repo always cloned the authors' own GitHub.)
 - [x] `multimodal-captioning` -- 49 patch tokens instead of one pooled token, scaled to the
       decoder's embedding std, trained on 5,000 Flickr30k pairs for 15 epochs. **CLIP
       agreement 0.2115 against a 0.1848 untrained floor and a 0.3233 human ceiling: 19.2%
