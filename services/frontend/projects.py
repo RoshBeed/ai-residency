@@ -548,7 +548,6 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ),
         ],
         "datasets": [
-            ("EmoDB", "http://emodb.bilderbar.info/"),
             ("CREMA-D", "https://github.com/CheyneyComputerScience/CREMA-D"),
         ],
         "model_links": [
@@ -556,31 +555,28 @@ PROJECTS: dict[str, dict[str, Any]] = {
         ],
         "stats": [
             ("Base model", "Whisper-tiny (39M params)"),
-            ("Datasets", "EmoDB + CREMA-D"),
-            ("Fine-tune steps", "5 per request"),
+            ("Fine-tune steps", "5 per request, 1 locally"),
             ("Verified result", '"My name is Roosh" → "My name is Rosh"'),
+            ("Cost on other speech", "WER 0.1642 → 0.2687 over 5 steps"),
         ],
         "intro": (
-            "Extends OpenAI's Whisper-tiny with emotion tokens while preserving its "
-            "transcription ability. Fine-tunes the model in real time per request — "
-            "genuine gradient updates on live weights, with loss tracking and per-step "
-            "transcript diffs showing convergence step by step.\n\n"
-            "**Architecture.** The system has two parts. Part 1 (the live demo) loads a "
-            "fresh Whisper-tiny, transcribes input audio for a baseline, then runs "
-            "gradient steps fine-tuning toward a user-provided target text with loss and "
-            "transcript streamed back via SSE. Part 2 (the data pipeline) prepares "
-            "speech-emotion datasets (CREMA-D, EmoDB) with per-file emotion labels. The "
-            "intended goal is to add special emotion tokens to Whisper's tokenizer and "
-            "fine-tune on emotion-labelled speech, with the transcription task preserved "
-            "through the loss function to avoid catastrophic forgetting.\n\n"
-            "**Approach.** Audio flows through the full speech pipeline: raw waveform → "
-            "Fourier transform → mel spectrogram → Whisper encoder. The real-time "
-            "fine-tuning demonstrates that even a few gradient steps can meaningfully "
-            "shift a pre-trained model's output for a specific target. The emotion-token "
-            "extension explores the practical reality of modifying a pre-trained "
-            "tokenizer and the tradeoff between task specialization and preserving "
-            "original capabilities. "
-            "(Whisper shells out to it for audio decoding)."
+            "Fine-tunes Whisper-tiny on a single clip, live, per request — genuine "
+            "gradient updates on live weights, with the loss and a fresh transcript "
+            "streamed after every step. Fine-tuning is usually a number moving on a "
+            "held-out set; one example makes the mechanism visible instead.\n\n"
+            "**Architecture.** A fresh Whisper-tiny transcribes the audio for a "
+            "baseline, then takes gradient steps toward a user-supplied target text, "
+            "with the loss and the intermediate transcript relayed over SSE. Every "
+            "parameter gets a gradient — no adapter, no frozen layers — and the "
+            "fine-tune is per-request and discarded, so each call starts from the "
+            "released weights.\n\n"
+            "**What it costs.** Memorizing one clip is overfitting by design, so the "
+            "service measures the damage rather than claiming there is none. Over "
+            "twelve CREMA-D sentences the model never trained on, one step leaves word "
+            "error rate at 0.1642 and changes no transcript by a word; five steps "
+            "corrects the same demo clip and takes WER to 0.2687, altering four of the "
+            "twelve. The correction lands at step one — the rest is trajectory to "
+            "watch."
         ),
         "docs_path": "services/whisper-fine-tuning/README.md",
         "diagrams": [
