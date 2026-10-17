@@ -11,22 +11,22 @@
 
 backends:
   word-embeddings:
-    digest: sha256:5e38e9393610a88db86dae1f7e9b125f8977506e06e6899e60e0929eb919f104
+    digest: sha256:cdad2fb62a5644b418c26f8a5b888dc9ae391b6d7d80ac2e9ddc01a96074d37f
   content-scoring:
-    digest: sha256:b3d4d32d18c87bfd87d13ddd6a6cf9b4d4a1502cdb34414930de9747f616819b
+    digest: sha256:6cde908ea7023114585e5fd9b23e6ec0e0926b3abf168c7d890983e7c3063dfe
   vector-search-retrieval:
-    digest: sha256:c31a0d4c255430c86aedd52dd5417d1eeffd7f4aa2d68db58a87fbc9b6ca831b
+    digest: sha256:85623f7960af2fa71f90f586294be1a601f529a052cd805150e06be489db44cd
   vit-classifier:
-    digest: sha256:34287b31e54869afbec387caac4db63d346ab13a28bc838d71d7ca7c368c255c
+    digest: sha256:b50d38763cafcf3200bf6a14161ef532150296d358e302da624434a950b96cf1
   vit-seq2seq:
-    digest: sha256:49ed713c5f19c2c946e11d2235fbcaef9b63c82105575cafb7a394bbb3c21c6d
+    digest: sha256:7982fa8fba0b74293ce95a8cc65c47072fa438764f85a3fcb6792b89f65b92a3
   multimodal-captioning:
-    digest: sha256:328ae1070a069eec7a6067bbaf700fa9f511805794ac2532ccaff0acf5a27981
+    digest: sha256:8abd0a47feafb1cffdbe1900fd848ee25b41db2642bc7b300f1e5a941e22a38a
   whisper-fine-tuning:
-    digest: sha256:95e78d8596ab741351d3ac22e0bb5465732cd73267d0e6dba7b52524f208d5f2
+    digest: sha256:bbf8290b8ff71fef2ab5322b6a786feb14e538335bfa59927530a3793e07fabf
   speech-emotion-recognition:
-    digest: sha256:6a7666a93e4c851935d355d321d1f6cc549ac316e85cb268e59a82796b6876b5
+    digest: sha256:2cd4b1b630be41ef338d916244b2b2f82e0fe6128dbbcfd3d84917e346f760e6
   rlhf-ppo:
-    digest: sha256:a0f401d3076fdd37aa21adaa2e1e807c724401e15daca0692eedf3be2e4d4649
+    digest: sha256:61b3fcc6f29124ef0adb1f6b22c1eb3cbfae70af8b986d08050993f5332ee213
 frontend:
-  digest: sha256:37370745dffef05888c332104dd6f53d5b02fff5440d69de4362dab2233e164e
+  digest: sha256:88ae875900f2b7907a29fe521202001b97af45c9c0288fdd2c9f56de37f459e1
