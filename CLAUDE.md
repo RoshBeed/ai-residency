@@ -148,6 +148,14 @@ byte-identical to the clips that trained the checkpoint. When you mirror a corpu
 licence, put it and the citation on the dataset card, and verify the copy against the original
 rather than assuming the download was faithful.
 
+**The licence decides it, not the size.** text8 is public domain and CREMA-D is ODbL, which is
+what made mirroring both of those right. Flickr30k is not mirrored and will not be: its authors
+state they do not hold copyright in the images, use falls under Flickr's own Terms of Use, and
+the data is offered at their link for non-commercial research with no redistribution right. A
+corpus nobody may re-host leaves a training path that depends on someone else's upload, and that
+is a property of the corpus to disclose rather than a gap to close. What must not depend on
+another account is *serving*, and nothing does.
+
 **No local checkpoints, ever.** Every runtime is ephemeral. Training pushes to the Hugging Face
 Hub, serving pulls from it. **The model and dataset repos are public**, so serving needs no
 credentials at all — `HF_TOKEN` is only for pushing. Resolve through `ai_residency_common`'s `resolve_checkpoint` /
@@ -656,12 +664,26 @@ Status:
 
       Measured and rejected: `no_repeat_ngram_size=3` at decode time, 0.2270 against 0.2266.
       Decoding stays greedy.
-- [ ] Dataset sources, checked 2026-10-17: every `load_dataset` id in the workspace is
+- [x] Dataset sources, checked 2026-10-17: every `load_dataset` id in the workspace is
       namespace-qualified now, and `microsoft/ms_marco`, `CarperAI/openai_summarize_tldr`
       are org-hosted. The one that is not is `nlphuji/flickr30k`, a community re-upload
-      standing in the same place a teammate's text8 repo once did. Mirroring it is ~4GB
-      against text8's 100MB, so it is a judgement call rather than an obvious yes --
-      record the decision either way rather than leaving it unexamined.
+      standing in the same place a teammate's text8 repo once did.
+
+      **Decision: do not mirror it.** The size was the wrong question. Flickr30k's authors
+      state they do not hold copyright in the images, that use is governed by Flickr's own
+      Terms of Use, and that the data is provided *solely at their link* for non-commercial
+      research and education. No redistribution right is granted, so re-hosting it under
+      `roshbeed/` is not mine to do. This is the case the old "don't re-host third-party
+      data" note was actually about -- text8 is public domain and CREMA-D is ODbL, which is
+      what made mirroring those two right; the licence is the test, not the gigabytes.
+
+      What that leaves unprotected is real and worth naming: `nlphuji/flickr30k` is a
+      community account, and the config reads it at `refs/convert/parquet`, a Hub-generated
+      branch. If either moves, `make train` for captioning breaks. The shipped *result* does
+      not, because `adapter_patches.pth` is under `roshbeed/` and serving never touches
+      Flickr30k. Nothing here depends on someone else's account at serving time, which is
+      what the rule is for; the training path depends on a dataset nobody may re-host, which
+      is a property of the dataset rather than a gap to close.
 - [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
       the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
       ~40x in both directions.
@@ -686,12 +708,28 @@ Status:
       already SmolLM2-135M with LoRA, so a short run on a slice is enough to show reward
       moving. Log the pre-PPO mean reward as the baseline beside it.
 - [x] `whisper-fine-tuning` -- meaningful by its own design and needs no training run. It
-      fine-tunes on a single clip so the effect of five gradient steps is visible rather
-      than statistical: `"My name is Roosh."` becomes `"My name is Rosh"`, with the base
-      model's own output as the baseline. The one cheap strengthener, if it is ever worth
-      it: transcribe a few *other* clips before and after to show the five steps did not
-      damage general transcription. That is the honest counterweight to a demo that is
-      deliberately overfitting, and it is a handful of forward passes.
+      fine-tunes on a single clip so the effect of a gradient step is visible rather than
+      statistical: `"My name is Roosh."` becomes `"My name is Rosh"`, with the base model's
+      own output as the baseline.
+
+      The counterweight is measured now, and it did not come out the comfortable way.
+      `make collateral` transcribes twelve CREMA-D sentences the model never trained on,
+      before and after: **one step leaves WER at 0.1642 and alters no transcript by a word;
+      five steps takes it to 0.2687 and alters four of twelve** -- "The airplane is almost
+      full" to "The airplay is almost full", "Don't forget a jacket" to "Go for it". So the
+      overfitting this service demonstrates is not only visible on the clip it trained on,
+      and the write-up says so.
+
+      CREMA-D is the corpus for it because its twelve sentences are encoded in every
+      filename, so the reference comes free. WER is over normalised words: the target text
+      has no final period, the model stops emitting one after the step, and every raw
+      transcript then differs while no word does.
+
+      That also found a disagreement worth not repeating. `make demo` takes `num_epochs=1`
+      while `/transcribe` hardcoded `num_steps=5` twice, so the demo and the endpoint were
+      doing different things and the README's headline claimed the five. The endpoint keeps
+      five on purpose -- it streams a transcript between every step -- but it reads
+      `serve_num_steps` now, with the measured cost in the field's docstring.
 
 ### Backbone sizing, researched 2026-10-17
 

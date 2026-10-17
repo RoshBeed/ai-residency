@@ -312,6 +312,14 @@ make check         # lint + typecheck + tests
 make help          # list every target
 ```
 
+**On the training data.** Every other artifact this portfolio trains on is mirrored under
+`roshbeed/` so no stage depends on an account outside the project, and Flickr30k is the one
+exception. Its authors do not hold copyright in the images: use is governed by Flickr's own Terms
+of Use, and the data is offered at their link for non-commercial research and education, with no
+redistribution right. So `config.dataset_name` points at `nlphuji/flickr30k`, a community
+re-upload, and training here depends on that staying put. Serving does not — the adapter is the
+only thing this service trains, and it lives under `roshbeed/` with the rest.
+
 `make serve SERVICE=multimodal-captioning` runs the FastAPI backend, matching every other repo in this portfolio; the CLIP demo
 is `make zero-shot`. The API itself is a thin wrapper around the same `generate_caption()` the
 unified frontend in `services/frontend` calls.
