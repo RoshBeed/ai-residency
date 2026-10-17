@@ -604,22 +604,38 @@ Status:
       resident-memory row now reads 0.9 GB and 0.7225 vs 0.1708. Verified through the container
       before updating either.
 - [x] `speech-emotion-recognition` -- resume support, on the shared mechanism.
-- [ ] `speech-emotion-recognition` -- CREMA-D comes from `myleslinder/crema-d`, a
-      third-party account. Mirror it under `roshbeed/` like text8, and create the
-      `-data` repo, which does not exist.
-- [ ] `multimodal-captioning` -- 49 patch tokens instead of one pooled token; training on
-      5,000 Flickr30k pairs. Then: score with CLIP agreement against the published 0.1882
-      untrained / 0.3280 human numbers, rewrite Section 3.2, Figure 5 and Section 6,
-      and decide whether `adapter_patches.pth` stays the default.
+- [ ] `speech-emotion-recognition` -- the committed `download-data` path clones
+      `CheyneyComputerScience/CREMA-D` by git-lfs, multi-gigabyte and slow, and it has never
+      actually been run: the trained checkpoint came from a Hub tarball fetched by hand, and
+      the README's own data-flow figure still says CREMA-D was "never actually downloaded".
+      So the shipped result is not reproducible from the shipped pipeline. Mirror the corpus
+      under `roshbeed/` like text8 -- it is ODbL, so redistribution needs the licence notice
+      and the citation -- create the `-data` repo, which does not exist, and point
+      `download-data` at it. (An earlier note here said the data came from the third-party
+      `myleslinder/crema-d`; that was a scratchpad script of mine, never the repo.)
+- [x] `multimodal-captioning` -- 49 patch tokens instead of one pooled token, scaled to the
+      decoder's embedding std, trained on 5,000 Flickr30k pairs for 15 epochs. **CLIP
+      agreement 0.2115 against a 0.1848 untrained floor and a 0.3233 human ceiling: 19.2%
+      of the gap**, 87/100 captions distinct. Section 3.2, Figure 5 (now Mermaid; the old
+      PNG showed one token and an output of "some random gibberish") and Section 6 rewritten.
+      `adapter_patches.pth` stays the default.
 
-      **The write-up must not claim the patch grid caused the improvement.** Section 6's
-      published loss numbers (6.4251 baseline, 6.0981 best) come from 100 pairs over 3
-      epochs; this run is 5,000 pairs over 12. Three things changed at once -- image tokens
-      1 to 49, data 50x, epochs 4x -- so the loss comparison attributes nothing. It was
-      presented as an isolated measurement of the patch grid once, and it is not one.
-      Isolating it would mean training the single-token path at the same 5,000 pairs and 12
-      epochs, roughly four more hours, for an attribution this phase does not need. What
-      the result has to clear is CLIP agreement against 0.1882 untrained and 0.3280 human.
+      **The write-up does not claim the patch grid caused it, and must not start.** Against
+      the 100-pair checkpoint three things changed at once -- image tokens 1 to 49, pairs
+      40x, epochs 5x -- so neither the loss nor the agreement comparison attributes anything
+      to the grid. Isolating it would mean training the single-token path at 4,000 pairs and
+      15 epochs, an attribution this phase does not need.
+
+      Two things worth not relearning. **Loss is the wrong scoreboard for this service**: the
+      pre-fix run cut held-out loss to 2.2043 from a 5.1933 baseline while scoring *below* an
+      untrained adapter on agreement, because a frozen decoder lowers loss by learning caption
+      register. **A soft token has to arrive at the scale of a real embedding**: the adapter
+      ends in a LayerNorm (unit variance) and Qwen3's embedding std is 0.0302, so unscaled it
+      was 33x too large and the cheapest way to cut loss was to stop varying with the image --
+      per-image spread halved, to 0.104 against an untrained 0.227.
+
+      Measured and rejected: `no_repeat_ngram_size=3` at decode time, 0.2270 against 0.2266.
+      Decoding stays greedy.
 - [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
       the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
       ~40x in both directions.

@@ -37,7 +37,10 @@ def render() -> None:
                 for event in stream(
                     SERVICE,
                     "/caption/stream",
-                    {"image_data": image_to_b64(image_source), "checkpoint_name": "adapter.pth"},
+                    # No checkpoint_name: the service picks its own default. Naming one here
+                    # pinned the UI to the 10-pair adapter and no retrained checkpoint could
+                    # reach it.
+                    {"image_data": image_to_b64(image_source)},
                     timeout=90,
                 ):
                     stage = event["stage"]

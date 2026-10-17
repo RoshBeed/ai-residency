@@ -3,7 +3,8 @@
 ## TL;DR
 
 - **What it is:** image captioning via a small trainable adapter bridging a frozen CLIP vision encoder to a frozen Qwen3 language model (the LLaVA/PaLiGemma recipe).
-- **What's built:** the full pipeline — data loading, adapter training with a held-out baseline, checkpointing, and a served inference path (FastAPI + Streamlit) — runs end to end, with three trained checkpoints shipped and comparable.
+- **What's built:** the full pipeline — data loading, adapter training with a held-out baseline, checkpointing, and a served inference path (FastAPI + Streamlit) — runs end to end, with four trained checkpoints shipped and comparable.
+- **Where it gets to:** the shipped adapter closes **19.2% of the gap** between an untrained adapter (0.1848 CLIP agreement) and human captions (0.3233), scored on held-out Flickr30k pairs.
 
 This repo has two parts: a warm-up exercise doing zero-shot image classification with CLIP, and
 the main project — an image captioning model I built the way LLaVA and PaLiGemma do it: freeze a
@@ -178,32 +179,59 @@ def build_adapter(clip_dim, qwen_dim, *, final_layer_norm=False):
 trailing `LayerNorm` and the other two weren't. Every checkpoint records which shape produced it,
 so the loader reads the architecture off the artifact instead of guessing.
 
-**Figure 5.** This repo's actual captioning architecture: CLIP vision encoder → adapter →
-concatenated soft token → Qwen3 decoder.
-![Model architecture diagram — CLIP vision encoder, adapter layer, concat, Qwen decoder](assets/fig4-model-architecture.png)
+**Figure 5.** This repo's captioning architecture: CLIP's patch grid → adapter → 49 soft tokens →
+Qwen3 decoder.
+```mermaid
+flowchart LR
+    img["Image"] --> clip["CLIP ViT-B/32<br/>encoder (frozen)"]
+    clip --> grid["50 x 768<br/>CLS + 49 patches"]
+    grid --> drop["drop CLS<br/>post_layernorm"]
+    drop --> proj["visual_projection<br/>49 x 512 (frozen)"]
+    proj --> adapter["Adapter<br/>1.58M params (trainable)"]
+    adapter --> scale["x 0.0302<br/>match embedding scale"]
+    scale --> soft["49 soft tokens<br/>49 x 1024"]
+    cap["Caption tokens"] --> embed["Qwen3 embeddings (frozen)"]
+    soft --> concat["concat"]
+    embed --> concat
+    concat --> qwen["Qwen3-0.6B-Base<br/>(frozen)"]
+    qwen --> out["Caption"]
+```
 
-The actual implementation follows this shape directly, with the dimensions filled in: CLIP
-ViT-B/32's vision encoder and visual projection (both frozen) produce a 512-dim vector, the
-trainable adapter maps it into Qwen3's 1024-dim embedding space as a single "soft token," and that
-gets concatenated with the tokenized text prompt before Qwen3-0.6B-Base (frozen) decodes
-autoregressively. A single CLIP pooled-image-embedding becomes exactly one soft token — unlike
-ViT-style patch tokens (the vision transformer project's approach), the language model never sees
-per-patch visual detail, only one 512-then-1024-dimensional summary vector per image.
+With the dimensions filled in: CLIP ViT-B/32 cuts a 224px image into a 7x7 grid, so its encoder
+returns 50 tokens — a CLS summary and 49 patches. The adapter reads **the 49 patch tokens**, not
+the CLS summary, so the language model sees where things are in the frame rather than one vector
+for the whole image. Each is projected to 512 by CLIP's own frozen `visual_projection`, mapped to
+Qwen3's 1024-dim embedding space by the trainable adapter, and concatenated in front of the
+tokenized caption before the frozen decoder runs.
+
+Reading the patch grid costs 49 decoder positions per image instead of one, which is most of the
+training cost here — the backward pass runs through the frozen decoder over that sequence.
+
+**Soft tokens have to arrive at the scale of real token embeddings.** The adapter ends in a
+LayerNorm, so whatever it emits has unit variance. Qwen3's embedding table has a standard
+deviation of 0.0302, so an unscaled adapter hands the decoder vectors 33 times larger than any
+token it was pretrained on. Nothing errors; the decoder is simply driven off-distribution, and the
+cheapest repair available to the adapter is to stop varying with the image at all. That is
+measurable: before the fix, training *halved* the adapter's per-image spread, to 0.104 against an
+untrained adapter's 0.227, and every image drew the same caption. The last line of
+`image_soft_tokens` multiplies by the embedding standard deviation, measured once when the
+backbones load, so the checkpoint stays a plain `nn.Sequential` and nothing has to be relearned.
 
 ### 3.3 Training: A Captioning Loss That Only Scores the Caption
 
 Training only updates the adapter: CLIP and Qwen3 stay in `eval()` with `requires_grad = False`.
-For a batch of (image, caption) pairs, the image is turned into one soft token, the caption is
-tokenized, the two are concatenated, and the label at the image position is set to `-100` so
-PyTorch's cross-entropy loss ignores it. The model is never asked to "predict" the image, only to
-predict caption tokens conditioned on it.
+For a batch of (image, caption) pairs, the image is turned into 49 soft tokens, the caption is
+tokenized, the two are concatenated, and the labels at all 49 image positions are set to `-100` so
+PyTorch's cross-entropy loss ignores them. The model is never asked to "predict" the image, only to
+predict caption tokens conditioned on it. The mask has to widen with the image sequence: leave it
+at one position and the model is trained to emit 48 image vectors as if they were words.
 
 **Figure 6.** The training signal, end to end.
 ```mermaid
 flowchart LR
-    flickr[("Flickr30k<br/>image + caption pairs")] --> img["Image"] --> adapter["Adapter"] --> imgtok["Image token<br/>(label = -100, ignored)"]
+    flickr[("Flickr30k<br/>image + caption pairs")] --> img["Image"] --> adapter["Adapter"] --> imgtok["49 image tokens<br/>(labels = -100, ignored)"]
     flickr --> cap["Caption"] --> captoks["Caption tokens<br/>(real labels)"]
-    imgtok --> seq["[image token, caption tokens]"]
+    imgtok --> seq["[49 image tokens, caption tokens]"]
     captoks --> seq
     seq --> qwen["Qwen3 (frozen)"]
     qwen --> loss["Cross-entropy loss<br/>on caption tokens only"]
@@ -347,8 +375,52 @@ This isn't surprising: CLIP was trained on this kind of task at a scale (400M im
 pairs) far beyond anything else in this repo. But it's a genuinely working, from-scratch-run
 zero-shot baseline, and a nice contrast to Part 2's much smaller-scale training.
 
-**Part 2 — captioning.** All three shipped checkpoints load and generate through the UI, the API
-and both notebooks, using greedy decoding, byte-identical across runs:
+**Part 2 — captioning.** The shipped default is `adapter_patches.pth`: 49 patch tokens, 4,000
+Flickr30k training pairs, 15 epochs. Three earlier checkpoints also ship and still load — the
+loader reads each one's architecture off the artifact — and they are what the scaling comparison
+further down was run against.
+
+**Captions are scored by CLIP agreement, not by held-out loss.** A frozen decoder can cut caption
+loss by learning the *register* of Flickr30k sentences while describing the wrong picture. That is
+not hypothetical here: an earlier patch-token run reached 2.2043 held-out loss against a 5.1933
+untrained baseline while scoring *below* an untrained adapter on agreement. So `make evaluate`
+embeds image and caption with CLIP and takes the cosine, with both reference points scored on the
+same 200 held-out pairs — an untrained adapter as the floor, the captions a person wrote as the
+ceiling.
+
+| | CLIP agreement |
+|---|---|
+| untrained adapter | 0.1848 |
+| **`adapter_patches.pth`** | **0.2115** |
+| the captions a person wrote | 0.3233 |
+
+That closes **19.2% of the floor-to-ceiling gap**. 87 of 100 captions are distinct, so the adapter
+is responding to the image rather than emitting one sentence.
+
+Scoring the generator's captions with the generator's own vision encoder flatters it: a caption can
+agree with CLIP's view of the image without agreeing with the image. It is still the cheapest
+signal that separates "describes this picture" from "reads like a caption", which loss does not.
+
+**This does not isolate what the patch grid bought.** Against the 100-pair checkpoint, three things
+changed at once: image tokens 1 → 49, training pairs 40x, epochs 5x. Attributing the gain to the
+grid would mean training the single-token path at 4,000 pairs and 15 epochs too.
+
+What it reliably describes is people and their clothing — the most common content in Flickr30k —
+and much less of the rest of the scene:
+
+| the caption a person wrote | the model's |
+|---|---|
+| These young ladies with one little girl are at a flea market purchasing items | a young girl in a white dress and a boy in a blue shirt and jeans. |
+| A man without a shirt on is guiding a large brown horse pulling a green and yellow wagon. | a man in a white shirt and jeans, a man in a blue shirt and jeans, and a man in a black shirt… |
+| Three boys are breaking up a pile of bricks, while four men are standing behind them. | a man in a white shirt and a man in a black shirt are standing in front of a building. |
+
+The last row is the failure mode that remains: when the image is not mostly people, generation
+falls back to a high-frequency sentence. Blocking repeated trigrams at decode time was measured
+and does not help — agreement 0.2270 against 0.2266 — so decoding stays greedy and the limit is
+the adapter, not the search.
+
+The three earlier checkpoints load and generate through the UI, the API and both notebooks, using
+greedy decoding, byte-identical across runs:
 
 | Checkpoint | cat.jpg | dog.jpg | book.jpg |
 |---|---|---|---|
@@ -359,31 +431,32 @@ and both notebooks, using greedy decoding, byte-identical across runs:
 **Figure 9.** The same results, alongside the actual input images.
 ![Caption generation across the three shipped adapter checkpoints](assets/caption_comparison.png)
 
-At this training scale (100 pairs, 3 epochs, a ~1.58M-parameter adapter bridging a
+At that training scale (100 pairs, 3 epochs, a ~1.58M-parameter adapter bridging a
 596M-parameter frozen language model), captions stay fluent — Qwen3 free-associates confidently
-regardless of what the adapter feeds it — but don't yet describe the images. `adapter_flickr_batched.pth`'s
-captions vary by image where the least-trained checkpoint's barely do, a real sign the image token
-is carrying information. The training loop, checkpointing and serving path are already in place to
-train it further without code changes — and how far that gets is measured below.
+regardless of what the adapter feeds it — but don't describe the images. `adapter_flickr_batched.pth`'s
+captions vary by image where the least-trained checkpoint's barely do, a first sign the image token
+was carrying information.
 
 **Evaluation.** `multimodal_captioning/data.py` splits the sample 80/20, and training scores an
-untrained adapter on the held-out half as a baseline before training starts:
+untrained adapter on the held-out half as a baseline before training starts. The shipped run:
 
 ```
-Baseline (untrained adapter) held-out loss: 6.4251
-Epoch 1/3  train_loss=6.3248  val_loss=6.0981
-Epoch 2/3  train_loss=6.2498  val_loss=6.1429
-Epoch 3/3  train_loss=6.1023  val_loss=6.1085
-Best held-out loss 6.0981 against baseline 6.4251 (beats baseline)
+Baseline (untrained adapter) held-out loss: 5.1933
+Epoch  1/15  train_loss=2.5658  val_loss=1.9971
+Epoch  5/15  train_loss=1.8993  val_loss=1.9227
+Epoch 10/15  train_loss=1.8491  val_loss=1.8851
+Epoch 15/15  train_loss=1.7899  val_loss=1.8589
+Best held-out loss 1.8589 against baseline 5.1933 (beats baseline)
 ```
 
-Training beats the baseline, with the best epoch first.
+Epoch counts are an upper bound rather than a plan — `BestMetric` stops a run after three epochs
+without a new best. It never fired here: held-out loss was still falling at epoch 15, so 15 was a
+budget, not a converged curve. Read that loss next to the agreement table above, not on its own.
 
-**Sixteen times the data closes a quarter of the gap at best.** "More data and epochs" is the
-obvious next move, and the [published post](https://roshbeed.com/posts/2026-06-29-image-captioning/)
-measures how far it gets. Same adapter, 1,600 Flickr30k pairs — sixteen times the largest
-checkpoint here — scored by CLIP agreement between the generated caption and the image rather than
-by loss, with the captions a person wrote as the ceiling:
+**Data alone moves this very little, which is why the image representation was the thing to
+change.** The [published post](https://roshbeed.com/posts/2026-06-29-image-captioning/) measures
+"more data and epochs" directly: the same single-token adapter at 1,600 Flickr30k pairs, sixteen
+times the largest checkpoint above, scored the same way.
 
 | | CLIP agreement |
 |---|---|
@@ -392,11 +465,10 @@ by loss, with the captions a person wrote as the ceiling:
 | the captions a person wrote | **0.3280** |
 
 That is 8.6%, 12.6% and 28.2% of the gap to human captions — a mean gain of 0.0228 whose spread is
-wider than two of the three gains. More data moves it, and at this scale the move is both small and
-unstable. The qualitative change is real: the trained adapter writes image-specific sentences
-instead of the free-association above. It is still describing the wrong things much of the time.
-
-Those numbers are the notebook's, not a shipped checkpoint's.
+wider than two of the three gains. Sixteen times the data moves it, and the move is both small and
+unstable. Those numbers are the notebook's, not a shipped checkpoint's, and its floor and ceiling
+(0.1882 and 0.3280) differ slightly from the shipped run's (0.1848 and 0.3233) because the two
+scored different held-out clips. Compare the fractions of the gap, not the raw agreements.
 
 **Training runs on CPU** (`Config.train_on_cpu = True`) for reproducibility — the backward pass
 over the frozen 596M-parameter decoder isn't deterministic on MPS across runs, while CPU runs are
