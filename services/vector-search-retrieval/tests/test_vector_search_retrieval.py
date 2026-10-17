@@ -14,6 +14,7 @@ from typing import Literal
 import pytest
 import torch
 from fastapi.testclient import TestClient
+from torch import nn
 
 from ai_residency_common import load_checkpoint
 from cbow.vocabulary import (
@@ -23,7 +24,7 @@ from cbow.vocabulary import (
     load_words_to_ids,
 )
 from config import Config
-from models.towers import GruTower, encode
+from models.towers import GruTower, encode, encode_batch
 from models.training import (
     build_towers,
     compute_baseline,
@@ -196,6 +197,35 @@ def test_training_beats_each_objective_s_own_floor(
         # A hinge is zero once the margin is satisfied, so the margin is also the score
         # of a model that has learned the ordering. Cross-entropy has no such point.
         assert result.best_loss < config.margin
+
+
+def test_batching_encodes_a_short_sequence_the_same_as_alone(
+    config: Config, vocabulary: dict[str, int]
+) -> None:
+    """Padding must not reach the GRU.
+
+    Run over a padded batch a GRU returns the hidden state after the *pad* tokens, so a
+    short sequence batched beside a long one would encode as whatever the pad drives the
+    state to rather than as itself. `encode_batch` packs, and this is what packing buys:
+    an encoding that does not depend on what else happened to be in the batch.
+
+    It matters here more than usual because token id 0 is both `<PAD>` and the id
+    `tokenize_text` gives an out-of-vocabulary word, so a padding bug would read as
+    plausible unknown-word noise rather than as an error.
+    """
+    torch.manual_seed(0)
+    embedding_layer = nn.Embedding(len(vocabulary), config.embedding_dim)
+    tower = GruTower(embedding_layer, config.hidden_size).eval()
+
+    short = [vocabulary["reagan"], vocabulary["was"]]
+    long = [vocabulary[word] for word in ("rust", "nails", "shower", "bread", "yeast")]
+
+    with torch.no_grad():
+        alone = encode(tower, short)
+        batched = encode_batch(tower, [short, long])
+
+    assert alone is not None
+    assert torch.allclose(alone, batched[0], atol=1e-6)
 
 
 # --- Search-result parsing ---------------------------------------------------------
