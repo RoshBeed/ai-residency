@@ -120,8 +120,16 @@ class Config(BaseConfig):
     num_epochs: int = 3
     batch_size: int = 4
 
-    model_name: str = "openai/whisper-small"
-    tokenizer_model_name: str = "openai/whisper-small"
+    # whisper-tiny, not -small. This service demonstrates a mechanism -- emotion as a
+    # token the decoder emits, from a tokenizer extended with one special token per
+    # emotion -- and the mechanism is identical at any backbone size. Size is not free:
+    # the feature extractor pads every clip to 30 seconds (3000 mel frames) whatever its
+    # real length, so on 2-5 second clips ~90% of every pass is silence, and a full
+    # fine-tune of whisper-small's 281.6M parameters on MPS cost 2h50m for one epoch.
+    # tiny is a quarter the width and a third the depth, so about a twelfth of that, and
+    # several epochs fit in the time one used to take.
+    model_name: str = "openai/whisper-tiny"
+    tokenizer_model_name: str = "openai/whisper-tiny"
     emotion_tokens: tuple[str, ...] = (
         "<emotion_happy>",
         "<emotion_sad>",
@@ -137,7 +145,13 @@ class Config(BaseConfig):
     max_duration_seconds: float = 30.0
 
     datasets_dir: Path = field(default_factory=lambda: Path("datasets"))
-    dataset_keys: tuple[str, ...] = ("crema_d", "emodb")
+    # CREMA-D only by default, so a re-run reproduces the shipped checkpoint. EmoDB is
+    # still configured and still downloads; it is German, and the service had been
+    # trained on it alone -- 535 clips that scored 0.2342 against a 0.2382 baseline,
+    # i.e. below chance, on a page meant to demonstrate the mechanism to an English
+    # speaker. Add it back with AI_RESIDENCY_DATASET_KEYS="crema_d emodb" to train on
+    # both; `load_manifest_rows` concatenates every corpus whose manifest exists.
+    dataset_keys: tuple[str, ...] = ("crema_d",)
     val_split: float = 0.2
     samples_per_emotion: int = 5
 

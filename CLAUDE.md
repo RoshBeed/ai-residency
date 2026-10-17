@@ -544,9 +544,16 @@ Open:
 - `speech-emotion-recognition` has a checkpoint now and answers 200, but it is one epoch on
   EmoDB alone and **scores at chance**: val_acc 0.2342 against a majority-class baseline of
   0.2382, and `/predict` returns a near-uniform distribution over the six emotions. It was
-  pushed to make the page demonstrable, not because it works. CREMA-D (the larger corpus) was
-  skipped -- `make download-data` clones it over git-lfs by the gigabyte -- and one epoch of
-  whisper-small on MPS took 2h50m, so more epochs need the GPU host, not a laptop.
+  pushed to make the page demonstrable, not because it works.
+
+  That first run took 2h50m for one epoch, which got blamed on the laptop and should not have
+  been. **Whisper's feature extractor pads every clip to 30 seconds** -- 3000 mel frames -- and
+  EmoDB clips average 2.5s, so 92% of every forward and backward pass was silence. Combined with
+  a full fine-tune of all 281.6M parameters of whisper-small, on MPS where some ops fall back to
+  CPU. whisper-tiny is a quarter the width and a third the depth, so roughly a twelfth of the
+  encoder cost; the same run is minutes, not hours. The point of this service is the mechanism --
+  emotion as a token the decoder emits -- not the size of the backbone, so the backbone should be
+  the smallest one that shows it.
 - `content-scoring` ships a `log_mse` objective, which ranks well and predicts about a fifth of the
   upvotes that actually happen. `poisson` is implemented and predicts the count directly; a binary
   head on `score >= 100` finds front-page posts best and cannot rank at all. Which of the three is
