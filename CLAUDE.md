@@ -706,9 +706,26 @@ Status:
       Flickr30k. Nothing here depends on someone else's account at serving time, which is
       what the rule is for; the training path depends on a dataset nobody may re-host, which
       is a property of the dataset rather than a gap to close.
-- [ ] `multimodal-captioning` -- then measure, not extrapolate, what SmolLM2-135M buys as
-      the decoder. The 2.9x estimate is arithmetic, and tonight's arithmetic was wrong by
-      ~40x in both directions.
+- [ ] `multimodal-captioning` -- what SmolLM2-135M buys as the decoder, **measured on the
+      real training step** (the service's own `caption_loss` over its own adapter and
+      collate function, 8 timed steps after 3 warmup):
+
+      | decoder | batch 4 | batch 8 |
+      |---|--:|--:|
+      | Qwen3-0.6B-Base (596M, 28 x 1024) | 0.436s* | 0.817s |
+      | SmolLM2-135M-Instruct (135M, 30 x 576) | 0.181s | **0.256s** |
+
+      **3.19x at batch 8, against the 2.9x the arithmetic predicted** -- so this time the
+      estimate held, which is worth recording next to the warning above it that two earlier
+      ones were out by ~40x. (*The Qwen batch-4 mean was 1.173s with a 5.818s max because
+      MPS threw `Discarded (victim of GPU error/recovery)` mid-run; its minimum is the
+      usable figure, and batch 8 was stable at min 0.796 / max 0.880.)
+
+      At 0.256s/step a full 5,000-pair, 15-epoch run is ~40 minutes against ~2.1 hours, so
+      the quality half is now cheap to answer and is the actual open question: the decoder
+      swap drops the adapter's output width 1024 to 576, invalidating every existing adapter
+      checkpoint, so it needs a fresh run scored on CLIP agreement against the shipped
+      0.2115 / 0.1848 floor / 0.3233 ceiling. Compute is measured; quality is not.
 - [x] `vit-classifier` -- already meaningful, no work needed. 91.78% on the 10,000-image
       MNIST test set against an 11.35% majority-class baseline, from a shipped checkpoint
       after one epoch from scratch.
