@@ -130,6 +130,28 @@ def test_the_declared_training_module_exists() -> None:
         )
 
 
+def test_every_makefile_module_exists() -> None:
+    """A service Makefile is the documented way in, and `python -m` names go stale.
+
+    `[tool.ai-residency] train-module` is asserted above because CI reads it, which left
+    the per-service Makefiles as the one place a module name could be renamed out from
+    under a `make` target with nothing to notice. Two were already wrong:
+    whisper-fine-tuning still named an `audio_fine_tuning` package that predates the
+    service's rename, so `make train` and `make demo` both died on
+    ModuleNotFoundError, and rlhf-ppo still named `training.run_ppo` from before its nine
+    top-level packages became one. Both services built, served and tested green.
+    """
+    for path in sorted((ROOT / "services").iterdir()):
+        makefile = path / "Makefile"
+        if not makefile.exists():
+            continue
+        for module in re.findall(r"python -m ([a-zA-Z0-9_.]+)", makefile.read_text()):
+            target = path.joinpath(*module.split("."))
+            assert target.with_suffix(".py").exists() or (target / "__init__.py").exists(), (
+                f"{path.name}/Makefile runs `python -m {module}`, which does not exist"
+            )
+
+
 def test_the_root_dockerfiles_are_the_only_ones() -> None:
     """Ten near-identical copies each is what the parameterised pair replaced."""
     strays = [

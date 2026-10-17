@@ -2,7 +2,7 @@
 .PHONY: train-loop train serve test help
 
 train:  ## Run ONE PPO step on two example prompts
-	uv run python -m training.run_ppo
+	uv run python -m rlhf_ppo.training.run_ppo
 
 train-loop:  ## Run a PPO loop on real TL;DR prompts, reward measured before and after
 	uv run python -m rlhf_ppo.training.run_ppo_loop
