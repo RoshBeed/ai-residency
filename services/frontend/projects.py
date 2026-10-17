@@ -293,7 +293,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
     "vector-search-retrieval": {
         "icon": "🔍",
         "title": "Vector Search & Retrieval",
-        "subtitle": "Dual-encoder GRU architecture, triplet loss, Redis HNSW indexing",
+        "subtitle": "Dual-encoder GRU architecture, in-batch negatives, Redis HNSW indexing",
         "description": (
             "Retrieves relevant documents through a dual-encoder architecture "
             "that maps queries and documents into a shared embedding space, "
@@ -321,10 +321,14 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "map queries and documents into a shared embedding space, indexed in Redis "
             "via HNSW for approximate nearest-neighbour lookup.\n\n"
             "**Architecture.** CBOW word embeddings (trained on MS MARCO's vocabulary) "
-            "feed both towers. The towers are trained with triplet loss on (query, "
-            "relevant passage, irrelevant passage) triples — the loss pulls the query "
-            "and relevant document embeddings together while pushing the irrelevant one "
-            "away. Once trained, the document tower embeds every passage in the corpus "
+            "feed both towers. The towers are trained with in-batch negatives over "
+            "88,523 (query, relevant passage, irrelevant passage) triples: each query is "
+            "scored against every document in the batch at once, so a batch of 64 gives "
+            "it 63 wrong answers to be pushed away from instead of the one sampled "
+            "negative triplet loss uses. On held-out queries ranked against a "
+            "5,000-document pool that reaches **recall@10 of 0.3983** where chance is "
+            "0.0020 — triplet loss on the same data for the same ten epochs reaches "
+            "0.1250. Once trained, the document tower embeds every passage in the corpus "
             "once, offline, into a Redis HNSW index. At query time, only the query "
             "tower runs — one forward pass, then a cosine-distance ANN search over the "
             "index. Redis is a real runtime dependency throughout, not optional.\n\n"
@@ -347,7 +351,9 @@ PROJECTS: dict[str, dict[str, Any]] = {
             (
                 "assets/dual-encoder-retrieval/fig5-triplet-loss.png",
                 "Triplet loss — pulls the query and relevant document embeddings together while "
-                "pushing the irrelevant one apart, with a margin to prevent trivial solutions.",
+                "pushing the irrelevant one apart, with a margin to prevent trivial solutions. "
+                "The shipped checkpoint trains with in-batch negatives instead, which scores "
+                "every document in the batch rather than one sampled negative.",
             ),
         ],
         "model_specs": [

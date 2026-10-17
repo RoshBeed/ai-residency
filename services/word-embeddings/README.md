@@ -601,7 +601,7 @@ the [Quickstart](#quickstart) for running both from Docker.
   the regression head that consumes these frozen vectors, and where the honest downstream result
   lives.
 - [the dual-encoder retrieval project](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) —
-  recurrent (GRU) query/document towers trained with a triplet objective, an alternative to
+  recurrent (GRU) query/document towers trained with in-batch negatives, an alternative to
   average-pooled embeddings for sequence representation.
 - [the vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — self-attention and transformer encoder/decoder
   implemented from scratch.

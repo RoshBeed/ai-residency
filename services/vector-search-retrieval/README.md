@@ -2,16 +2,22 @@
 
 ## TL;DR
 
-- **What it is:** a dual-encoder retrieval system — a query tower and a document tower trained end-to-end with triplet loss, with every passage embedded once and indexed for approximate nearest-neighbour search.
-- **Built:** the full offline/online split — CBOW embeddings, triplet-loss training with a W&B sweep, a held-out evaluation harness, and Redis/RediSearch HNSW indexing for live queries.
-- **What I'd do next:** move the training loop from triplet loss to in-batch negatives — measured
-  at 3x the recall@10 on real MS MARCO scale (§6) — then report Recall@K/MRR against a BM25
-  baseline.
+- **What it is:** a dual-encoder retrieval system — a query tower and a document tower trained
+  end-to-end with in-batch negatives, with every passage embedded once and indexed for approximate
+  nearest-neighbour search.
+- **Result:** **recall@10 of 0.3983** against a 5,000-document pool, where chance is 0.0020 and
+  untrained towers score 0.0018 — 199x chance, on 88,523 MS MARCO triples. Trained with triplet
+  loss instead, the same towers on the same data for the same ten epochs reach 0.1250 (§6).
+- **Built:** the full offline/online split — CBOW embeddings, both training objectives behind one
+  config field, a recall@K harness against a fixed document pool, and Redis/RediSearch HNSW
+  indexing for live queries.
+- **What I'd do next:** report Recall@K/MRR against a BM25 baseline, which is the comparison that
+  says whether any of this beats term matching.
 
 This repo builds a neural document retrieval system: given a search query, find the most relevant
-passage in a corpus. I trained a query tower and a document tower with a triplet loss on real
-search queries (MS MARCO), so a query's vector lands close to its relevant passage and far from
-irrelevant ones. Once trained, every passage gets embedded once and indexed for approximate
+passage in a corpus. I trained a query tower and a document tower on real search queries
+(MS MARCO), so a query's vector lands close to its relevant passage and far from irrelevant
+ones. Once trained, every passage gets embedded once and indexed for approximate
 nearest-neighbour search, so retrieval at query time is a single vector lookup instead of scoring
 every passage in the corpus. This is the dual-encoder architecture behind modern semantic/vector
 search.
@@ -189,10 +195,13 @@ repo's own loader reads.
 `generate_triples.py` builds `(query, positive_doc, negative_doc)` triples this way, and
 `tokenize_triples.py` converts each into token ids using the CBOW vocabulary.
 
-### 3.3 Triplet Loss
+### 3.3 Two Training Signals Over the Same Triples
 
-With a triple in hand, the training signal is simple: push the query embedding toward its positive
-document and away from its negative one, by at least a margin $m$.
+With a triple in hand there are two ways to turn it into a gradient, and `config.loss` picks
+between them. Both are in `models/losses.py`; §6 measures them against each other.
+
+**Triplet loss** is the simpler one: push the query embedding toward its positive document and
+away from its negative one, by at least a margin $m$.
 
 **Figure 7.** Triplet training signal: the margin geometry (left) and the score/loss wiring (right)
 that this repo's own margin (`0.2`, see the code below) and towers implement.
@@ -224,6 +233,30 @@ loss.backward()
 
 `models/training.py` is this same idea with GRU towers instead of a linear layer, trained
 with a Weights & Biases sweep over learning rate, hidden size, and margin.
+
+**In-batch negatives**, which the service trains with by default, score each query against every
+document in the batch rather than against one sampled negative:
+
+```python
+queries = F.normalize(queries, dim=1)
+documents = F.normalize(documents, dim=1)
+
+# (batch, batch): row i is query i scored against every document in the batch.
+similarities = queries @ documents.T / temperature
+
+# The correct document for query i is at column i, so the diagonal is the label.
+targets = torch.arange(len(queries), device=similarities.device)
+loss = F.cross_entropy(similarities, targets)
+```
+
+One matrix multiply replaces the sampling. The diagonal holds the batch's correct pairs and
+everything off it is a negative, so a batch of 64 gives each query 63 wrong answers to be pushed
+away from instead of one. The temperature matters: cosine similarities live in [-1, 1], and
+without dividing by something small the logits are too flat for cross-entropy to separate.
+
+The cost is that in-batch negatives are *random* documents, not hard ones — a batch rarely
+contains a near-miss for a given query. That is what hard-negative mining would add, and §6's
+numbers say to spend the effort on a BM25 baseline first.
 
 ### 3.4 Indexing and Approximate Nearest-Neighbour Search
 
@@ -357,13 +390,33 @@ all five steps with real, importable calls into these same scripts, cell by cell
 
 ## 6. Experimental Results
 
-The full pipeline runs end to end — CBOW embeddings, triplet-loss tower training, Redis indexing,
-live query — reproduced here on a reduced scale (300k-token corpus, 444 training triples from real
-MS MARCO examples) with a fixed seed (`torch.manual_seed(42)`) for reproducibility.
+`make evaluate` is the source of every number here: it loads the shipped towers, scores them
+against untrained towers of the same shape, and prints the chance rate beside both.
 
-Triplet loss on the training triples dropped from 0.2026 (epoch 1) to 0.0032 (epoch 10). On the
-training queries, positive-document cosine similarity was consistently well above negative-document
-similarity:
+### Recall@10 against a 5,000-document pool
+
+The shipped checkpoint trains on **88,523 MS MARCO triples** for ten epochs and is scored on
+10,783 held-out ones:
+
+| | recall@10 | pairwise accuracy |
+|---|--:|--:|
+| chance | 0.0020 | 0.5000 |
+| untrained towers, same shape | 0.0018 | 0.5090 |
+| **shipped (in-batch negatives)** | **0.3983** | **0.9470** |
+
+Recall@10 is the metric that matters, and the pool is what makes it mean anything. Each held-out
+query is ranked against 5,000 distinct documents with exactly one correct answer among them, so
+chance is 10/5000 = 0.0020 and the shipped towers are 199x it. The untrained column is the control
+that makes the number readable: towers of the same architecture over the same frozen CBOW
+embeddings, with only the GRU weights random, land at 0.0018 — chance, as they should.
+
+**Pairwise accuracy would have hidden most of this.** Asking only whether a query is closer to its
+positive than to its one sampled negative starts at 50% chance, and on that metric the two
+objectives below are 0.9470 and 0.9037 — nearly tied. Against a real pool they differ threefold.
+A retrieval metric has to make the model pick its answer out of a crowd.
+
+On the training queries, positive-document cosine similarity is consistently well above
+negative-document similarity:
 
 | Query | sim(query, positive doc) | sim(query, negative doc) |
 |---|---|---|
@@ -396,25 +449,36 @@ Rank 5 (score=0.6838): "Home » Tramadol Uses, Warnings and Treatment. Tramadol 
 That transcript is real — captured live from `run_query()` in `retrieval/query_engine.py` against
 the trained query tower and the actual indexed corpus.
 
-### In-batch negatives beat triplet loss threefold at scale
+### In-batch negatives beat triplet loss threefold
 
-That transcript is what 444 triples buys. The [published
-post](https://roshbeed.com/posts/2026-06-15-two-tower-search/) runs the same architecture over
-78,964 MS MARCO pairs against 5,000 documents, where chance recall@10 is 0.0020:
+Both objectives are in `models/losses.py` behind one config field, and the towers are untouched
+between them, so the comparison changes only where the negatives come from. Same 88,523 triples,
+same ten epochs, same frozen embeddings, same held-out split, both scored by the same
+`make evaluate`:
 
-| loss | recall@10, 10 epochs | against chance |
-|---|---|---|
-| triplet, one sampled negative | 0.0932 | 46.6x |
-| **in-batch negatives** | **0.2856** | **142.8x** |
+| loss | recall@10 | against chance | pairwise |
+|---|--:|--:|--:|
+| triplet, one sampled negative | 0.1250 | 62.5x | 0.9037 |
+| **in-batch negatives** | **0.3983** | **199x** | **0.9470** |
 
-Same towers, same pairs, same epochs; the only change is where the negatives come from. Triplet
-loss scores one sampled negative per query, so most of a batch does no work. In-batch negatives
-treat every other document in the batch as a negative, which costs one matrix multiply and gives
-each query hundreds of comparisons instead of one.
+Triplet loss scores one sampled negative per query, so most of a batch does no work. In-batch
+negatives treat every other document in the batch as a negative for one extra matrix multiply:
+with a batch of 64 each query is compared against 63 wrong answers instead of one, and the row of
+similarities goes straight into a cross-entropy. The gradient sees which wrong answers were nearly
+chosen, which is the information triplet loss throws away by sampling.
 
-That is a smaller change than the hard-negative mining this README used to list as the next step,
-and it should come first. **The service still trains with triplet loss** — the number above is the
-notebook's, not this checkpoint's.
+**The loss numbers point the opposite way, and that is the lesson.** Triplet converges to 0.0108
+from an untrained 0.2004, while in-batch sits at 1.0827 from an untrained 5.0689 — triplet's final
+loss is a hundred times lower, and its retrieval is three times worse. The two losses are not on a
+common scale, so neither one ranks the other: a margin that is already satisfied contributes
+exactly zero, which is why a well-separated easy negative drives triplet's loss toward nothing
+while teaching the towers nothing. Rank checkpoints on the retrieval metric, never on a loss
+compared across objectives.
+
+This reproduces the [published
+post](https://roshbeed.com/posts/2026-06-15-two-tower-search/), which measured 0.2856 against
+0.0932 on 78,964 pairs — a 3.06x ratio against the 3.19x here. Both arms score higher on this
+run's larger corpus and rebuilt vocabulary; the effect is the same size.
 
 ## 7. Related Work
 
