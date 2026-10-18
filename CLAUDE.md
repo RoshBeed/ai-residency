@@ -706,26 +706,46 @@ Status:
       Flickr30k. Nothing here depends on someone else's account at serving time, which is
       what the rule is for; the training path depends on a dataset nobody may re-host, which
       is a property of the dataset rather than a gap to close.
-- [ ] `multimodal-captioning` -- what SmolLM2-135M buys as the decoder, **measured on the
-      real training step** (the service's own `caption_loss` over its own adapter and
-      collate function, 8 timed steps after 3 warmup):
+- [x] `multimodal-captioning` -- SmolLM2-135M as the decoder: **measured, and rejected.**
+
+      Compute first, on the real training step (the service's own `caption_loss` over its
+      own adapter and collate function, 8 timed steps after 3 warmup):
 
       | decoder | batch 4 | batch 8 |
       |---|--:|--:|
       | Qwen3-0.6B-Base (596M, 28 x 1024) | 0.436s* | 0.817s |
       | SmolLM2-135M-Instruct (135M, 30 x 576) | 0.181s | **0.256s** |
 
-      **3.19x at batch 8, against the 2.9x the arithmetic predicted** -- so this time the
-      estimate held, which is worth recording next to the warning above it that two earlier
-      ones were out by ~40x. (*The Qwen batch-4 mean was 1.173s with a 5.818s max because
-      MPS threw `Discarded (victim of GPU error/recovery)` mid-run; its minimum is the
-      usable figure, and batch 8 was stable at min 0.796 / max 0.880.)
+      **3.19x at batch 8 against the 2.9x the arithmetic predicted** -- so that estimate
+      held, worth recording next to the warning that two earlier ones were out by ~40x.
+      (*The Qwen batch-4 mean was 1.173s with a 5.818s max because MPS threw `Discarded
+      (victim of GPU error/recovery)` mid-run; its minimum is the usable figure.)
 
-      At 0.256s/step a full 5,000-pair, 15-epoch run is ~40 minutes against ~2.1 hours, so
-      the quality half is now cheap to answer and is the actual open question: the decoder
-      swap drops the adapter's output width 1024 to 576, invalidating every existing adapter
-      checkpoint, so it needs a fresh run scored on CLIP agreement against the shipped
-      0.2115 / 0.1848 floor / 0.3233 ceiling. Compute is measured; quality is not.
+      Then quality, trained at the shipped run's settings -- 5,000 Flickr30k pairs, 15
+      epochs, same adapter, same seeded split, same CLIP-agreement harness at 200 pairs:
+
+      | decoder | untrained floor | trained | human ceiling | gap closed |
+      |---|--:|--:|--:|--:|
+      | Qwen3-0.6B (shipped) | 0.1848 | 0.2115 | 0.3233 | **19.2%** |
+      | SmolLM2-135M | 0.1984 | 0.1964 | 0.3286 | **-1.6%** |
+
+      It scores *below its own untrained floor*. 3.19x cheaper per step and it does not
+      work at this scale, so **the decoder stays Qwen3-0.6B** and `adapter_patches.pth`
+      stays the default. The SmolLM2 adapter is deliberately not registered in
+      `config.CHECKPOINTS` and not pushed: that registry drives the frontend's checkpoint
+      list, and a 576-wide adapter loaded against a 1024-wide decoder would produce
+      confident nonsense.
+
+      **The way it failed is the point, and it is the same failure a second time.**
+      Held-out loss fell cleanly for all 15 epochs, 2.7203 to 2.3035, while agreement sat
+      below the floor the whole way; the captions say why -- "a black and white tie, and a
+      black and white tie". Loss is the wrong scoreboard for this service, which the
+      pre-fix Qwen3 run already showed, and this is an independent confirmation with a
+      different decoder and a different vocabulary. Note also that the two losses are not
+      comparable to each other at all: cross-entropy over SmolLM2's 49,152 tokens is
+      naturally lower than over Qwen3's 151,936, so the only number that means anything
+      across a decoder swap is agreement.
+
 - [x] `vit-classifier` -- already meaningful, no work needed. 91.78% on the 10,000-image
       MNIST test set against an 11.35% majority-class baseline, from a shipped checkpoint
       after one epoch from scratch.
@@ -833,6 +853,64 @@ Status:
       doing different things and the README's headline claimed the five. The endpoint keeps
       five on purpose -- it streams a transcript between every step -- but it reads
       `serve_num_steps` now, with the measured cost in the field's docstring.
+
+## Next pass: optimization, once every service is at a meaningful checkpoint
+
+The pass above gets each service to a result that beats a stated baseline. This one makes
+those results better, and it is deliberately narrow about how.
+
+**What is in scope:** size and shape. Hyperparameters, how long something trains, how much
+data it sees, the width or depth of the one trainable part, swapping a pretrained model for
+a different pretrained model, changing a loss function, changing what gets measured and
+how. Quick and useful, not sprawling -- the point is a better number for an afternoon's
+work, not a research programme.
+
+**What is not:** the concept or the architecture. Late fusion stays late fusion. Attention
+stays written out rather than called. The adapter stays the only thing that trains in
+captioning. Emotion stays a token the decoder emits. The two towers stay two towers. If a
+change would make the service demonstrate a different thing, it belongs in a different
+service, not in this pass.
+
+**Measure the lever before spending an afternoon on it**, which is the one rule the last
+pass earned the hard way. Three of this pass's leads below are already measured, and two
+things that looked obvious turned out to be wrong when checked: a smaller captioning
+decoder is 3.19x cheaper and scores *below its own untrained floor*, and a larger PPO
+learning rate makes reward monotonically worse rather than better. Both would have been a
+wasted afternoon and a wrong write-up.
+
+Leads, strongest first, with what is already known:
+
+- **`vector-search-retrieval`: the vocabulary, measured.** 1,506 of 5,034 held-out queries
+  contain a word the text8-trained vocabulary never saw, and they score **0.2477 recall@10
+  against 0.4626** for the 3,528 it covers. `tokenize_text` maps an unknown word to token
+  0, which is also the padding id, so the most discriminative word in a query arrives
+  indistinguishable from padding. Subword tokenization, or building the vocabulary from MS
+  MARCO rather than from Wikipedia. The towers do not change. Biggest known lever in the
+  repo.
+- **`content-scoring`: the encoder, measured.** A mean of static word vectors throws away
+  word order; a fine-tuned MiniLM already beats the shipped model by +0.017 rho and +19% on
+  finding front-page posts, and capacity over the *fixed* representation does nothing. The
+  probes are in `notebooks/content-scoring/`. This is a model swap, which is in scope, and
+  the number to beat already exists.
+- **`rlhf-ppo`: the signal, not the step size.** Scaling the update 1000x makes reward
+  monotonically worse, so the learning rate is ruled out. What is left: advantages
+  estimated from 4-prompt batches, 10-token completions, and the missing SFT stage (the KL
+  reference is the base model, so the penalty measures drift from the wrong thing). Also
+  unmeasured: `OpenAssistant/reward-model-deberta-v3-base` is 3.5x cheaper in compute than
+  the large-v2 currently used and inference-only, so it may not be the bottleneck at all.
+- **`vit-classifier` and `vit-seq2seq`: epochs.** Both ship a checkpoint from *one* epoch
+  from scratch -- 91.78% and 68.00% exact-sequence. The cheapest lever in the repo and
+  nothing about either architecture changes.
+- **`whisper-fine-tuning`: `serve_num_steps`.** Five steps cost WER 0.1642 to 0.2687 on
+  held-out speech while the correction lands at step one. Two or three steps would keep a
+  visible trajectory for less damage; the question is how much trajectory the page needs,
+  which is a judgement rather than a measurement.
+- **`speech-emotion-recognition`: already known.** Held-out loss bottoms at epoch 6 and
+  accuracy peaks at 10 against the 20 it ran, so the useful range is eight to ten. Cheaper
+  rather than better.
+- **`multimodal-captioning`: closed for now.** The decoder swap is measured and rejected,
+  and §6 already shows 16x the data buys almost nothing. The adapter's own width and depth
+  are the only untested knob, and it is the one thing that trains.
 
 ### Backbone sizing, researched 2026-10-17
 
