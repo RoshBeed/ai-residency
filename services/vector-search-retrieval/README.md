@@ -5,19 +5,22 @@
 - **What it is:** a dual-encoder retrieval system — a query tower and a document tower trained
   end-to-end with in-batch negatives, with every passage embedded once and indexed for approximate
   nearest-neighbour search.
-- **Result:** **recall@10 of 0.6728** against a 5,000-document pool, where chance is 0.0020 and
-  untrained towers score 0.0022 — 336x chance, on 88,523 MS MARCO triples, with the median query's
-  own document coming back third. Trained with triplet loss instead, the same towers on the same
+- **Result:** **recall@10 of 0.8381** against a 5,000-document pool, where chance is 0.0020 and
+  untrained towers score 0.0014 — 419x chance, on 88,523 MS MARCO triples, with the median query's
+  own document coming back **first**. Trained with triplet loss instead, the same towers on the same
   data for the same ten epochs reach 0.3047 (§6). Verified through the container against a
-  105,052-document index, not only in-process.
+  104,808-document index, not only in-process.
 - **Built:** the full offline/online split — CBOW embeddings, both training objectives behind one
   config field, a recall@K harness against a fixed document pool, and Redis/RediSearch HNSW
   indexing for live queries.
-- **What I'd do next:** fix the vocabulary, not the loss. 30% of real queries contain a word the
-  text8-trained vocabulary never saw, and those score 0.4309 recall@10 against 0.7761 for queries
-  it covers (§6) — and swapping the objective moved both columns without closing the gap, so it is
-  a property of the representation. Then report Recall@K/MRR against a BM25 baseline, which is the
-  comparison that says whether any of this beats term matching.
+- **What moved it:** the vocabulary, not the loss. text8 is a 2006 Wikipedia dump and the queries
+  are real search traffic, so 30% of them contained a word it had never seen — and an unknown word
+  maps to token 0, which is also the padding id, so the most discriminative word in a query arrived
+  at the GRU indistinguishable from padding. Extending the vocabulary onto the corpus being
+  searched took recall@10 from 0.6728 to 0.8381 (§6). Swapping the objective, by contrast, had
+  moved both halves of that split and closed none of the gap.
+- **What I'd do next:** report Recall@K/MRR against a BM25 baseline, which is the comparison that
+  says whether any of this beats term matching.
 
 This repo builds a neural document retrieval system: given a search query, find the most relevant
 passage in a corpus. I trained a query tower and a document tower on real search queries
@@ -43,6 +46,7 @@ make train SERVICE=vector-search-retrieval
 Stages specific to this service live in its own Makefile (`make -C services/vector-search-retrieval help`):
 
 - `train-cbow` — Build the vocabulary, then train CBOW word embeddings
+- `extend-vocab` — Extend the text8 vocabulary onto MS MARCO and continue-train CBOW
 - `train-triples` — Build and tokenize MS MARCO triples
 - `train-encoder` — Train the GRU dual-encoder towers
 - `index` — Embed the corpus with the trained doc tower and index it in Redis
@@ -347,7 +351,7 @@ all five in order.
 
 ```bash
 make install   # uv sync
-make train SERVICE=vector-search-retrieval     # train-cbow && train-triples && train-encoder, in order
+make train SERVICE=vector-search-retrieval     # train-cbow && extend-vocab && train-triples && train-encoder
 make serve SERVICE=vector-search-retrieval     # the FastAPI query service (needs Redis already running)
 make test SERVICE=vector-search-retrieval      # pytest
 ```
@@ -375,23 +379,26 @@ uv sync
 uv run python -m cbow.train_tokenizer
 uv run python -m cbow.train_word2vec
 
-# 2. Build training triples from MS MARCO
+# 2. Extend that vocabulary onto MS MARCO's own words and continue-train CBOW
+uv run python -m cbow.extend_vocab
+
+# 3. Build training triples from MS MARCO
 uv run python -m data_prep.generate_triples
 uv run python -m data_prep.tokenize_triples
 
-# 3. Train the dual encoder (GRU towers, with a W&B sweep)
-uv run python -m training
+# 4. Train the dual encoder (GRU towers)
+uv run python -m models.training
 
-# 4. Index the document corpus in Redis
+# 5. Index the document corpus in Redis
 uv run python -m retrieval.save_doc_embeddings_to_redis
 
-# 5. Query it interactively (CLI), or call the FastAPI service
+# 6. Query it interactively (CLI), or call the FastAPI service
 uv run python -m retrieval.query_redis_ann
 uv run python -m serving.api
 ```
 
-`scripts/script.sh` documents the same sequence end-to-end. `notebooks/walkthrough.ipynb` narrates
-all five steps with real, importable calls into these same scripts, cell by cell.
+`notebooks/vector-search-retrieval/walkthrough.ipynb` narrates the same sequence with real,
+importable calls into these same modules, cell by cell.
 
 ## 6. Experimental Results
 
@@ -406,85 +413,135 @@ The shipped checkpoint trains on **88,523 MS MARCO triples** for ten epochs and 
 | | recall@10 | recall@1 | median rank | pairwise accuracy |
 |---|--:|--:|--:|--:|
 | chance | 0.0020 | 0.0002 | 2,500 | 0.5000 |
-| untrained towers, same shape | 0.0022 | 0.0004 | 2,471 | 0.5240 |
-| **shipped (in-batch negatives)** | **0.6728** | **0.3778** | **3** | **0.9770** |
+| untrained towers, same shape | 0.0014 | 0.0000 | 2,488 | 0.5050 |
+| **shipped (in-batch negatives)** | **0.8381** | **0.5316** | **1** | **0.9940** |
 
 Recall@10 is the metric that matters, and the pool is what makes it mean anything. Each held-out
 query is ranked against 5,000 distinct documents with exactly one correct answer among them, so
-chance is 10/5000 = 0.0020 and the shipped towers are **336x** it. The median query's own document
-comes back third.
+chance is 10/5000 = 0.0020 and the shipped towers are **419x** it. The median query's own document
+comes back first.
 
 The untrained row is the control that makes the number readable: the same architecture over the
-same frozen CBOW embeddings, with only the GRU weights random. It lands at 0.0022 against a 0.0020
-chance floor — a touch above chance rather than exactly on it, because the embeddings underneath
-are trained and carry real word similarity even when the recurrence on top is noise. Those towers
-are seeded, so that floor is the same number on every run.
+same frozen CBOW embeddings, with only the GRU weights random. It lands within a rounding error of
+the 0.0020 chance floor, so none of the result comes from the embeddings alone. Those towers are
+seeded, so that floor is the same number on every run.
 
 **Pairwise accuracy would have hidden most of this.** Asking only whether a query is closer to its
 positive than to its one sampled negative starts at 50% chance, and on that metric the two
-objectives below are 0.9770 and 0.9690 — a gap of 0.008. Against a real pool one finds its answer
-in the top ten twice as often as the other, and first place four times as often. A retrieval metric
+objectives below are 0.9940 and 0.9690 — a gap of 0.025. Against a real pool one finds its answer
+in the top ten nearly three times as often as the other, and first place six times as often. A retrieval metric
 has to make the model pick its answer out of a crowd.
 
-### What 0.6728 looks like
+### What 0.8381 looks like
 
 An aggregate hides the shape of a result, so here is where every held-out query's own document
 actually lands, and one query from each end:
 
 | | share of 5,034 held-out queries |
 |---|--:|
-| rank 1 (recall@1 0.3778) | 1,902 |
-| ranks 1–10 (recall@10 0.6728) | 3,387 |
-| past rank 100 | 791 |
+| rank 1 (recall@1 0.5316) | 2,676 |
+| ranks 1–10 (recall@10 0.8381) | 4,219 |
+| past rank 100 | 271 |
 
-Median rank is 3 of 5,000.
+Median rank is 1 of 5,000. Before the vocabulary work those were 1,902, 3,387 and 791, with a
+median of 3.
 
-Verified through the container rather than only in-process, against the **105,052**-document index
+Verified through the container rather than only in-process, against the **104,808**-document index
 the compose stack builds — twenty times the evaluation pool:
 
 ```
 query: "where was movie the birds filmed"
-  1. 0.2956  "Batman is a fictional superhero appearing in American comic books..."
-  2. 0.2980  "The movie is being shot in Detroit, where the Argo star has been..."
-  3. 0.3062  "The Birds filming location: the Schoolhouse: Bodega Lane, Bodega..."  <- correct
+  1. 0.2485  "The location scenes in the Alfred Hitchcock-directed film, The Birds..."  <- correct
+  2. 0.2716  "Confidence votes 19. The Inbetweeners was filmed in England, Around..."
+  3. 0.2796  "What about Bob. This a howlingly funny movie filmed entirely at Smith..."
 
 query: "what can urinalysis detect"
-  1. 0.4469  "A thermocouple produces a voltage when the temperature of one..."
-  2. 0.4991  "Clean the filter and turn the thermostat up to try the heater again..."
+  1. 0.2077  "Urinalysis is a test that evaluates a sample of your urine. Urinalysis..."
+  2. 0.2097  "Urinalysis is a simple test that assesses the physical and chemical co..."
+  3. 0.2169  "The urinalysis is used as a screening and/or diagnostic tool because i..."
 ```
 
-Those are Redis cosine *distances*, so lower ranks first. The first query finds its answer third out
-of 105,052. The second finds nothing related, and the reason is in the next section: `urinalysis` is
-not in the vocabulary, so the query that reached the tower was effectively "what can detect".
+Those are Redis cosine *distances*, so lower ranks first. The first query finds its answer first of
+104,808. The second is the one worth looking at: it used to return a thermocouple and a thermostat,
+because `urinalysis` was not in the vocabulary and the query that reached the tower was effectively
+"what can detect". The next section is about why that stopped happening.
 
-### The vocabulary is the next ceiling, not the objective
+### The vocabulary was the ceiling, and it was worth 0.165 recall@10
 
-The CBOW embeddings are trained on text8, a Wikipedia dump, while the queries are real search
-traffic. `tokenize_text` maps an unknown word to token 0, which is also the padding id, so an
-out-of-vocabulary word does not merely lose its meaning — it arrives at the GRU indistinguishable
-from padding. Splitting the held-out queries on whether that happens:
+The CBOW embeddings were trained on text8 — a Wikipedia dump from 2006 — while the queries are real
+search traffic. `tokenize_text` maps an unknown word to token 0, which is also the padding id, so an
+out-of-vocabulary word does not merely lose its meaning: it arrives at the GRU indistinguishable
+from padding. Splitting the held-out queries on whether that happens, before and after:
 
 | | queries | recall@10 | median rank |
 |---|--:|--:|--:|
-| every word in the vocabulary | 3,528 | **0.7761** | **2** |
-| one or more words unknown | 1,506 | **0.4309** | **20** |
+| text8 only — every word known | 3,528 | 0.7761 | 2 |
+| text8 only — one or more unknown | 1,506 | 0.4309 | 20 |
+| **extended — every word known** | **4,308** | **0.8935** | **1** |
+| **extended — one or more unknown** | **726** | **0.5096** | **10** |
 
-**Thirty percent of real queries contain a word text8 never used, and those find their answer
-little more than half as often.** Median rank 2 against 20 is the sharper way to see it. The same
-split under triplet loss is 0.3679 against 0.1567, so it is a property of the representation rather
-than of the objective — changing the loss moved both columns and closed none of the gap.
+Thirty percent of real queries contained a word text8 never used, and they found their answer little
+more than half as often. The same split under triplet loss was 0.3679 against 0.1567, so it was a
+property of the representation rather than of the objective — changing the loss moved both columns
+and closed none of the gap.
 
-That is a bigger lever than anything left in the loss function, and it points somewhere specific:
-subword tokenization, or building the vocabulary from the corpus being searched rather than from
-Wikipedia. Both are changes to the *representation*, which is where `content-scoring` also found
-its ceiling after exhausting its architecture.
+`make extend-vocab` closes it the way `content-scoring` closes the same problem on Hacker News
+titles. It counts words over the **training** triples only, because a vocabulary is fitted state and
+counting over validation would leak the evaluation into the model; it keeps every pretrained id
+exactly where it is and appends the new words above them, so the extended matrix is still readable
+by anything that understands the original; and it continues training CBOW on this corpus from the
+pretrained weights. A word that never appears in MS MARCO never appears in a context window, and
+CBOW only reads `in_embed` for context, so its vector comes through untouched — 15,419 of the 15,420
+such rows are bit-identical afterwards, with no freeze mask arranging it. (The exception is `<PAD>`,
+which moves because it *is* context: it fills the window at a document's edges.)
+
+**Half the problem was punctuation, not vocabulary.** text8 is cleaned Wikipedia — lowercase letters
+and spaces, no punctuation at all — while MS MARCO is raw prose, and the tokenizer split on
+whitespace alone. `however,`, `cells.` and `(see` are tokens that vocabulary cannot contain.
+**19.4% of document tokens were unknown that way, and 8.0% after stripping punctuation from the
+ends of words** — that is the index itself, not just the query. Stripping first also halves what the
+extension has to add, because the glued variants collapse into words that are already there: 24,472
+new words instead of 53,735, for a vocabulary of 88,114 rather than 117,377.
+
+The two together took queries containing an unknown word from 29.3% to 14.4%, and recall@10 from
+0.6728 to **0.8381**. Note that the *covered* bucket improved as well, 0.7761 to 0.8935: better
+document representations help every query, not only the ones with rare words.
+
+### The query path and the index path have to tokenize identically
+
+`tokenize_text` built the index and lowercased. `retrieval/query_engine.py:tokenize`, which answers
+`/query`, was `text.strip().split()` and did not. MS MARCO queries ship lowercase, so the held-out
+evaluation never exercised the difference — every number above was measured on a path a person does
+not use. Scored on the same 5,034 queries and the same 5,000-document pool, through the serving
+tokenizer as it then was:
+
+| query as typed | recall@10 | median rank |
+|---|--:|--:|
+| all lowercase, as MS MARCO ships | 0.6728 | 3 |
+| Capitalised First Word | 0.5981 | 4 |
+| **Title Case, As A Person Types** | **0.0020** | **2,477** |
+
+0.0020 is the chance floor. A capitalised word missed the vocabulary and arrived as the padding id,
+so a title-cased query was a query made entirely of padding and the service answered with noise.
+
+There is one `normalise_words` now, in `cbow/vocabulary.py`, and building the triples, filling the
+index and answering `/query` all go through it. All four casings — lowercase, capitalised,
+Title Case, ALL CAPS — now score 0.8381, identical to four decimal places.
+`test_the_served_tokenizer_matches_the_one_that_built_the_index` fails if the two paths diverge
+again. This is the same failure as the preprocessing skew in
+[the ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq):
+two code paths for one model, agreeing in evaluation and disagreeing in production.
 
 ### In-batch negatives beat triplet loss two to one
 
 Both objectives are in `models/losses.py` behind one config field, and the towers are untouched
 between them, so the comparison changes only where the negatives come from. Same 88,523 triples,
 same ten epochs, same frozen embeddings, same held-out split, both scored by the same
-`make evaluate`:
+`make evaluate`.
+
+**Both arms were run on the text8-only vocabulary**, before the extension above, which is the
+honest way to read them: the vocabulary change lifts the in-batch row to 0.8381 and the triplet arm
+has not been re-run, so the two columns are comparable to each other and not to the headline.
 
 | loss | recall@10 | recall@1 | median rank | pairwise |
 |---|--:|--:|--:|--:|

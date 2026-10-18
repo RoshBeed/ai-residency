@@ -343,6 +343,49 @@ def test_tokenizing_maps_unknown_words_to_padding(
     assert tokenize_text("reagan quokka", vocabulary) == [vocabulary["reagan"], 0]
 
 
+def test_the_served_tokenizer_matches_the_one_that_built_the_index(
+    config: Config, vocabulary: dict[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One text, two code paths, and they have to produce the same ids.
+
+    They did not. `tokenize_text` built the index and lowercased;
+    `retrieval.query_engine.tokenize` served `/query` and did not. MS MARCO queries ship
+    lowercase, so the held-out evaluation never exercised the difference -- the service
+    scored 0.6728 recall@10 on the queries it was measured with and **0.0020 on the same
+    queries title-cased, which is the chance floor**, because a capitalised word misses
+    the vocabulary and arrives as token 0, the padding id.
+
+    The case that matters is the one nobody typed into the evaluation, so that is what
+    this asserts: the same query in whatever case a person uses has to reach the towers
+    as the same ids the index was built from.
+    """
+    from cbow.vocabulary import tokenize_text
+    from retrieval import query_engine
+
+    monkeypatch.setattr(query_engine, "load_vocabulary", lambda: vocabulary)
+
+    for text in ("reagan democrat", "Reagan Democrat", "REAGAN DEMOCRAT", "  Reagan  democrat.  "):
+        assert query_engine.tokenize(text) == tokenize_text(text, vocabulary), text
+        assert query_engine.tokenize(text) == [vocabulary["reagan"], vocabulary["democrat"]], text
+
+
+def test_tokenizing_strips_punctuation_from_the_edges_of_a_word(vocabulary: dict[str, int]) -> None:
+    """text8 has no punctuation, and MS MARCO is raw prose.
+
+    The corpus the vocabulary is built from is cleaned Wikipedia -- lowercase letters and
+    spaces -- so `nixon,` and `(reagan` are tokens it cannot contain, and splitting on
+    whitespace alone sent them to the padding id. 19.4% of document tokens were unknown
+    that way against 8.0% after stripping, which is the index rather than the query.
+    Punctuation inside a word is left alone: it is part of the word often enough that
+    removing it would be a different decision.
+    """
+    from cbow.vocabulary import normalise_words, tokenize_text
+
+    assert normalise_words("Democrat, (Reagan) -- party.") == ["democrat", "reagan", "party"]
+    assert tokenize_text("(Reagan),", vocabulary) == [vocabulary["reagan"]]
+    assert normalise_words("...") == []
+
+
 def test_documents_are_deduplicated_by_token_sequence(
     config: Config, cbow_checkpoint: Path, triples: Path
 ) -> None:

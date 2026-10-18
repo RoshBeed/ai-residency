@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: evaluate train-cbow train-triples train-encoder train index query serve redis test help
+.PHONY: evaluate train-cbow extend-vocab train-triples train-encoder train index query serve redis test help
 
 # Note on train-* vs docker-train: the local targets pick up Apple Silicon's MPS backend
 # where it helps, which for this repo means the CBOW stage only (~3.7x faster than CPU on
@@ -12,6 +12,9 @@ train-cbow:  ## Build the vocabulary, then train CBOW word embeddings
 	uv run python -m cbow.train_tokenizer
 	uv run python -m cbow.train_word2vec
 
+extend-vocab:  ## Extend the text8 vocabulary onto MS MARCO and continue-train CBOW
+	uv run python -m cbow.extend_vocab
+
 train-triples:  ## Build and tokenize MS MARCO triples
 	uv run python -m data_prep.generate_triples
 	uv run python -m data_prep.tokenize_triples
@@ -22,7 +25,7 @@ train-encoder:  ## Train the GRU dual-encoder towers
 evaluate:  ## Score the saved towers: recall@K against untrained towers and chance
 	uv run python -m models.evaluate
 
-train: train-cbow train-triples train-encoder  ## Run the full offline pipeline in order
+train: train-cbow extend-vocab train-triples train-encoder  ## Run the full offline pipeline in order
 
 index:  ## Embed the corpus with the trained doc tower and index it in Redis
 	uv run python -m retrieval.save_doc_embeddings_to_redis

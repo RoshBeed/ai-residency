@@ -311,23 +311,24 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "model_links": [],
         "stats": [
             ("Corpus", "MS MARCO (8.8M passages)"),
-            ("Vocabulary", "7,692 words"),
+            ("Vocabulary", "88,114 words"),
             ("Embedding dim", "128"),
-            ("Ranking accuracy", "52.0% pairwise"),
+            ("Recall@10", "0.8381 vs 0.0020 chance"),
         ],
         "intro": (
             "Retrieves relevant documents from MS MARCO's 8.8M passages through a "
             "dual-encoder architecture: a GRU query tower and a GRU document tower that "
             "map queries and documents into a shared embedding space, indexed in Redis "
             "via HNSW for approximate nearest-neighbour lookup.\n\n"
-            "**Architecture.** CBOW word embeddings (trained on MS MARCO's vocabulary) "
-            "feed both towers. The towers are trained with in-batch negatives over "
+            "**Architecture.** CBOW word embeddings feed both towers — trained on text8 "
+            "and then extended onto MS MARCO's own vocabulary, which is what took "
+            "recall@10 from 0.6728 to 0.8381. The towers are trained with in-batch negatives over "
             "88,523 (query, relevant passage, irrelevant passage) triples: each query is "
             "scored against every document in the batch at once, so a batch of 64 gives "
             "it 63 wrong answers to be pushed away from instead of the one sampled "
             "negative triplet loss uses. On held-out queries ranked against a "
-            "5,000-document pool that reaches **recall@10 of 0.6728** where chance is "
-            "0.0020, with the median query's own document coming back third — triplet "
+            "5,000-document pool that reaches **recall@10 of 0.8381** where chance is "
+            "0.0020, with the median query's own document coming back first — triplet "
             "loss on the same data for the same ten epochs reaches 0.3047. Once trained, "
             "the document tower embeds every passage in the corpus "
             "once, offline, into a Redis HNSW index. At query time, only the query "
@@ -359,7 +360,8 @@ PROJECTS: dict[str, dict[str, Any]] = {
         ],
         "model_specs": [
             "**GRU towers** — single-layer GRU, hidden size 128, embedding dim 128. "
-            "~99K parameters per tower, sharing frozen CBOW embeddings from a 7,692-word vocabulary.",
+            "~99K parameters per tower, sharing frozen CBOW embeddings from an 88,114-word "
+            "vocabulary: text8, extended onto MS MARCO's own words.",
         ],
     },
     "vit-classifier": {

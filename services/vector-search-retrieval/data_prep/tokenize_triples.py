@@ -12,7 +12,7 @@ from typing import Any
 from tqdm import tqdm
 
 from ai_residency_common import get_logger, push_checkpoint
-from cbow.vocabulary import load_words_to_ids, vocabulary_fingerprint
+from cbow.vocabulary import load_words_to_ids, tokenize_text, vocabulary_fingerprint
 from config import Config
 from data_prep.generate_triples import SPLITS
 
@@ -23,19 +23,6 @@ logger = get_logger(__name__)
 # One tokenized triple: three token id lists plus the text they came from. `Any` because
 # the values are heterogeneous (`list[int]` and `str`) and it is read straight from JSON.
 Triple = dict[str, Any]
-
-
-def tokenize_text(text: str, words_to_ids: dict[str, int]) -> list[int]:
-    """Map text to token ids, sending unknown words to the padding id.
-
-    Args:
-        text: Text to tokenize.
-        words_to_ids: Vocabulary mapping word to token id.
-
-    Returns:
-        One token id per whitespace-separated word.
-    """
-    return [words_to_ids.get(word, 0) for word in text.lower().split()]
 
 
 def tokenize_triples(config: Config) -> dict[str, list[Triple]]:

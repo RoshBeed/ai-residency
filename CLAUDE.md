@@ -297,6 +297,14 @@ caller would send, push it through the service's own preprocessing and compare. 
 checkpoint on inputs no request can produce is the same error as ranking it on a loss from a
 different objective.
 
+It happened twice in one pass, which is why this is a rule rather than a note.
+`vector-search-retrieval` was the second: the offline tokenizer that filled the Redis index
+lowercased and `retrieval/query_engine.py:tokenize` did not, so `/query` scored **0.0020 recall@10
+on title-cased queries -- the chance floor** -- while the evaluation reported 0.6728 on the
+all-lowercase queries MS MARCO happens to ship. **Test the input the evaluation cannot produce.**
+Held-out data is drawn from the training distribution by construction, so the one case it can never
+cover is the one a real caller supplies: a capital letter, a PNG round trip, a trailing comma.
+
 **Read the error before forming a theory.** `word-embeddings` answered 503 from the published
 image and the first explanation reached for was a slow checkpoint download, so the README's curl
 retry budget got raised from 60 to 300 and then rewritten twice. None of it was the problem. The
@@ -876,15 +884,20 @@ Status:
       was right -- training it properly closed most of it.
 
 - [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
-      triples. **Recall@10 0.6728 against a 0.0020 chance floor and 0.0022 for untrained
-      towers of the same shape**: 336x chance, recall@1 0.3778, median rank 3 of 5,000.
-      Verified through the container against the 105,052-document index compose builds,
-      not only in-process. `make evaluate` prints all of it from the shipped checkpoint.
+      triples. **Recall@10 0.8381 against a 0.0020 chance floor and 0.0014 for untrained
+      towers of the same shape**: 419x chance, recall@1 0.5316, **median rank 1 of
+      5,000**. Verified through the container against the 104,808-document index compose
+      builds, not only in-process. `make evaluate` prints all of it, including the
+      vocabulary split, from the shipped checkpoint.
 
       | loss | recall@10 | recall@1 | median rank | best loss |
       |---|--:|--:|--:|--:|
       | triplet | 0.3047 | 0.0846 | 35 | 0.0025 |
       | **in-batch** | **0.6728** | **0.3778** | **3** | 0.4054 |
+
+      **Both rows of that table are on the text8-only vocabulary**, before the extension
+      below. They are comparable to each other, not to the 0.8381 headline; the triplet
+      arm has not been re-run on the extended vocabulary.
 
       **Triplet's final loss is 159x lower than in-batch's and its retrieval is less than
       half as good.** A satisfied margin contributes exactly zero, so an easy negative
@@ -896,14 +909,58 @@ Status:
       The published post's 3.06x reproduces as 2.21x here -- direction and order of
       magnitude, not the exact ratio, on a different corpus and pool. Do not quote "3x".
 
-      **The vocabulary is the next ceiling, and it is a property of the representation.**
-      1,506 of 5,034 held-out queries contain a word the text8-trained vocabulary never
-      saw, and they score **0.4309 recall@10 against 0.7761** for the 3,528 it covers --
-      median rank 20 against 2. Under triplet loss the same split is 0.3679 against
-      0.1567, so **changing the objective moved both columns and closed none of the gap**.
-      `tokenize_text` maps an unknown word to token 0, which is also the padding id, so an
-      out-of-vocabulary word reaches the GRU indistinguishable from padding. Subword
-      tokenization, or a vocabulary built from the corpus being searched.
+      **The vocabulary was the ceiling, and closing it was worth 0.165 recall@10.** It
+      was a property of the representation, not the objective: 1,506 of 5,034 held-out
+      queries contained a word the text8-trained vocabulary never saw, scoring 0.4309
+      recall@10 against 0.7761 for the 3,528 it covered, and under triplet loss the same
+      split was 0.3679 against 0.1567 -- **changing the objective moved both columns and
+      closed none of the gap**. `tokenize_text` maps an unknown word to token 0, which is
+      also the padding id, so the most discriminative word in a query reached the GRU
+      indistinguishable from padding.
+
+      `make extend-vocab` is the fix, and it is the stage `content-scoring` already has:
+      count over the **training** triples only (a vocabulary is fitted state), keep every
+      pretrained id where it is and append above them, continue-train CBOW from the
+      pretrained weights. 63,642 -> 88,114 words, 2 epochs, ~13 minutes each.
+
+      | | queries | recall@10 | median |
+      |---|--:|--:|--:|
+      | text8 only, all words known | 3,528 | 0.7761 | 2 |
+      | text8 only, one or more unknown | 1,506 | 0.4309 | 20 |
+      | **extended, all words known** | **4,308** | **0.8935** | **1** |
+      | **extended, one or more unknown** | **726** | **0.5096** | **10** |
+
+      **Half the problem was punctuation, not vocabulary**, and that is the part worth
+      remembering. text8 is cleaned Wikipedia -- lowercase letters and spaces, no
+      punctuation at all -- while MS MARCO is raw prose and the tokenizer split on
+      whitespace alone, so `however,` and `cells.` were tokens the vocabulary could not
+      contain. **19.4% of document tokens were unknown that way against 8.0% after
+      stripping edge punctuation** -- the index itself, not just the query. Stripping
+      first also halves what the extension has to add, because the glued variants collapse
+      into words already present: 24,472 new words rather than 53,735.
+
+      The covered bucket improved too, 0.7761 -> 0.8935, which is the document side
+      getting better for every query rather than only the rare-word ones.
+
+      **A word absent from the new corpus does not move, and that was checked.** CBOW
+      reads `in_embed` for context words only, so 15,419 of the 15,420 text8 words MS
+      MARCO never uses come out bit-identical. The exception is `<PAD>`, which moves
+      because it *is* context -- it fills the window at a document's edges.
+
+      **`/query` and the index tokenized differently, and the served path was at chance.**
+      `tokenize_text` built the index and lowercased; `retrieval/query_engine.py:tokenize`
+      answered `/query` with `text.strip().split()` and did not. MS MARCO queries ship
+      lowercase, so the held-out evaluation never exercised it and every published number
+      was measured on a path a person does not use. On the same 5,034 queries and pool:
+      lowercase 0.6728, Capitalised First Word 0.5981, **Title Case 0.0020 -- the chance
+      floor**, median rank 2,477. A capitalised word missed the vocabulary and arrived as
+      the padding id, so a title-cased query was a query of pure padding.
+
+      One `normalise_words` in `cbow/vocabulary.py` now, used by the triples, the index and
+      `/query`; all four casings score 0.8381 identically, and
+      `test_the_served_tokenizer_matches_the_one_that_built_the_index` fails if they
+      diverge. **Second instance of this bug class in one pass** -- vit-seq2seq's double
+      normalisation was the first -- which is why the standing rule above exists.
 
       **The result above is the second attempt, and the first one was wrong.** The first
       run tokenized the triples *before* rebuilding the vocabulary, so
@@ -1008,6 +1065,13 @@ whisper-fine-tuning (five streamed steps, loss 7.1992 -> 0.3033, corrected at st
 rlhf-ppo (`/generate` with per-token traces), multimodal-captioning (Flickr30k images,
 people-and-clothing captions matching §6), vector-search-retrieval (correct document 3rd
 of 105,052), and the frontend.
+
+Re-verified for the three services that changed since: `vit-seq2seq` (1-, 2- and 3-digit
+composites read as 0, 55 and 206 at ~0.92 per digit, five identical requests giving five
+identical answers), `vit-classifier` (three held-out test images at confidence 1.00), and
+`vector-search-retrieval` (correct document **1st** of 104,808, `urinalysis` now finding
+urinalysis passages where it used to return a thermocouple, and a title-cased query giving
+byte-identical results). 363.8 MiB resident for retrieval after a real query.
 
 **`--pull always` is for verification too, not just the quickstart.** Checking captioning
 without it, `docker run` served a local `latest` from days earlier whose config still had

@@ -20,7 +20,7 @@ import redis
 import torch
 
 from ai_residency_common import get_logger, load_model, resolve_required
-from cbow.vocabulary import build_embedding_placeholder
+from cbow.vocabulary import build_embedding_placeholder, tokenize_text
 from config import Config
 from models.towers import GruTower, encode
 
@@ -143,16 +143,24 @@ def load_query_tower() -> GruTower:
 
 
 def tokenize(text: str) -> list[int]:
-    """Map text to token ids, sending unknown words to the padding id.
+    """Map a query to token ids the same way the index was built.
+
+    This used to be `text.strip().split()` against the vocabulary -- no lowercasing --
+    while the offline tokenizer that filled the index lowercased. MS MARCO queries ship
+    lowercase so the held-out evaluation never saw it, but a person types
+    "Walgreens store sales" and every capitalised word then missed the vocabulary and
+    arrived as the padding id. Title-cased queries scored 0.0020 recall@10, which is the
+    chance floor. It goes through the shared `tokenize_text` now, and
+    `test_the_served_tokenizer_matches_the_one_that_built_the_index` fails if the two
+    ever diverge again.
 
     Args:
         text: Raw query text.
 
     Returns:
-        Token ids, one per whitespace-separated word.
+        Token ids, one per normalised word.
     """
-    vocabulary = load_vocabulary()
-    return [vocabulary.get(word, 0) for word in text.strip().split()]
+    return tokenize_text(text, load_vocabulary())
 
 
 def embed_query(text: str) -> np.ndarray:

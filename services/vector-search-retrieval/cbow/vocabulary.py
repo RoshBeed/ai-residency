@@ -8,6 +8,7 @@ that no longer holds anything. They share these functions now.
 
 import hashlib
 import pickle
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ __all__ = [
     "latest_cbow_checkpoint",
     "load_ids_to_words",
     "load_words_to_ids",
+    "normalise_words",
+    "tokenize_text",
     "vocabulary_fingerprint",
 ]
 
@@ -40,6 +43,63 @@ _RETOKENIZE_SAMPLE = 200
 # name instead, and the Hub fallback below asks for it. It still ends in `.cbow.pth` so
 # a pulled copy is picked up by the same local glob as a freshly-trained one.
 CANONICAL_CBOW_CHECKPOINT = "cbow_model.cbow.pth"
+
+# Punctuation at either end of a token, which is a property of prose rather than of the
+# word. See `normalise_words`.
+_EDGE_PUNCTUATION = re.compile(r"^[^a-z0-9]+|[^a-z0-9]+$")
+
+
+def normalise_words(text: str) -> list[str]:
+    """Turn raw text into the words this vocabulary is indexed by.
+
+    **One implementation, because there were two and they disagreed.** The offline
+    tokenizer that built the index lowercased; `retrieval.query_engine.tokenize`, which
+    serves `/query`, did not. MS MARCO queries ship lowercase, so the held-out
+    evaluation never saw the difference and every number in the write-up was measured on
+    the path a person does not use. Measured on the same 5,034 held-out queries and the
+    same 5,000-document pool:
+
+    | query as typed | recall@10 |
+    |---|--:|
+    | all lowercase, as MS MARCO ships | 0.6728 |
+    | Capitalised First Word | 0.5981 |
+    | Title Case, As A Person Types | **0.0020** |
+
+    0.0020 is the chance floor. A capitalised word misses the vocabulary and arrives as
+    token 0, which is also the padding id, so a title-cased query is a query of padding
+    and the service returns noise with a straight face.
+
+    Edge punctuation is stripped for the same reason. text8 is cleaned Wikipedia text --
+    lowercase letters and spaces, no punctuation at all -- while MS MARCO is raw prose,
+    so splitting on whitespace alone sends `however,`, `cells.` and `(see` to a
+    vocabulary that cannot contain them. **19.4% of document tokens were unknown that
+    way, and 8.0% after stripping**, which is the index itself, not just the query.
+
+    Args:
+        text: Raw query or document text.
+
+    Returns:
+        Lowercased words with punctuation removed from each end, empty tokens dropped.
+    """
+    stripped = (_EDGE_PUNCTUATION.sub("", word) for word in text.lower().split())
+    return [word for word in stripped if word]
+
+
+def tokenize_text(text: str, words_to_ids: dict[str, int]) -> list[int]:
+    """Map text to token ids, sending unknown words to the padding id.
+
+    Every path that turns text into ids goes through here -- building the triples,
+    filling the Redis index, and answering `/query` -- so the index and the query it is
+    searched with cannot be built by different rules. See `normalise_words`.
+
+    Args:
+        text: Text to tokenize.
+        words_to_ids: Vocabulary mapping word to token id.
+
+    Returns:
+        One token id per normalised word.
+    """
+    return [words_to_ids.get(word, 0) for word in normalise_words(text)]
 
 
 def vocabulary_fingerprint(words_to_ids: dict[str, int]) -> str:
@@ -101,8 +161,6 @@ def check_tokenized_against_vocabulary(
     # can simply be recomputed and compared. Exact, and a sample is plenty -- the real
     # case disagreed on every row.
     if recorded is None:
-        from data_prep.tokenize_triples import tokenize_text
-
         disagreed = checked = 0
         for rows in payload.values():
             if not isinstance(rows, list):
