@@ -874,6 +874,27 @@ Status:
       five on purpose -- it streams a transcript between every step -- but it reads
       `serve_num_steps` now, with the measured cost in the field's docstring.
 
+### Container verification, 2026-10-18: all nine, with a real request each
+
+Not `/ready` -- a real call, because this pass learned twice over that a service can
+report `checkpoint_loaded: true` and still be wrong. word-embeddings (`computer` ->
+computers, hardware, computing, software), content-scoring (a Show HN title scored 2.09
+with a word trace), vit-classifier (a drawn `1` at 0.958), vit-seq2seq (three drawn digits
+decoded), speech-emotion-recognition (**4/4** held-out CREMA-D clips correct above 0.99),
+whisper-fine-tuning (five streamed steps, loss 7.1992 -> 0.3033, corrected at step one),
+rlhf-ppo (`/generate` with per-token traces), multimodal-captioning (Flickr30k images,
+people-and-clothing captions matching §6), vector-search-retrieval (correct document 3rd
+of 105,052), and the frontend.
+
+**`--pull always` is for verification too, not just the quickstart.** Checking captioning
+without it, `docker run` served a local `latest` from days earlier whose config still had
+`DEFAULT_CHECKPOINT = "adapter_flickr_batched.pth"`. The captions came back degenerate --
+"The 2010 World Cup Final between Brazil and Argentina" -- and for a few minutes that
+looked like the shipped service defaulting to the wrong adapter. Pulling and re-running
+gave `adapter_patches.pth` and sensible captions. The note above about `docker run` reusing
+a stale tag is in this file already; it still caught me, in the one place where being
+caught produces a false alarm about the thing being verified.
+
 ## Next pass: optimization, once every service is at a meaningful checkpoint
 
 The pass above gets each service to a result that beats a stated baseline. This one makes
