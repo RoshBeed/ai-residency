@@ -919,9 +919,33 @@ Leads, strongest first, with what is already known:
   reference is the base model, so the penalty measures drift from the wrong thing). Also
   unmeasured: `OpenAssistant/reward-model-deberta-v3-base` is 3.5x cheaper in compute than
   the large-v2 currently used and inference-only, so it may not be the bottleneck at all.
-- **`vit-classifier` and `vit-seq2seq`: epochs.** Both ship a checkpoint from *one* epoch
-  from scratch -- 91.78% and 68.00% exact-sequence. The cheapest lever in the repo and
-  nothing about either architecture changes.
+- **`vit-seq2seq`: variable-length sequences, because EOS is currently decorative.**
+  `multi_digit_dataset.py` builds its label with `str(number).zfill(max_digits)`, so every
+  training sequence is exactly three digits -- 7 is `007`, 42 is `042`. The EOS token is in
+  the vocabulary and appended, and `max_seq_length` is 5, but EOS always lands at position
+  4. The decoder learns "emit three, then stop" rather than "stop when the number ends",
+  and cannot produce a one- or two-digit answer. The root README advertises "per-sequence
+  EOS" as an architectural feature: the architecture supports it, the data never exercises
+  it.
+
+  The canvas is also more memorizable than it looks. `digit_size = image_size //
+  max_digits` with even spacing puts every digit in one of three fixed cells, and
+  augmentation is mild -- rotation +/-10 degrees and scale 0.9-1.1 applied to **30%** of
+  digits, plus jitter bounded by `spacing // 2`. No shear, no real translation.
+
+  So: sample lengths 1-3, and augment with scale, translation, rotation and skew, so the
+  encoder has to localise digits instead of reading three known slots. The architecture
+  does not change -- encoder-decoder ViT, cross-attention, causal mask and the EOS
+  vocabulary all stay.
+
+  **Expect 68.00% to fall, and do not report that as a regression.** It is
+  exact-sequence accuracy on fixed-length, fixed-cell composites, which is an easier
+  question than the one variable length asks. Report per-length accuracy (1, 2 and 3
+  digits) plus whether EOS lands in the right place, with the current checkpoint scored
+  the same way as the baseline.
+- **`vit-classifier`: epochs.** Ships a checkpoint from *one* epoch from scratch at 91.78%
+  against an 11.35% majority-class baseline. The cheapest lever in the repo and nothing
+  about the architecture changes.
 - **`whisper-fine-tuning`: `serve_num_steps`.** Five steps cost WER 0.1642 to 0.2687 on
   held-out speech while the correction lands at step one. Two or three steps would keep a
   visible trajectory for less damage; the question is how much trajectory the page needs,
@@ -996,9 +1020,11 @@ Open:
   encoder cost; the same run is minutes, not hours. The point of this service is the mechanism --
   emotion as a token the decoder emits -- not the size of the backbone, so the backbone should be
   the smallest one that shows it.
-- `content-scoring` ships a `log_mse` objective, which ranks well and predicts about a fifth of the
-  upvotes that actually happen. `poisson` is implemented and predicts the count directly; a binary
-  head on `score >= 100` finds front-page posts best and cannot rank at all. Which of the three is
-  right is a product question the service has not been asked.
+- `content-scoring` ships the `poisson` objective, not `log_mse` -- the note here said otherwise
+  until the served checkpoint was read: `extra.objective` is `poisson` and its `total_ratio` is
+  **0.9267**, so it predicts 93% of the upvotes that actually happen rather than the fifth `log_mse`
+  managed. The API's `model_info` string said "Poisson objective" correctly all along. A binary head
+  on `score >= 100` still finds front-page posts best and cannot rank at all, so that trade is open;
+  the count-prediction half of it is settled.
 - The eleven predecessor repos are archived on GitHub. The four `backup/*` tags that held the
   pre-rewrite tips are deleted from the remote now the repo is public; they survive locally only.
