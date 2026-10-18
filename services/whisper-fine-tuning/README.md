@@ -232,20 +232,31 @@ The clips are CREMA-D, chosen because the corpus is twelve fixed sentences read 
 actors with the sentence encoded in every filename, so a known reference comes free. One
 neutral-emotion clip per sentence, lowest actor id, so the set is the same every run.
 
-| | WER over 12 held-out sentences | sentences altered |
+| steps | WER over 12 held-out sentences | sentences altered |
 |---|--:|--:|
 | Whisper-tiny, base weights | 0.1642 | — |
-| after 1 step (`make demo`, `num_epochs`) | **0.1642** | 0/12 |
-| after 5 steps (`/transcribe`, `serve_num_steps`) | 0.2687 | 4/12 |
+| 1 (`make demo`, `num_epochs`) | **0.1642** | 0/12 |
+| 2 | 0.1493 | 2/12 |
+| **3** (`/transcribe`, `serve_num_steps`) | **0.1493** | **2/12** |
+| 4 | 0.1642 | 2/12 |
+| 5 | 0.2687 | 4/12 |
 
-**One step is free, and the step count is the whole difference.** At one step the demo
+**One step is free, and five is the only count that does damage.** At one step the demo
 clip is corrected and not one of the twelve held-out transcripts changes by a single word.
-Five steps corrects the same clip and costs 64% relative WER: "The airplane is almost
-full" becomes "The airplay is almost full", and "Don't forget a jacket" collapses to "Go
-for it".
+
+The count of altered sentences says more than the rate does. Through four steps the two
+that change were *already wrong* before any fine-tuning — whisper-tiny hears "it's eleven
+o'clock" as "Give us a lemon a clock" either way, and the step just garbles it differently.
+At five, transcripts the base model got right start breaking: "The airplane is almost full"
+becomes "The airplay is almost full", and "Don't forget a jacket" collapses to "Go for it".
+
+`serve_num_steps` was 5 on the strength of two data points, one step and five. Measuring
+every count in between moved it to **3**: the demo correction still lands, three streamed
+steps still show a trajectory, word error rate sits *below* the base model's, and nothing
+that worked is broken.
 
 The two paths differ deliberately. `/transcribe` streams a transcript between every step, so
-five steps show more of the trajectory than one does, and the fine-tune is per-request and
+three steps show more of the trajectory than one does, and the fine-tune is per-request and
 thrown away — that WER lands on the response, never on a stored checkpoint. `make demo`
 takes the single step, which is all the correction needs.
 

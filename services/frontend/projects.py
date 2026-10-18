@@ -571,7 +571,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ("Base model", "Whisper-tiny (39M params)"),
             ("Fine-tune steps", "5 per request, 1 locally"),
             ("Verified result", '"My name is Roosh" → "My name is Rosh"'),
-            ("Cost on other speech", "WER 0.1642 → 0.2687 over 5 steps"),
+            ("Cost on other speech", "WER 0.1642 at 1 step, 0.2687 at 5"),
         ],
         "intro": (
             "Fine-tunes Whisper-tiny on a single clip, live, per request — genuine "
@@ -587,9 +587,11 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "**What it costs.** Memorizing one clip is overfitting by design, so the "
             "service measures the damage rather than claiming there is none. Over "
             "twelve CREMA-D sentences the model never trained on, one step leaves word "
-            "error rate at 0.1642 and changes no transcript by a word; five steps "
-            "corrects the same demo clip and takes WER to 0.2687, altering four of the "
-            "twelve. The correction lands at step one — the rest is trajectory to "
+            "error rate at 0.1642 and changes no transcript by a word. Five steps takes "
+            "WER to 0.2687 and alters four of the twelve, so the endpoint takes three: "
+            "the correction still lands, the trajectory is still visible, WER sits at "
+            "0.1493 — below the base model's — and the only transcripts that change were "
+            "already wrong. The correction lands at step one; the rest is trajectory to "
             "watch."
         ),
         "docs_path": "services/whisper-fine-tuning/README.md",

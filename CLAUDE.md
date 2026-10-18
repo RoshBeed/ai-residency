@@ -1050,9 +1050,17 @@ Status:
 
       That also found a disagreement worth not repeating. `make demo` takes `num_epochs=1`
       while `/transcribe` hardcoded `num_steps=5` twice, so the demo and the endpoint were
-      doing different things and the README's headline claimed the five. The endpoint keeps
-      five on purpose -- it streams a transcript between every step -- but it reads
+      doing different things and the README's headline claimed the five. It reads
       `serve_num_steps` now, with the measured cost in the field's docstring.
+
+      **`serve_num_steps` is 3, because the middle of the curve got measured.** Five was
+      chosen from two data points. `make collateral` at every count in between: WER 0.1642
+      / 0.1493 / 0.1493 / 0.1642 / 0.2687 at one through five steps, altering 0 / 2 / 2 / 2
+      / 4 of twelve. The altered count is the better signal -- through four steps the two
+      that change were *already wrong* at base, and only at five do transcripts the base
+      model got right start breaking. Three keeps a streamed trajectory, corrects the demo
+      clip, scores below the base rate and breaks nothing that worked. **Measuring the ends
+      of a range and interpolating is not measuring it.**
 
 ### Container verification, 2026-10-18: all nine, with a real request each
 
@@ -1108,14 +1116,12 @@ wasted afternoon and a wrong write-up.
 
 Leads, strongest first, with what is already known:
 
-- **`vector-search-retrieval`: the vocabulary, measured.** 1,506 of 5,034 held-out queries
-  contain a word the text8-trained vocabulary never saw, and they score **0.4309 recall@10
-  against 0.7761** for the 3,528 it covers -- median rank 20 against 2, and swapping the
-  loss function moved both columns without closing the gap. `tokenize_text` maps an unknown word to token
-  0, which is also the padding id, so the most discriminative word in a query arrives
-  indistinguishable from padding. Subword tokenization, or building the vocabulary from MS
-  MARCO rather than from Wikipedia. The towers do not change. Biggest known lever in the
-  repo.
+- **`vector-search-retrieval`: done, and it was the biggest lever in the repo.** Extending
+  the text8 vocabulary onto MS MARCO took recall@10 **0.6728 -> 0.8381**, recall@1 0.3778 ->
+  0.5316 and the median rank from 3 to 1. The towers did not change. Details in the status
+  entry above, including the two things worth carrying elsewhere: half the gap was
+  punctuation rather than vocabulary, and `/query` was answering at the chance floor for any
+  capitalised query because the served tokenizer and the one that built the index disagreed.
 - **`content-scoring`: the encoder, measured.** A mean of static word vectors throws away
   word order; a fine-tuned MiniLM already beats the shipped model by +0.017 rho and +19% on
   finding front-page posts, and capacity over the *fixed* representation does nothing. The
@@ -1145,10 +1151,9 @@ Leads, strongest first, with what is already known:
   already specified 100 epochs with patience 15, and the shipped checkpoint came from a
   one-epoch smoke run that was never followed up. **Check what the config already says
   before tuning it.**
-- **`whisper-fine-tuning`: `serve_num_steps`.** Five steps cost WER 0.1642 to 0.2687 on
-  held-out speech while the correction lands at step one. Two or three steps would keep a
-  visible trajectory for less damage; the question is how much trajectory the page needs,
-  which is a judgement rather than a measurement.
+- **`whisper-fine-tuning`: done.** `serve_num_steps` is 3. The full curve at one through
+  five steps says five was the only count doing real damage, and three scores *below* the
+  base model's WER while keeping a streamed trajectory. See the status entry above.
 - **`speech-emotion-recognition`: already known.** Held-out loss bottoms at epoch 6 and
   accuracy peaks at 10 against the 20 it ran, so the useful range is eight to ten. Cheaper
   rather than better.
