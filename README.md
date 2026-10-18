@@ -174,7 +174,7 @@ working interface generated from its own OpenAPI schema.
 
 | Service | Resident once loaded | Notes |
 |---|--:|---|
-| `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically |
+| `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically. recall@10 0.3983 vs 0.0020 chance |
 | `vit-classifier` | 0.45 GB | Draw a digit, see the real patch grid |
 | `vit-seq2seq` | 0.45 GB | Multi-digit, streams tokens as it decodes |
 | `content-scoring` | 1.3 GB | |
@@ -186,7 +186,9 @@ working interface generated from its own OpenAPI schema.
 | the frontend | 0.4 GB | Always started |
 
 Those are cgroup peaks read after each service had loaded its models and answered a real request,
-not estimates.
+not estimates. The retrieval figure predates its vocabulary growing from 7,692 words to 63,642,
+which adds ~29MB to each tower's frozen embedding matrix — small enough not to change the ordering,
+and due a re-measure the next time that service is run in a container.
 
 ## How it fits together
 

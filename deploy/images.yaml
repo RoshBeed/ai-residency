@@ -27,6 +27,6 @@ backends:
   speech-emotion-recognition:
     digest: sha256:3d72c78ca6f5a02565fdf6ad7889a7a108bc435bfe44809c3a71c1856098adaa
   rlhf-ppo:
-    digest: sha256:d71034135853b9fb8c1f87ac140b1a35f285a0cd2784074c518304e226825dad
+    digest: sha256:f996cacce842a56b3413ba2909fd3211e3d27d5535595ea2eec0c9877870b5cf
 frontend:
   digest: sha256:e65ba74f7354195cd8160b12a20c141ecd74afb9555e0c05103b66d0f0eeaafb
