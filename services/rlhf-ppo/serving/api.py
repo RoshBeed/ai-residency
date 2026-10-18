@@ -5,10 +5,12 @@ services as backend containers behind one frontend. It reuses the same model-loa
 generation path the UI uses rather than reimplementing it.
 
 Every response carries a `note` field saying plainly that this is not a PPO-tuned
-completion, so a caller cannot mistake it for one. `make train` does now write a
-policy adapter, but it is the product of a single PPO step, so this service
-deliberately does not load it: serving it would imply an improvement that one
-gradient step cannot honestly claim.
+completion, so a caller cannot mistake it for one. `make train-loop` writes a policy
+adapter and it is on the Hub -- 60 PPO steps on real TL;DR prompts -- and this service
+still deliberately does not load it. The reason is the measurement rather than the step
+count: over those 60 steps the policy moved 1.26e-04 and held-out reward went -3.4202
+to -3.4585 greedy and -5.0505 to -4.9640 sampled, so the two metrics disagree about the
+sign. Serving that adapter would imply an improvement neither number supports.
 
 `/ppo_step` is the other half of this service: it runs `PPOTrainer.ppo_step` for
 real, all ten stages, and returns everything each one produced -- not a simulation
@@ -50,7 +52,10 @@ logger = get_logger(__name__)
 
 NO_CHECKPOINT_NOTE = (
     "Completion from LoRA-initialized SmolLM2-135M-Instruct, not a PPO-tuned checkpoint. "
-    "No policy improvement has been applied. See the PPO section below for the trained pipeline."
+    "A 60-step policy adapter exists on the Hub and is deliberately not served: it moved "
+    "the policy by 1.26e-04 and its held-out reward change is -0.04 greedy against +0.09 "
+    "sampled, so no improvement is established. See the PPO section below for the pipeline "
+    "that produced it."
 )
 
 PPO_NOTE = (
