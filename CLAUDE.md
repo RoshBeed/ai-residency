@@ -758,9 +758,26 @@ Status:
       naturally lower than over Qwen3's 151,936, so the only number that means anything
       across a decoder swap is agreement.
 
-- [x] `vit-classifier` -- already meaningful, no work needed. 91.78% on the 10,000-image
-      MNIST test set against an 11.35% majority-class baseline, from a shipped checkpoint
-      after one epoch from scratch.
+- [x] `vit-classifier` -- **98.86% on the 10,000-image MNIST test set** (9,886 correct)
+      against an 11.35% majority-class baseline, 8.7x. Was 91.78% from a checkpoint trained
+      for *one* epoch, which nobody had ever followed up: the config already said 100
+      epochs with patience 15 and the run simply had not been done. 55 epochs, early-stopped,
+      best at 40, 51 minutes on an M1 Max at 56s an epoch. Error rate 10.99% to 1.15%.
+
+      Two things had to be fixed before the run was worth starting. It had no resume, on a
+      machine that dies on OOM -- it uses `resume_from` / `save_resume` / `resume_path_for`
+      now, with the epoch cap in the fingerprint because the cap is the cosine schedule's
+      `T_max`, and the scheduler fast-forwarded so a resumed run does not restart the decay
+      from the top. And **the test accuracy it printed was not the shipped checkpoint's**:
+      the test pass ran on whatever weights the loop exited with, which under early stopping
+      is `patience` epochs past the best one. It reloads the best checkpoint first now.
+
+      Validation loss bottoms at epoch 23 while accuracy keeps climbing to 40, so **loss is
+      the wrong thing to early-stop this service on** -- the model is getting more confident
+      about what it has right and more wrong about the rest. Accuracy is what ranks the
+      checkpoint, so the drift costs nothing. The 114 errors are spread across all ten
+      digits (9 worst at 97.92%, 3 best at 99.80%) and the commonest confusions are 9/4 and
+      5/3, which is handwriting rather than a systematic failure.
 - [x] `vit-seq2seq` -- variable-length sequences, so EOS is a decision rather than a
       position. **98.53% exact-sequence accuracy on 3,000 held-out composites of one to
       three digits**, against 3.33% for always answering the commonest number in the split
@@ -842,10 +859,12 @@ Status:
       `max_jitter = spacing // 2` to 0: the positional jitter the dataset advertised had
       never moved anything.
 
-      **99.27% per digit against the sibling classifier's 91.78% on single clean digits** --
-      this model reads a sheared, rotated, rescaled, shifted digit better than the
-      classifier reads a clean one, because the classifier ships one epoch and this ran 15.
-      That makes `vit-classifier`'s epoch count the clearer lever of the two.
+      **99.27% per digit against the sibling classifier's 98.86% on single clean digits**,
+      now that the classifier is trained out too. The two share an encoder and land within
+      half a point of each other, which is the fairer reading: this one gets there on
+      sheared, rotated, rescaled and shifted glyphs rather than clean centred ones. The
+      earlier version of this note credited the gap to the classifier's one epoch, and that
+      was right -- training it properly closed most of it.
 
 - [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
       triples. **Recall@10 0.6728 against a 0.0020 chance floor and 0.0022 for untrained
@@ -1047,9 +1066,12 @@ Leads, strongest first, with what is already known:
   decodes greedily and measured `no_repeat_ngram_size=3` as a wash; `rlhf-ppo` reports both
   greedy and seeded-sampled reward on purpose. This was the one place a sampled decode was
   being read as a deterministic answer.
-- **`vit-classifier`: epochs.** Ships a checkpoint from *one* epoch from scratch at 91.78%
-  against an 11.35% majority-class baseline. The cheapest lever in the repo and nothing
-  about the architecture changes.
+- **`vit-classifier`: done.** It was the cheapest lever in the repo and it paid: one epoch
+  at 91.78% to 55 epochs at **98.86%**, an error rate of 8.22% down to 1.14%, for 51 minutes
+  and no change to the architecture. The lever was not a hyperparameter at all -- the config
+  already specified 100 epochs with patience 15, and the shipped checkpoint came from a
+  one-epoch smoke run that was never followed up. **Check what the config already says
+  before tuning it.**
 - **`whisper-fine-tuning`: `serve_num_steps`.** Five steps cost WER 0.1642 to 0.2687 on
   held-out speech while the correction lands at step one. Two or three steps would keep a
   visible trajectory for less damage; the question is how much trajectory the page needs,

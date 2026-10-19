@@ -24,9 +24,13 @@ from ai_residency_common import (
     get_device,
     get_logger,
     init_tracking,
+    load_checkpoint,
     log_metrics,
     push_checkpoint,
+    resume_from,
+    resume_path_for,
     save_checkpoint,
+    save_resume,
     set_seed,
 )
 from ai_residency_common.figures import save_figure
@@ -169,6 +173,33 @@ def train(config: Config) -> float:
     )
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.classifier_epochs)
 
+    # What makes two runs the same run. The epoch cap is in it because it is the
+    # cosine schedule's `T_max`: the same weights under a different cap are on a
+    # different learning-rate trajectory, so resuming across that is not a resume.
+    fingerprint = {
+        "arch": asdict(config.classifier_arch),
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "weight_decay": config.classifier_weight_decay,
+        "epochs": config.classifier_epochs,
+        "train_split": config.train_split,
+        "gradient_clip": config.classifier_gradient_clip,
+    }
+    resume_path = resume_path_for(config.classifier_checkpoint_path)
+    resumed = resume_from(
+        resume_path,
+        model,
+        optimizer,
+        fingerprint=fingerprint,
+        default_best=0.0,
+        map_location=str(device),
+    )
+    # The scheduler steps once per epoch, so a resumed run has to fast-forward it or it
+    # restarts the cosine decay from the top and trains the rest of the run at the wrong
+    # learning rate.
+    for _ in range(resumed.start_epoch - 1):
+        scheduler.step()
+
     init_tracking(
         config.wandb_project,
         config={"baseline_accuracy": baseline_accuracy, **asdict(config)},
@@ -181,10 +212,14 @@ def train(config: Config) -> float:
         "train_accuracy": [],
         "val_accuracy": [],
     }
-    best_accuracy = 0.0
+    best_accuracy = resumed.best_metric
+    # The patience counter deliberately restarts at zero on a resume. Carrying it would
+    # mean persisting it, and getting it wrong in the other direction stops a run early
+    # on a count it inherited; restarting it can only make a resumed run train longer,
+    # and the shipped checkpoint is the ranked best either way.
     epochs_without_improvement = 0
 
-    for epoch in range(1, config.classifier_epochs + 1):
+    for epoch in range(resumed.start_epoch, config.classifier_epochs + 1):
         model.train()
         epoch_loss = 0.0
         correct = 0
@@ -258,13 +293,31 @@ def train(config: Config) -> float:
                 push_checkpoint(config.hf_repo_id, config.classifier_checkpoint_path)
         else:
             epochs_without_improvement += 1
-            if epochs_without_improvement >= config.classifier_patience:
-                logger.info(
-                    "Early stopping after %d epochs without improvement",
-                    epochs_without_improvement,
-                )
-                break
 
+        # Every epoch, not only on an improvement: a run that dies after a worse epoch
+        # would otherwise resume from the last better one and repeat the work between.
+        save_resume(
+            resume_path,
+            model,
+            optimizer,
+            epoch=epoch,
+            best_metric=best_accuracy,
+            fingerprint=fingerprint,
+            metrics={"val_accuracy": val_accuracy, "val_loss": val_loss},
+        )
+
+        if epochs_without_improvement >= config.classifier_patience:
+            logger.info(
+                "Early stopping after %d epochs without improvement",
+                epochs_without_improvement,
+            )
+            break
+
+    # Score the checkpoint that ships, not whatever the last epoch left behind. With
+    # early stopping those are `patience` epochs apart, so the test number reported for
+    # the shipped model was the final model's -- a different set of weights.
+    if config.classifier_checkpoint_path.exists():
+        load_checkpoint(config.classifier_checkpoint_path, model, map_location=str(device))
     test_loss, test_accuracy = evaluate(model, test_loader, device)
     log_metrics({"test_loss": test_loss, "test_accuracy": test_accuracy})
     finish_tracking()

@@ -5,8 +5,8 @@
 - **What it is:** an encoder-only Vision Transformer — patch embedding, multi-head self-attention,
   transformer encoder blocks — written from scratch in raw PyTorch, with no
   `torch.nn.Transformer` shortcuts, classifying a single MNIST digit.
-- **Result:** 91.78% on the held-out MNIST test set after one epoch, against 11.35% for always
-  guessing the most common digit.
+- **Result:** **98.86% on the held-out MNIST test set** (9,886 of 10,000), against 11.35% for
+  always guessing the most common digit. Trained from scratch, no pretraining.
 
 An image is not a sequence, so the first thing a Vision Transformer has to do is invent one: cut
 the image into fixed-size patches, project each into a vector, and hand the transformer a sequence
@@ -191,19 +191,50 @@ make -C deploy down             # what this runs: docker compose down
 The numbers below come from loading the shipped checkpoint and running real inference on the MNIST
 test set, not from re-describing the training script.
 
-The committed checkpoint was trained for a single epoch (`checkpoints/training_config.json`
-records `epochs: 1`):
+The shipped checkpoint is the best of 55 epochs, early-stopped after 15 without improvement
+against a 100-epoch cap. Validation accuracy peaks at epoch 40:
 
-| | Train loss | Train acc | Val loss | Val acc |
-|---|---|---|---|---|
-| Epoch 1 | 1.113 | 64.4% | 0.374 | 90.8% |
+| epoch | train loss | train acc | val loss | val acc |
+|---|--:|--:|--:|--:|
+| 1 | 1.1621 | 62.33% | 0.4421 | 89.01% |
+| 10 | 0.0542 | 98.29% | 0.0811 | 97.78% |
+| 20 | 0.0216 | 99.33% | 0.0715 | 98.42% |
+| **40** | 0.0064 | 99.81% | 0.0727 | **98.85%** |
+| 55 | 0.0028 | 99.93% | 0.0845 | 98.85% |
 
 Against the actual MNIST **test** set — 10,000 held-out images, never seen during training — that
-checkpoint gets **91.78% accuracy (9,178 / 10,000)**, consistent with the logged validation number.
+checkpoint gets **98.86% accuracy (9,886 / 10,000)**.
 
 The baseline matters for reading that. Always guessing the most common digit in the same test set
-(digit 1, 1,135 of 10,000) gets 11.35%. The classifier clears it by roughly 8x, after one epoch,
-from scratch, with no pretraining.
+(digit 1, 1,135 of 10,000) gets 11.35%, so the classifier clears it by 8.7x. The more useful
+comparison is against itself one epoch in: 89.01% validation at epoch 1 against 98.85% at epoch
+40 is an error rate of 10.99% down to 1.15%, for 51 minutes of training on an M1 Max — 56 seconds
+an epoch over 1.19M parameters.
+
+Validation loss bottoms at epoch 23 and drifts up while accuracy keeps improving to epoch 40,
+which is the usual story of a model getting more confident about what it already has right and
+more wrong about the rest. Accuracy is what ranks the checkpoint here, so that drift costs nothing;
+it does mean loss is the wrong thing to early-stop on for this service.
+
+The 114 errors are not concentrated anywhere interesting:
+
+| digit | accuracy | wrong |
+|---|--:|--:|
+| 3 | 99.80% | 2 of 1,010 |
+| 0 | 99.49% | 5 of 980 |
+| 1 | 99.30% | 8 of 1,135 |
+| 2 | 99.03% | 10 of 1,032 |
+| 8 | 98.97% | 10 of 974 |
+| 7 | 98.83% | 12 of 1,028 |
+| 6 | 98.54% | 14 of 958 |
+| 4 | 98.47% | 15 of 982 |
+| 5 | 98.09% | 17 of 892 |
+| 9 | 97.92% | 21 of 1,009 |
+
+The commonest confusions are 9 read as 4 (11), 5 as 3 (10) and 4 as 9 (10) — the pairs that look
+alike when handwritten, rather than a systematic failure. Verified through the container as well as
+in-process: three held-out test images posted to `/predict/vit` come back 3, 5 and 8, each at
+confidence 1.00.
 
 **Figure 7.** The patch-division step, real output for a hand-drawn "719".
 ![719 divided into 25 patches](assets/patch_division.png)

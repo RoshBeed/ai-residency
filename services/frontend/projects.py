@@ -382,7 +382,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
         "model_links": [],
         "stats": [
-            ("Test accuracy", "91.78%"),
+            ("Test accuracy", "98.86%"),
             ("Majority baseline", "11.35%"),
             ("Trained for", "1 epoch"),
         ],

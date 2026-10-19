@@ -196,18 +196,16 @@ make check     # lint + type check + tests
 To retrain from scratch instead:
 
 ```bash
-make train SERVICE=vit-seq2seq-classifier  # what this runs:
-                        #   uv run python -m vit_classifier.trainer
-                        # trains on MNIST, saves to checkpoints/
-make train SERVICE=vit-seq2seq-seq2seq     # what this runs:
-                        #   uv run python -m vit_seq2seq.trainer
-                        # trains on composited multi-digit images, ~10min an epoch on M1 Max/MPS
+make train SERVICE=vit-seq2seq   # what this runs: uv run python -m vit_seq2seq.trainer
+                                 # composites multi-digit images from MNIST and trains on them;
+                                 # ~10 min an epoch at 112px on M1 Max/MPS, 15 epochs
 ```
 
-`make train SERVICE=vit-seq2seq` is an alias for `make train SERVICE=vit-seq2seq-classifier` (the faster of the two).
+The single-digit classifier is a [separate service](../vit-classifier) with its own trainer; the
+two share the encoder through `libs/vision-transformer`, not a training entry point.
 
-A `notebooks/walkthrough.ipynb` runs the happy path end to end — pulling both checkpoints from
-the Hub and running real inference — without retraining anything. Its first cell chdirs back
+A `notebooks/vit-seq2seq/walkthrough.ipynb` runs the happy path end to end — pulling the
+checkpoint from the Hub and running real inference — without retraining anything. Its first cell chdirs back
 to the repo root so relative paths (checkpoints, MNIST cache) resolve the same way `make serve SERVICE=vit-seq2seq`'s
 do; the package itself is installed, so nothing needs to be put on the import path.
 
@@ -222,26 +220,26 @@ CUDA-enabled lockfile rather than overriding this one at build time.
 On Apple Silicon, that CPU-only pin isn't just about avoiding a CUDA download. Docker Desktop on
 macOS runs containers inside a Linux VM, and that VM has no path to the host's Metal GPU at all
 (no MPS passthrough exists, unlike Linux's native NVIDIA passthrough), so a container always
-reports `"device": "cpu"` here no matter what the host itself can do. `make serve SERVICE=vit-seq2seq` /
-`make train SERVICE=vit-seq2seq-classifier` / `make train SERVICE=vit-seq2seq-seq2seq` run natively and get real MPS acceleration; the
-same targets under `make docker-*` are CPU-only on this hardware by construction, not a bug to
-chase. Use the native `make` targets for real Apple Silicon speed, and Docker Compose for a
+reports `"device": "cpu"` here no matter what the host itself can do. `make serve
+SERVICE=vit-seq2seq` and `make train SERVICE=vit-seq2seq` run natively and get real MPS
+acceleration; the same work inside a container is CPU-only on this hardware by construction, not
+a bug to chase. Use the native `make` targets for real Apple Silicon speed, and Docker Compose for a
 CPU-portable, Linux/CUDA-ready deployment story.
 
 ```bash
 make -C deploy up               # what this runs: docker compose up serve
 docker compose --profile train run --rm train-vit-seq2seq
-make -C deploy up  # then: docker compose --profile train run --rm train-vit-seq2seq STAGE=seq2seq  # the slower seq2seq trainer
 make -C deploy down             # what this runs: docker compose down
 ```
 
 **API:**
-- `GET /` and `GET /health` — the same liveness check, reporting which models are loaded and
-  on which device. `/health` is the portfolio-wide convention the hub and the Helm probes use.
-- `GET /models` — list available models
-- `POST /predict` — predict with `model_type: "vit"` or `"seq2seq"`
-- `POST /predict/vit`, `POST /predict/seq2seq` — model-specific shortcuts
-- `POST /predict/both` — run both models on the same image for comparison
+- `GET /health` — liveness, always 200, so a slow or missing checkpoint never restarts a pod
+- `GET /ready` — readiness, 503 until the checkpoint is loaded and the service can answer
+- `GET /models` — the one model, with the `img_size` and `patch_size` it reads at
+- `POST /predict` and `POST /predict/seq2seq` — read the number in a base64 `image_data` field;
+  the response carries the digits, the sequence confidence and a per-digit trace
+- `POST /predict/stream` — the same decode as server-sent events, one per digit as it is
+  emitted, ending in a `done` event with the full prediction
 
 ## 6. Experimental Results
 
