@@ -123,7 +123,7 @@ def test_generate_takes_the_argmax_rather_than_sampling() -> None:
     """Reading a number has one right answer, so the decode rule must be greedy.
 
     Both decode loops used `torch.multinomial`, which costs 21.5 points of
-    exact-sequence accuracy on the shipped checkpoint -- 77.03% against 98.53%, both out
+    exact-sequence accuracy on the shipped checkpoint -- 72.60% against 93.77%, both out
     of `make evaluate` -- and made the served answer a different draw per request: one
     call read a clear 206 as 22, with the second digit drawn at probability 0.007. It
     stayed hidden because the trainer's own validation pass sampled as well, so the
@@ -252,6 +252,66 @@ def test_multi_digit_composites_match_the_requested_size() -> None:
     assert targets.shape[1] == 5
     assert bool((targets[:, 0] == 10).all())
     assert bool((targets[:, -1] == 11).all())
+
+
+def test_composites_vary_in_scale_and_position_not_just_handwriting() -> None:
+    """The layout has to be augmented, not only the glyphs sitting in it.
+
+    This is the test that was missing, and its absence cost the whole service. Every
+    composite used to paste digits at exactly `digit_size` into evenly spaced slots in a
+    centred strip; rotation, scale, shear and translation were applied *inside* that
+    fixed cell, so the handwriting varied and the geometry never did. The model learned
+    the layout. Scored by cell size, the checkpoint that shipped read 92-100% between 22
+    and 47 pixels, **3.3% at 20 and 10.0% at 95** -- and the frontend offers a 280x280
+    canvas that a person fills, which lands near 95 once scaled, so the one input a human
+    can produce sat in the worst part of the curve.
+
+    Fourteen tests passed throughout. They checked that a composite had the right shape
+    and the right label, which a fixed layout satisfies perfectly.
+    """
+    config = Config()
+    arch = config.seq2seq_arch
+    rng = np.random.default_rng(0)
+    digit_images = {
+        digit: [torch.from_numpy(rng.random((1, 28, 28)).astype("float32"))] for digit in range(10)
+    }
+
+    def ink_boxes(number: int, draws: int) -> list[tuple[int, int, int, int]]:
+        """Where the ink lands, over repeated draws of the same number."""
+        dataset = MultiDigitDataset(
+            digit_images=digit_images,
+            numbers=[number] * draws,
+            image_size=arch.img_size,
+            max_digits=config.max_digits,
+            digit_size=config.digit_size,
+            min_digit_size=config.min_digit_size,
+            min_gap=config.min_gap,
+            augment_probability=0.0,
+        )
+        boxes = []
+        for index in range(draws):
+            image, _ = dataset[index]
+            ink = image[0] > 0.1
+            rows = torch.where(ink.any(dim=1))[0]
+            columns = torch.where(ink.any(dim=0))[0]
+            boxes.append((int(rows[0]), int(rows[-1]), int(columns[0]), int(columns[-1])))
+        return boxes
+
+    heights = [bottom - top + 1 for top, bottom, _, _ in ink_boxes(7, 120)]
+    assert min(heights) <= 16, f"no small digits: smallest is {min(heights)}px"
+    assert max(heights) >= 64, f"no large digits: largest is {max(heights)}px"
+
+    tops = [top for top, _, _, _ in ink_boxes(42, 120)]
+    lefts = [left for _, _, left, _ in ink_boxes(42, 120)]
+    assert max(tops) - min(tops) >= 32, f"vertical position barely moves: {min(tops)}-{max(tops)}"
+    assert max(lefts) - min(lefts) >= 32, (
+        f"horizontal position barely moves: {min(lefts)}-{max(lefts)}"
+    )
+
+    # Three digits must still fit, at every size the generator can choose.
+    for top, bottom, left, right in ink_boxes(407, 200):
+        assert 0 <= top <= bottom < arch.img_size, (top, bottom)
+        assert 0 <= left <= right < arch.img_size, (left, right)
 
 
 def test_a_composite_survives_the_round_trip_the_api_puts_it_through() -> None:

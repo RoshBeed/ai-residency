@@ -6,10 +6,17 @@
   encoder reads an image holding one, two or three handwritten digits; the decoder generates the
   number one digit at a time, autoregressively, with a causal mask and cross-attention, and stops
   when it emits EOS.
-- **Result:** **98.53% exact-sequence accuracy** on 3,000 held-out composites of one to three
+- **Result:** **93.77% exact-sequence accuracy** on 3,000 held-out composites of one to three
   digits, against 3.33% for always answering the commonest number in the split and 0.10% for
   guessing uniformly over 0–999. EOS lands in the right place 100% of the time, and the number
-  the API returns is the same number: the two paths answer identically on all 3,000.
+  the API returns is the same number: the two paths answer identically.
+
+  That figure is lower than the 98.53% this README used to quote, and it describes far more.
+  Every composite used to be built at one cell size in a centred strip, so the old number held
+  only for digits occupying about a quarter of the canvas — scored anywhere else, the same
+  checkpoint read **3.3% at 20 pixels and 10.0% at 95**. The generator now draws the cell size
+  and the position per composite, and `make evaluate` reports accuracy by ink height so a
+  collapse at one scale cannot hide inside an average again.
 
 Classifying one digit needs a single label. Reading a number needs an ordered sequence, of a length
 the model decides on, which is a different problem: the model has to know when it has finished. That
@@ -254,25 +261,37 @@ two and three digits, with freshly composed handwriting.
 
 | metric | result |
 |---|--:|
-| **exact-sequence accuracy** | **98.53%** |
+| **exact-sequence accuracy** | **93.77%** |
 | commonest-number baseline | 3.33% |
 | uniform guess over 0–999 | 0.10% |
-| one digit | 99.20% |
-| two digits | 98.50% |
-| three digits | 97.90% |
+| one digit | 98.60% |
+| two digits | 94.50% |
+| three digits | 88.20% |
 | EOS in the right place | 100.00% |
-| per-digit, aligned by position | 99.27% |
+| per-digit, aligned by position | 96.53% |
+
+Accuracy depends on how large the digits are drawn, so `make evaluate` reports that too — by
+the height of the ink in the model's own 112-pixel input:
+
+| ink height | exact-sequence | examples |
+|---|--:|--:|
+| tiny, up to 16px | 81.88% | 629 |
+| small, 17–28px | 94.75% | 1,028 |
+| medium, 29–48px | 98.27% | 923 |
+| large, over 48px | 99.29% | 420 |
+
+A number written small is genuinely harder: at 10 pixels a digit is a dozen strokes' worth of
+ink. The point of the breakdown is that the weakness is visible rather than averaged away.
 
 Exact-sequence is the strict metric: two correct digits out of three scores zero. Sequences are
 compared digit by digit rather than read back as an integer, because an integer comparison cannot
 tell a dropped zero from a correct answer. Composites are generated per access, so a second pass
 scores a different draw of handwriting and the figure moves by about two tenths of a point.
 
-Per-digit accuracy is 99.27% and flat across lengths (99.20% on one-digit targets, 99.25% on two,
-99.30% on three), so a third digit is read as well as a lone one. That is the figure to read first:
-it says the encoder is finding and reading glyphs rather than reading three known slots, with
-rotation, shear, scale and translation applied to every digit. Exact-sequence falls with length
-only because three independent reads have to all be right at once.
+Per-digit accuracy is 96.53%, and it slopes with length (98.60% on one-digit targets, 97.05% on
+two, 95.50% on three) because a three-digit number has to fit the same canvas and so is drawn
+smaller. Exact-sequence falls faster still, since three independent reads all have to be right at
+once.
 
 Every sequence stops in the right place, so what is left is a misread digit rather than a decoder
 that cannot count.
@@ -286,10 +305,10 @@ with it. Greedy decoding is the default now, and `sample=True` is opt-in.
 
 | decode rule | exact-sequence | EOS correct | per-digit |
 |---|--:|--:|--:|
-| sampled, temperature 1 | 77.03% | 90.23% | 90.60% |
-| **greedy** | **98.53%** | **100.00%** | **99.27%** |
+| sampled, temperature 1 | 72.60% | 90.30% | 87.07% |
+| **greedy** | **93.77%** | **100.00%** | **96.53%** |
 
-Same checkpoint, same split, 21.5 points — `make evaluate-sampled` is the first row and
+Same checkpoint, same split, 21.2 points — `make evaluate-sampled` is the first row and
 `make evaluate` the second, so both are reproducible from one command. The trainer's own
 validation pass sampled as well, so the number it reported each epoch agreed with the number
 `make evaluate` reported afterwards, and two agreeing numbers look like a verified one.
@@ -307,19 +326,70 @@ same 3,000 composites, routing one copy through a real PNG encode and the servic
 
 | path | exact-sequence | correct length | per-digit |
 |---|--:|--:|--:|
-| the loader's tensors | 98.23% | 100.00% | 99.12% |
-| re-encoded as PNG and preprocessed as the API does | 98.23% | 100.00% | 99.12% |
+| the loader's tensors | 92.97% | 100.00% | 96.25% |
+| re-encoded as PNG and preprocessed as the API does | 93.00% | 100.00% | 96.27% |
 
-Not close — identical, with the same answer on all 3,000 and a largest per-pixel difference of
-0.006, which is 8-bit PNG quantisation. The dataset normalises once, on the finished composite,
+The two paths disagree on 3 of 3,000 composites, all of them borderline cases pushed over by
+8-bit PNG quantisation — the largest per-pixel difference between the two tensors is 0.006, which
+is exactly one 255th divided by the normalisation's standard deviation. The dataset normalises once, on the finished composite,
 with the same mean and standard deviation the API applies, and
 `test_a_composite_survives_the_round_trip_the_api_puts_it_through` fails if that stops being
 true. (Both figures here are one draw of handwriting below the table above; composites are
 generated per access.)
 
-Verified through the published image rather than only in-process: one held-out composite per digit
-count, posted to `/predict/seq2seq`, reads `0`, `55` and `206` with per-digit confidence around
-0.92, and the same request five times running returns the same answer five times.
+### The layout has to be augmented, not just the handwriting
+
+This is the failure worth reading, because every structural check passed through all of it.
+
+The generator used to paste each digit at exactly `digit_size` into one of `max_digits` evenly
+spaced slots in a centred strip, and apply rotation, scale, shear and translation *inside* that
+fixed cell. The handwriting varied; the geometry was identical in all 270,000 training composites.
+So the model learned the layout, and scoring it by cell size shows exactly that:
+
+| cell size at 112px | 1 digit | 2 digits | 3 digits |
+|---|--:|--:|--:|
+| 9–14px | — | 0.0% | 0.0% |
+| 20px | — | — | 3.3% |
+| 28–47px | 99–100% | 94–100% | 92–99% |
+| 61px | 58.3% | — | — |
+| 78–95px | 10–21% | — | — |
+
+It worked between about 22 and 47 pixels and collapsed outside. The frontend offers a 280×280
+canvas and a 14-pixel brush; a person draws a single digit filling most of it, which is near 95
+pixels once scaled to the model's input. **The one input a human can produce sat in the worst part
+of that curve**, and the README quoted 98.53% because the evaluation only ever built composites the
+same way the training data did.
+
+The cell size, the gaps and the group's position are now drawn per composite — 8–85px for one
+digit, 8–54 for two, 8–38 for three, bounded by what physically fits rather than by a constant.
+Scored the way the canvas actually produces input, digits sized as a fraction of the canvas width:
+
+| fill of canvas | 1 digit | 2 digits | 3 digits |
+|---|--:|--:|--:|
+| 25% | 99.2% *(was 100.0)* | 65.0% *(was 0.0)* | 0.8% *(was 0.0)* |
+| 40% | 99.2% *(was 99.2)* | 95.8% *(was 94.2)* | 79.2% *(was 0.0)* |
+| 55% | **99.2%** *(was 58.3)* | 98.3% *(was 99.2)* | 90.8% *(was 3.3)* |
+| 70% | **99.2%** *(was 20.8)* | 98.3% *(was 100.0)* | 94.2% *(was 91.7)* |
+| 85% | **99.2%** *(was 10.0)* | 99.2% *(was 94.2)* | 96.7% *(was 99.2)* |
+
+Three digits crammed into a quarter of the canvas are 9 pixels each and still unreadable, which is
+honest rather than fixed — at that size a digit is a dozen strokes' worth of ink.
+
+`test_composites_vary_in_scale_and_position_not_just_handwriting` samples the generator and fails
+unless ink heights span small to large and the position moves; restoring the fixed cell fails it
+with `no small digits: smallest is 28px`. And `make evaluate` reports accuracy by ink height, so a
+collapse at one scale shows up instead of averaging away.
+
+Verified through the published image on input built by the frontend's own `canvas_to_png_bytes`,
+at the sizes a person draws — not composites from the training generator, which is the mistake
+that let this through:
+
+```
+drew 8    -> 8     0.922
+drew 9    -> 9     0.920
+drew 47   -> 47    0.891
+drew 206  -> 206   0.925
+```
 
 ### Against the fixed-length predecessor
 
@@ -330,7 +400,7 @@ same way:
 | | exact-sequence | one digit | two digits | three digits | correct length |
 |---|--:|--:|--:|--:|--:|
 | fixed-length, 84px | 23.20% | 0.00% | 0.00% | 69.60% | 33.33% |
-| **this checkpoint** | **98.53%** | **99.20%** | **98.50%** | **97.90%** | **100.00%** |
+| **this checkpoint** | **93.77%** | **98.60%** | **94.50%** | **88.20%** | **100.00%** |
 
 Zero on one- and two-digit numbers is not a perception failure. It emits three digits whatever it
 sees, because that is the only thing its training data ever asked for.
@@ -341,8 +411,8 @@ Real transcript from the shipped checkpoint:
 target   2 -> generated   2   MATCH
 target  72 -> generated  72   MATCH
 target 313 -> generated 313   MATCH
-target 767 -> generated 769   miss
-target  30 -> generated  90   miss
+target   9 -> generated   3   miss
+target 206 -> generated 205   miss
 ```
 
 ## 7. Related Work

@@ -297,6 +297,26 @@ caller would send, push it through the service's own preprocessing and compare. 
 checkpoint on inputs no request can produce is the same error as ranking it on a loss from a
 different objective.
 
+**Augment the layout, not just the content -- and the frontend is part of the serving
+path.** Third instance, and the worst. `vit-seq2seq` composited MNIST digits at a fixed
+28px cell into evenly spaced slots in a centred strip, then applied rotation, scale, shear
+and translation *inside* that cell. The handwriting varied across 270,000 examples and the
+geometry never did, so the model learned the layout: 92-100% exact-sequence for digits
+between 22 and 47 pixels, **3.3% at 20 and 10.0% at 95**. The frontend offers a 280x280
+canvas and a 14px brush, so a person drawing one digit fills it -- about 95 pixels once
+scaled. Every number in the write-up was measured on composites built by the training
+generator, including the ones called "verified through the container", because the PNGs
+posted to the API came from that same generator. The user found it by drawing ten numbers
+and getting ten wrong answers.
+
+Two habits follow. **Generate the training data the way the input is actually produced**,
+which here meant drawing the cell size, the gaps and the group's position per composite
+rather than warping glyphs inside a frozen grid. And **when a service has a UI, the UI is
+the serving path** -- `make build` plus a `curl` with your own fixture is not an
+end-to-end check, it is the same fixture twice. Report the metric split by whatever the
+real input varies in (`make evaluate` prints accuracy by ink height now), so a collapse at
+one end cannot average away.
+
 It happened twice in one pass, which is why this is a rule rather than a note.
 `vector-search-retrieval` was the second: the offline tokenizer that filled the Redis index
 lowercased and `retrieval/query_engine.py:tokenize` did not, so `/query` scored **0.0020 recall@10
@@ -796,12 +816,14 @@ Status:
       digits (9 worst at 97.92%, 3 best at 99.80%) and the commonest confusions are 9/4 and
       5/3, which is handwriting rather than a systematic failure.
 - [x] `vit-seq2seq` -- variable-length sequences, so EOS is a decision rather than a
-      position. **98.53% exact-sequence accuracy on 3,000 held-out composites of one to
+      position. **93.77% exact-sequence accuracy on 3,000 held-out composites of one to
       three digits**, against 3.33% for always answering the commonest number in the split
-      and 0.10% for a uniform guess over 0-999. Per length: 99.20% / 98.50% / 97.90%. **EOS
-      lands in the right place 100.00% of the time**, and per-digit accuracy is 99.27%, flat
-      across lengths (99.20% / 99.25% / 99.30%) -- exact-sequence falls with length only
-      because three independent reads all have to be right. `make evaluate` prints all of
+      and 0.10% for a uniform guess over 0-999. Per length: 98.60% / 94.50% / 88.20%. **EOS
+      lands in the right place 100.00% of the time**, and per-digit accuracy is 96.53%.
+
+      **That is lower than the 98.53% this file used to record, and it describes far more.**
+      See the geometry entry below: the old number held only for digits at about a quarter
+      of the canvas, and the same checkpoint read 3.3% at 20 pixels and 10.0% at 95. `make evaluate` prints all of
       it, including the per-digit figure, and `make evaluate-sampled` is the same scoring with
       the decode rule flipped; neither existed before, and the old 68.00% came out of a
       training run's validation pass.
@@ -812,7 +834,7 @@ Status:
       **Decoding was sampling, and that was worth 21.5 points.** Both decode loops drew
       each token with `torch.multinomial` at temperature 1. On the same checkpoint and
       split, both arms out of `make evaluate`: sampled 77.03% exact / 90.23% EOS / 90.60%
-      per digit, greedy **98.53% / 100.00% / 99.27%**. For a task with one right answer,
+      per digit, greedy **93.77% / 100.00% / 96.53%**. For a task with one right answer,
       sampling picks a low-probability token every so often and loses the sequence with it
       -- one served request read a clear 206 as 22, with the second digit drawn at
       probability 0.007. Greedy is the default now and `sample=True` is opt-in. The length
@@ -876,12 +898,10 @@ Status:
       `max_jitter = spacing // 2` to 0: the positional jitter the dataset advertised had
       never moved anything.
 
-      **99.27% per digit against the sibling classifier's 98.86% on single clean digits**,
-      now that the classifier is trained out too. The two share an encoder and land within
-      half a point of each other, which is the fairer reading: this one gets there on
-      sheared, rotated, rescaled and shifted glyphs rather than clean centred ones. The
-      earlier version of this note credited the gap to the classifier's one epoch, and that
-      was right -- training it properly closed most of it.
+      96.53% per digit against the sibling classifier's 98.86% on single clean digits. The
+      two share an encoder; this one reads glyphs that are sheared, rotated, rescaled and
+      placed anywhere on the canvas at any size, which is a harder problem than a clean
+      centred 28x28, and the gap is the price of that range.
 
 - [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
       triples. **Recall@10 0.8381 against a 0.0020 chance floor and 0.0014 for untrained
@@ -1133,10 +1153,13 @@ Leads, strongest first, with what is already known:
   reference is the base model, so the penalty measures drift from the wrong thing). Also
   unmeasured: `OpenAssistant/reward-model-deberta-v3-base` is 3.5x cheaper in compute than
   the large-v2 currently used and inference-only, so it may not be the bottleneck at all.
-- **`vit-seq2seq`: closed.** 98.53% exact-sequence, 99.27% per digit, EOS correct on every
-  held-out sequence, and the served path scores identically to the loader's. The best epoch
-  is 14 of 15 and the 15th was worse, so longer training is spent; the 1.47% of sequences
-  left are single misread digits. Not worth an afternoon.
+- **`vit-seq2seq`: reopened, then closed properly.** 93.77% exact-sequence, 96.53% per
+  digit, EOS correct on every held-out sequence, across every scale a person can draw at.
+  The previous 98.53% was real and useless: it held only for digits at one size, and the
+  service read **10.0% on a single digit drawn large, which is the only thing the frontend
+  canvas invites you to do**. The composite geometry is augmented now, not just the glyphs
+  inside it. The last epoch of 15 was still the best, so there is a little left in longer
+  training.
 
   **Check the decode rule before the model, in any service that generates.** Sampling at
   temperature 1 cost this service 21.5 points of exact-sequence accuracy, and the

@@ -435,7 +435,7 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
         "model_links": [],
         "stats": [
-            ("Exact-sequence match", "98.5%"),
+            ("Exact-sequence match", "93.8%"),
             ("Random baseline", "0.10%"),
             ("Held-out sequences", "3,000"),
         ],
@@ -449,9 +449,14 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "image, and an EOS token it emits when the number is done.\n\n"
             "**Variable length.** Targets are one, two or three digits, balanced so that "
             "every length is equally common, which is what makes stopping a decision rather "
-            "than a fixed count. Exact-sequence accuracy is 98.5% against 0.10% for a uniform "
+            "than a fixed count. Exact-sequence accuracy is 93.8% against 0.10% for a uniform "
             "guess, EOS lands in the right place every time, and per digit, aligned by "
-            "position, it reads 99.3%.\n\n"
+            "position, it reads 96.5%.\n\n"
+            "**Any size, anywhere.** Each composite is built at a cell size and position "
+            "drawn per example, so the model reads a number filling the canvas as well as "
+            "one written small. An earlier version pasted every digit at one size in a "
+            "centred strip, and scored 10% on a single digit drawn large — which is "
+            "exactly what this page asks you to do.\n\n"
             "**Per-sequence termination.** Generation tracks completion per sequence within a "
             "batch. Stopping the whole batch at the first EOS silently truncates every other "
             "sequence still decoding — including inside the trainer's own evaluation loop, "

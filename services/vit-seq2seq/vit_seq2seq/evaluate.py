@@ -40,6 +40,16 @@ __all__ = ["evaluate_checkpoint", "main", "score"]
 
 logger = get_logger(__name__)
 
+# How tall the ink is, in pixels of the model's own input. The frontend's canvas puts a
+# hand-drawn single digit near the top of this range once scaled down.
+SCALE_BANDS: tuple[tuple[int, str], ...] = (
+    (16, "tiny"),
+    (28, "small"),
+    (48, "medium"),
+    (999, "large"),
+)
+MNIST_MEAN, MNIST_STD = 0.1307, 0.3081
+
 
 def digits_of(sequence: list[int], start_token: int, eos_token: int) -> list[int]:
     """Return the digit tokens a sequence spells, stopping at the first EOS.
@@ -95,6 +105,12 @@ def score(
 
     exact = Counter[int]()
     seen = Counter[int]()
+    # Accuracy by how large the digits are drawn. An aggregate hid a collapse once
+    # already: every composite was built at one cell size, so the headline described a
+    # geometry nobody could reproduce by hand and the service read 3.3% at 20 pixels
+    # while the README said 98.53%. Reported per band so that cannot recur silently.
+    scale_exact = Counter[str]()
+    scale_seen = Counter[str]()
     digit_hits = Counter[int]()
     digits_seen = Counter[int]()
     stopped_correctly = 0
@@ -110,7 +126,7 @@ def score(
                 max_length=config.decoder_seq_length,
                 sample=sample,
             )
-            for predicted_row, target_row in zip(generated, targets, strict=True):
+            for image, predicted_row, target_row in zip(images, generated, targets, strict=True):
                 want = digits_of(target_row.tolist(), arch.start_token, arch.eos_token)
                 got = digits_of(predicted_row.tolist(), arch.start_token, arch.eos_token)
                 length = len(want)
@@ -119,6 +135,16 @@ def score(
                 stopped_correctly += int(len(got) == length)
                 predicted_lengths[length][len(got)] += 1
                 total += 1
+
+                ink = image[0] > ((0.1 - MNIST_MEAN) / MNIST_STD)
+                rows = torch.where(ink.any(dim=1))[0]
+                height = int(rows[-1] - rows[0]) + 1 if len(rows) else 0
+                band = next(
+                    (name for limit, name in SCALE_BANDS if height <= limit), SCALE_BANDS[-1][1]
+                )
+                scale_seen[band] += 1
+                scale_exact[band] += int(got == want)
+
                 # Aligned from the left: how many of the target's digits the prediction
                 # put in the right place, whatever it did about length.
                 for position, digit in enumerate(want):
@@ -135,6 +161,11 @@ def score(
         results[f"exact_{length}_digit"] = 100.0 * exact[length] / seen[length]
         results[f"examples_{length}_digit"] = float(seen[length])
         results[f"per_digit_{length}_digit"] = 100.0 * digit_hits[length] / digits_seen[length]
+
+    for band in [name for _, name in SCALE_BANDS]:
+        if scale_seen[band]:
+            results[f"exact_ink_{band}"] = 100.0 * scale_exact[band] / scale_seen[band]
+            results[f"examples_ink_{band}"] = float(scale_seen[band])
 
     for length in sorted(predicted_lengths):
         spread = ", ".join(
@@ -166,6 +197,8 @@ def evaluate_checkpoint(config: Config, sample: bool = False) -> dict[str, float
         max_digits=config.max_digits,
         min_digits=config.min_digits,
         digit_size=config.digit_size,
+        min_digit_size=config.min_digit_size,
+        min_gap=config.min_gap,
         augment_probability=config.augment_probability,
         rotation_degrees=config.augment_rotation_degrees,
         shear_degrees=config.augment_shear_degrees,
@@ -218,6 +251,15 @@ def evaluate_checkpoint(config: Config, sample: bool = False) -> dict[str, float
         results["eos_position_accuracy"],
         results["per_digit_accuracy"],
     )
+    for _, band in SCALE_BANDS:
+        key = f"exact_ink_{band}"
+        if key in results:
+            logger.info(
+                "  ink height %-7s %.2f%% over %d examples",
+                band,
+                results[key],
+                int(results[f"examples_ink_{band}"]),
+            )
     for length in range(config.min_digits, config.max_digits + 1):
         key = f"exact_{length}_digit"
         if key in results:

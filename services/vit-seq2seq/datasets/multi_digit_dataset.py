@@ -38,6 +38,8 @@ class MultiDigitDataset(Dataset[Example]):
         image_size: int,
         max_digits: int,
         digit_size: int = 28,
+        min_digit_size: int = 10,
+        min_gap: int = 2,
         augment_probability: float = 1.0,
         rotation_degrees: float = 15.0,
         shear_degrees: float = 12.0,
@@ -54,7 +56,11 @@ class MultiDigitDataset(Dataset[Example]):
             numbers: The numbers this split covers, one entry per example.
             image_size: Side length of the square canvas.
             max_digits: Widest composite, which fixes how many cells there are.
-            digit_size: Side length each digit is pasted at.
+            digit_size: Largest side length a digit is pasted at. The actual cell is
+                drawn per composite between `min_digit_size` and whatever fits, so the
+                model sees every scale a person can draw rather than one.
+            min_digit_size: Smallest cell a digit is pasted at.
+            min_gap: Smallest gap between digits, and from the canvas edge.
             augment_probability: Share of digits given a random affine warp.
             rotation_degrees: Rotation range, plus or minus.
             shear_degrees: Shear range, plus or minus.
@@ -69,6 +75,8 @@ class MultiDigitDataset(Dataset[Example]):
         self.image_size = image_size
         self.max_digits = max_digits
         self.digit_size = digit_size
+        self.min_digit_size = min_digit_size
+        self.min_gap = min_gap
         self.augment_probability = augment_probability
         self.rotation_degrees = rotation_degrees
         self.shear_degrees = shear_degrees
@@ -122,42 +130,67 @@ class MultiDigitDataset(Dataset[Example]):
     def _create_multi_digit_image(self, digits: list[int]) -> torch.Tensor:
         """Paste one real MNIST sample per digit onto a single canvas.
 
-        The cell width follows `max_digits`, not the number of digits actually drawn, so
-        a one-digit composite is one glyph on a wide canvas rather than one glyph
-        stretched across it. Otherwise digit size would leak the sequence length and the
-        decoder could read the count off the scale instead of the content.
+        **The geometry varies per composite, not just the glyphs inside it.** The first
+        version of this pasted every digit at exactly `digit_size` into one of
+        `max_digits` evenly spaced slots in a centred strip, and applied rotation, scale,
+        shear and translation *within* that fixed cell. That warps the handwriting while
+        leaving the layout identical in every example, so the model learns one scale and
+        one position. Measured on the shipped checkpoint, reading numbers composed at
+        other cell sizes: 92-100% exact-sequence between 22 and 47 pixels, **3.3% at 20
+        pixels and 10.0% at 95**. A person drawing a single digit on the frontend's
+        280x280 canvas fills most of it, which lands around 95 pixels once scaled, so the
+        service was at its worst exactly where its only human input lives.
+
+        So the cell size is drawn per composite across the whole range that fits, the
+        gaps between digits vary, and the group is placed anywhere on the canvas rather
+        than centred. Three big digits do not fit in a small square, so the upper bound
+        depends on how many are drawn -- that is a property of the canvas rather than a
+        leak, and the ranges overlap heavily at the small end, so scale does not tell the
+        decoder how many digits to expect.
         """
-        digit_size = self.digit_size
-        spacing = (self.image_size - self.max_digits * digit_size) // (self.max_digits + 1)
-        canvas = torch.zeros(1, self.image_size, self.image_size)
-
-        # Shift the whole group by a random offset within the slack a shorter number
-        # leaves, so a two-digit number is not always flush left.
         drawn = len(digits)
-        slack = (self.max_digits - drawn) * (digit_size + spacing)
-        group_offset = random.randint(0, slack) if slack > 0 else 0
+        fits = (self.image_size - (drawn + 1) * self.min_gap) // drawn
+        largest = max(min(fits, self.digit_size), self.min_digit_size)
+        cell = random.randint(self.min_digit_size, largest)
 
+        # The gaps have to come out of what the digits leave behind, or three large
+        # cells plus three generous gaps run off the edge and the last digit is pasted
+        # into a slice that does not exist.
+        budget = self.image_size - drawn * cell - 2 * self.min_gap
+        per_gap = budget // max(drawn - 1, 1)
+        high = max(self.min_gap, min(cell // 2, per_gap))
+        gaps = [random.randint(self.min_gap, high) for _ in range(drawn - 1)]
+
+        span = drawn * cell + sum(gaps)
+        x = random.randint(0, max(0, self.image_size - span))
+        top = random.randint(0, max(0, self.image_size - cell))
+
+        canvas = torch.zeros(1, self.image_size, self.image_size)
         for position, digit in enumerate(digits):
             digit_image = random.choice(self.digit_images[digit])
-            digit_image = F.interpolate(
-                digit_image.unsqueeze(0),
-                size=(digit_size, digit_size),
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(0)
-
-            max_jitter = spacing // 2
-            x_jitter = random.randint(-max_jitter, max_jitter) if max_jitter > 0 else 0
-            y_jitter = random.randint(-max_jitter, max_jitter) if max_jitter > 0 else 0
-            x_start = group_offset + spacing + position * (digit_size + spacing) + x_jitter
-            y_start = (self.image_size - digit_size) // 2 + y_jitter
-            x_start = max(0, min(self.image_size - digit_size, x_start))
-            y_start = max(0, min(self.image_size - digit_size, y_start))
-
             if random.random() < self.augment_probability:
                 digit_image = self._random_affine(digit_image)
+            digit_image = (
+                F.interpolate(
+                    digit_image.unsqueeze(0),
+                    size=(cell, cell),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                .squeeze(0)
+                .clamp(0.0, 1.0)
+            )
 
-            canvas[:, y_start : y_start + digit_size, x_start : x_start + digit_size] = digit_image
+            # Each digit sits on the same baseline, wandering a little, the way a written
+            # number does -- not independently placed, which would stop being a number.
+            y = min(max(top + random.randint(-cell // 8, cell // 8), 0), self.image_size - cell)
+            x = min(x, self.image_size - cell)
+            # `maximum` rather than assignment: cells can touch at the smallest gaps, and
+            # overwriting would erase the edge of the digit already there.
+            canvas[:, y : y + cell, x : x + cell] = torch.maximum(
+                canvas[:, y : y + cell, x : x + cell], digit_image
+            )
+            x += cell + (gaps[position] if position < len(gaps) else 0)
 
         return canvas
 
@@ -214,6 +247,8 @@ class MultiDigitMNISTDataset:
         max_digits: int = 3,
         min_digits: int = 1,
         digit_size: int = 28,
+        min_digit_size: int = 10,
+        min_gap: int = 2,
         augment_probability: float = 1.0,
         rotation_degrees: float = 15.0,
         shear_degrees: float = 12.0,
@@ -238,7 +273,11 @@ class MultiDigitMNISTDataset:
             min_digits: Fewest digits per composite. 1 means the decoder has to decide
                 where the number ends; setting it equal to `max_digits` restores the
                 original fixed-length task.
-            digit_size: Side length each digit is pasted at.
+            digit_size: Largest side length a digit is pasted at. The actual cell is
+                drawn per composite between `min_digit_size` and whatever fits, so the
+                model sees every scale a person can draw rather than one.
+            min_digit_size: Smallest cell a digit is pasted at.
+            min_gap: Smallest gap between digits, and from the canvas edge.
             augment_probability: Share of digits given a random affine warp.
             rotation_degrees: Rotation range, plus or minus.
             shear_degrees: Shear range, plus or minus.
@@ -259,6 +298,8 @@ class MultiDigitMNISTDataset:
         self.max_digits = max_digits
         self.min_digits = min_digits
         self.digit_size = digit_size
+        self.min_digit_size = min_digit_size
+        self.min_gap = min_gap
         self.augment_probability = augment_probability
         self.rotation_degrees = rotation_degrees
         self.shear_degrees = shear_degrees
@@ -379,20 +420,24 @@ class MultiDigitMNISTDataset:
 
     def _build_split(self, numbers: Sequence[int]) -> MultiDigitDataset:
         """Wrap one split's numbers in a dataset."""
+        # Keyword arguments on purpose: this call was positional, so adding a parameter
+        # in the middle of the signature silently shifted every later one by a slot.
         return MultiDigitDataset(
-            self.digit_images,
-            numbers,
-            self.image_size,
-            self.max_digits,
-            self.digit_size,
-            self.augment_probability,
-            self.rotation_degrees,
-            self.shear_degrees,
-            self.scale_range,
-            self.return_digit_sequence,
-            self.add_start_eos,
-            self.start_token,
-            self.eos_token,
+            digit_images=self.digit_images,
+            numbers=numbers,
+            image_size=self.image_size,
+            max_digits=self.max_digits,
+            digit_size=self.digit_size,
+            min_digit_size=self.min_digit_size,
+            min_gap=self.min_gap,
+            augment_probability=self.augment_probability,
+            rotation_degrees=self.rotation_degrees,
+            shear_degrees=self.shear_degrees,
+            scale_range=self.scale_range,
+            return_digit_sequence=self.return_digit_sequence,
+            add_start_eos=self.add_start_eos,
+            start_token=self.start_token,
+            eos_token=self.eos_token,
         )
 
     def _create_data_loaders(self) -> None:

@@ -90,7 +90,11 @@ class Config(BaseConfig):
         train_split: Fraction of composites used for training.
         max_digits: Most digits per composite image.
         min_digits: Fewest digits per composite image.
-        digit_size: Side length each MNIST digit is pasted at.
+        digit_size: Largest side length a digit is pasted at. The cell is drawn per
+            composite between `min_digit_size` and whatever fits, so the model sees
+            every scale rather than one.
+        min_digit_size: Smallest side length a digit is pasted at.
+        min_gap: Smallest gap between digits, and between a digit and the canvas edge.
         augment_probability: Share of digits given a random affine warp.
         augment_rotation_degrees: Rotation range, plus or minus.
         augment_shear_degrees: Shear range, plus or minus.
@@ -121,12 +125,17 @@ class Config(BaseConfig):
     # decoder learned "emit three, then stop" and could never answer with one or two
     # digits, while the write-up advertised per-sequence EOS. 1 makes the stop a decision.
     min_digits: int = 1
-    # Explicit rather than `img_size // max_digits`, which forced
-    # `spacing = (img_size - max_digits * digit_size) // (max_digits + 1)` to 0 and so
-    # made `max_jitter = spacing // 2` zero too -- the positional jitter the dataset
-    # advertised had never moved anything. 28 is MNIST's native size, so digits are
-    # pasted without resampling and the slack becomes real: at 112px, spacing is 7.
-    digit_size: int = 28
+    # A *range*, not a size. This was a fixed 28 -- MNIST's native size -- so every
+    # composite ever trained on had digits at 25% of the canvas height in a centred
+    # strip, and the per-glyph rotation/scale/shear happened inside that unchanging
+    # cell. The model learned the layout: 92-100% exact-sequence for cells between 22
+    # and 47 pixels, 3.3% at 20 and 10.0% at 95. The frontend hands it a 280x280 canvas
+    # that a person fills, which is where the 95 comes from, so the one input a human
+    # produces sat in the worst part of that curve. 96 is the largest a single digit can
+    # be on a 112px canvas; two and three digit composites are capped by what fits.
+    digit_size: int = 96
+    min_digit_size: int = 10
+    min_gap: int = 2
     # Augmentation applied to every digit rather than 30% of them, and wide enough that
     # the three evenly-spaced cells of the original canvas stop being memorisable.
     augment_probability: float = 1.0
