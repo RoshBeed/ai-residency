@@ -698,10 +698,43 @@ Status:
       analogies with published numbers beside them.
 - [x] `content-scoring` -- trained on 872,554 Hacker News posts, four fusion architectures
       against four baselines.
-- [x] `speech-emotion-recognition` -- whisper-tiny on English CREMA-D, val_acc 0.7225
+- [x] `speech-emotion-recognition` -- whisper-tiny on English CREMA-D, val_acc 0.7064
       against a 0.1708 baseline. Was one epoch of German EmoDB at below chance.
+
+      **A corpus holds the recording constant; an upload does not.** CREMA-D is studio
+      audio at one level with a clean floor, and the model had learned to rely on both
+      rather than ignore them. Same harness, same 1,492 held-out clips, through the
+      serving path -- clean-trained checkpoint against the shipped one:
+
+      | upload differs by | clean-trained | shipped |
+      |---|--:|--:|
+      | nothing | 68.9% | 70.6% |
+      | a sixteenth of the volume | 68.9% | 70.6% |
+      | room noise, 20dB SNR | 58.2% | 71.0% |
+      | room noise, 10dB SNR | 42.6% | 66.1% |
+
+      Two fixes, because they are two problems. **Level is preprocessing**:
+      `speech.load_waveform` scales to a fixed RMS, in the shared library because both
+      services and all four of their training and serving paths go through it. Whisper's
+      feature extractor normalises log-mel against each clip's own maximum, which does
+      not rescue audio near the floor -- a sixteenth-volume clip read 25.3% against a
+      16.7% chance line. **Noise has to be learned**, since scaling a noisy clip scales
+      its noise: training adds white noise at 8-35dB SNR, train split only.
+
+      Costs 1.6 points on clean studio audio (0.7225 under its own preprocessing to
+      0.7064) to gain 23.5 at 10dB. And **changing the loader invalidated the previous
+      checkpoint** -- fed normalised audio it never trained on it reads 0.689, which is
+      why this was a retrain and not a patch.
+
+      Two measurement mistakes worth not repeating. A first probe reported 13.3% on
+      unperturbed clips -- `load_model_and_processor` without a checkpoint path returns
+      base Whisper with freshly initialised emotion embeddings, which is chance for six
+      classes. It was caught only because it contradicted a number already trusted.
+      And a 150-clip subset said normalisation *hurt* noise robustness; on the full set
+      it helps substantially (30.0% to 58.2% at 20dB). **A subset that disagrees with
+      the full set is not a faster measurement, it is a wrong one.**
 - [x] `speech-emotion-recognition` -- Section 6 rewritten with the real numbers; root README's
-      resident-memory row now reads 0.9 GB and 0.7225 vs 0.1708. Verified through the container
+      resident-memory row reads 0.9 GB and 0.7064 vs 0.1708. Verified through the container
       before updating either.
 - [x] `speech-emotion-recognition` -- resume support, on the shared mechanism.
 - [x] `speech-emotion-recognition` -- CREMA-D's audio is mirrored at
@@ -1245,10 +1278,10 @@ steps, at a couple of batch sizes -- and it costs minutes.
 
 Open:
 - `speech-emotion-recognition` is trained for real now: whisper-tiny on English CREMA-D,
-  **0.7225 held-out accuracy against a 0.1708 majority-class baseline**, 4.2x chance over six
-  emotions, and 20/30 held-out clips correct through the container. Held-out loss bottoms at
-  epoch 6 and accuracy peaks at 10, with training loss down to 0.0178 by then, so eight to ten
-  epochs is the useful range rather than twenty.
+  **0.7064 held-out accuracy against a 0.1708 majority-class baseline**, 4.1x chance over six
+  emotions, and 20/30 held-out clips correct through the container. It is also robust to level
+  and room noise now, which the status entry above covers; the epoch question is settled by
+  early stopping, which lands at 8.
 
   Getting there corrected two earlier mistakes worth keeping written down. The first attempt was
   one epoch of German EmoDB scoring 0.2342 against a 0.2382 baseline -- *below* chance -- pushed

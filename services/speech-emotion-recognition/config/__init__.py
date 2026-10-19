@@ -159,6 +159,11 @@ class Config(BaseConfig):
     val_split: float = 0.2
     samples_per_emotion: int = 5
 
+    # Noise augmentation, training split only. CREMA-D is studio audio; the held-out
+    # clips fell to 30.0% at 20dB SNR and 14.0% at 10dB without this.
+    augment_noise: bool = True
+    augment_snr_db_range: tuple[float, float] = (8.0, 35.0)
+
     hf_repo_id: str | None = "roshbeed/ai-residency-speech-emotion-recognition"
     hf_dataset_repo_id: str | None = "roshbeed/ai-residency-speech-emotion-recognition-data"
     wandb_project: str | None = "ai-residency-speech-emotion-recognition"

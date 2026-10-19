@@ -27,27 +27,29 @@ class Config(BaseConfig):
             step, so more steps show more of the trajectory -- and it was a literal
             written out twice in `serving/api.py` before it was a field.
 
-            **Three, because the whole curve was measured rather than the ends.** It was
-            five, on the strength of two data points: one step and five. Running
-            `make collateral` at every count in between says five is the only one that
-            does real damage. Word error rate over twelve held-out CREMA-D sentences,
-            against a 0.1642 base:
+            **Two, and the number moved when a shared library changed under it.** It
+            was five, chosen from two data points; measuring every count in between put
+            it at three. Then `speech.load_waveform` started normalising every clip to a
+            fixed RMS -- for the emotion service, where a quiet upload was scoring near
+            chance -- and that made this service's demo clip louder, its gradients
+            larger, and its overfitting arrive sooner. The curve is not the same curve:
 
-            | steps | WER | sentences altered |
-            |---|--:|--:|
-            | 1 | 0.1642 | 0/12 |
-            | 2 | 0.1493 | 2/12 |
-            | **3** | **0.1493** | **2/12** |
-            | 4 | 0.1642 | 2/12 |
-            | 5 | 0.2687 | 4/12 |
+            | steps | demo clip reads | WER | sentences altered |
+            |---|---|--:|--:|
+            | 1 | "My name is Rosh" | 0.1493 | 2/12 |
+            | **2** | **"My name is Rosh"** | **0.1493** | **2/12** |
+            | 3 | "Mena Nis Rosh" | 0.1343 | 3/12 |
+            | 4 | "My name is Rosh" | 0.2388 | 5/12 |
+            | 5 | "My name is Rosh" | **1.1791** | 8/12 |
 
-            The count of altered sentences matters more than the rate. Through four
-            steps the two that change were *already wrong* at base -- whisper-tiny hears
-            "it's eleven o'clock" as "Give us a lemon a clock" either way. At five,
-            transcripts the base model got right start breaking: "The airplane is almost
-            full" becomes "The airplay is almost full" and "Don't forget a jacket"
-            becomes "Go for it". Three keeps a visible trajectory, corrects the demo
-            clip, scores *below* the base rate, and damages nothing that worked.
+            Five now does more than four times the damage it did before the change, and
+            three breaks the demo outright -- the one thing this service exists to show.
+            Two corrects the clip, keeps a streamed trajectory, and sits below the base
+            model's error rate.
+
+            The lesson is not the number. **A constant tuned against one service's
+            preprocessing is invalidated when a shared library changes that
+            preprocessing**, silently and in another service's commit.
 
             The fine-tune is per-request and discarded, so that cost lands on the
             response, not on a stored checkpoint.
@@ -63,7 +65,7 @@ class Config(BaseConfig):
 
     learning_rate: float = 1e-4
     num_epochs: int = 1
-    serve_num_steps: int = 3
+    serve_num_steps: int = 2
 
     model_name: str = "openai/whisper-tiny"
     checkpoint_name: str = "whisper_finetuned.pth"

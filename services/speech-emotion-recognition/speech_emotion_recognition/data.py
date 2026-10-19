@@ -14,13 +14,14 @@ target is the emotion token alone, not a transcript with an emotion token attach
 import csv
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import WhisperProcessor
 
 from ai_residency_common import get_logger
 from config import Config
-from speech import encode_target, features_from_file
+from speech import add_noise, encode_target, load_waveform, to_features
 
 __all__ = ["EmotionClip", "EmotionDataset", "load_manifest_rows"]
 
@@ -70,13 +71,15 @@ class EmotionDataset(Dataset[EmotionClip]):
             processor: Whisper processor whose tokenizer already carries the emotion
                 tokens. Passing it in rather than constructing one here keeps a single
                 extended vocabulary shared with the model's resized embedding table.
-            split: `"train"` or `"val"`.
+            split: `"train"` or `"val"`. Only the training split is augmented.
 
         Raises:
             FileNotFoundError: If no manifest for this split exists at all.
         """
         self._config = config
         self._processor = processor
+        self._augment = split == "train" and config.augment_noise
+        self._rng = np.random.default_rng(config.seed)
         self.rows = load_manifest_rows(config, split)
         if not self.rows:
             raise FileNotFoundError(
@@ -100,12 +103,29 @@ class EmotionDataset(Dataset[EmotionClip]):
             ids the decoder is trained to produce.
         """
         audio_path, emotion = self.rows[index]
-        features = features_from_file(
-            self._processor,
+        waveform = load_waveform(
             audio_path,
             sample_rate=self._config.sample_rate,
             max_duration=self._config.max_duration_seconds,
         )
+
+        # **Noise is the other thing a corpus holds constant and an upload does not.**
+        # CREMA-D is studio audio with a clean floor. Measured on the checkpoint trained
+        # without this, held-out clips with added noise fell from 82.0% to 30.0% at
+        # 20dB SNR -- a quiet room -- and to 14.0% at 10dB, below the 16.7% chance line.
+        # Loudness normalisation cannot help, because scaling a noisy clip scales its
+        # noise with it, so this is the half that has to be learned.
+        #
+        # Training only. Validation and test stay clean, so the headline accuracy still
+        # means what it has always meant and the robustness is measured separately.
+        if self._augment:
+            waveform = add_noise(
+                waveform,
+                self._rng.uniform(*self._config.augment_snr_db_range),
+                self._rng,
+            )
+
+        features = to_features(self._processor, waveform, sample_rate=self._config.sample_rate)
 
         # prefix=False is the correctness-critical part, not a tidy-up.
         #

@@ -642,12 +642,12 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ("CREMA-D", "https://github.com/CheyneyComputerScience/CREMA-D"),
         ],
         "model_links": [
-            ("Whisper-small", "https://huggingface.co/openai/whisper-small"),
+            ("Whisper-tiny", "https://huggingface.co/openai/whisper-tiny"),
         ],
         "stats": [
+            ("Held-out accuracy", "0.7064 vs 0.1708 baseline"),
             ("Emotions", "6"),
-            ("Corpora", "EmoDB + CREMA-D"),
-            ("Baseline", "majority emotion"),
+            ("At 20dB room noise", "0.7100"),
         ],
         "intro": (
             "Emotion could be a classifier head bolted onto the encoder. It is not, here. "

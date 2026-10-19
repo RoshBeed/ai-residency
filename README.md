@@ -180,7 +180,7 @@ working interface generated from its own OpenAPI schema.
 | `content-scoring` | 1.3 GB | |
 | `whisper-fine-tuning` | 1.8 GB | Fine-tunes live, per request |
 | `word-embeddings` | 2.3 GB | Nearest neighbours and analogies |
-| `speech-emotion-recognition` | 0.9 GB | 0.7225 held-out vs 0.1708 baseline, six emotions |
+| `speech-emotion-recognition` | 0.9 GB | 0.7064 held-out vs 0.1708 baseline, six emotions, robust to level and noise |
 | `rlhf-ppo` | 4.6 GB | Heaviest, and the most interesting trace |
 | `multimodal-captioning` | 5.4 GB | CLIP + Qwen3 |
 | the frontend | 0.4 GB | Always started |

@@ -263,21 +263,58 @@ The pipeline runs end to end: corpora organized, manifests written, tokenizer ex
 fine-tuned against the majority-emotion baseline, checkpoint saved and served through `/predict`,
 which returns a probability per emotion.
 
-**whisper-tiny fine-tuned on CREMA-D reaches 0.7225 held-out accuracy against a majority-class
-baseline of 0.1708** — 4.2x chance on six emotions. 20 epochs over 5,949 English clips, about
-five minutes an epoch on an M1 Max.
+**whisper-tiny fine-tuned on CREMA-D reaches 0.7064 held-out accuracy against a majority-class
+baseline of 0.1708** — 4.1x chance on six emotions, over 1,492 held-out clips. Best at epoch 8,
+early-stopped at 14, about five minutes an epoch on an M1 Max.
 
 | | held-out accuracy |
 |---|--:|
 | majority class ("always angry") | 0.1708 |
-| epoch 1 | 0.2071 |
-| epoch 6 (best held-out loss, 0.4240) | 0.7218 |
-| **epoch 10 (best accuracy — the shipped checkpoint)** | **0.7225** |
-| epoch 20 | 0.6977 |
+| epoch 1 | 0.5409 |
+| **epoch 8 (the shipped checkpoint)** | **0.7064** |
+| epoch 14 (early stop) | 0.6944 |
 
-Held-out loss bottoms out at epoch 6 and climbs after it while training loss keeps falling to
-0.0178, so this overfits well before 20 epochs; eight to ten is the useful range. Served through
-the container on 30 held-out clips, `/predict` gets 20 right, several at a confidence of 1.00.
+### What a recording varies that a corpus does not
+
+CREMA-D is studio audio: one microphone, a consistent level, a clean noise floor. An upload is a
+phone at arm's length. Those are constants in the corpus and free variables in the only input a
+person supplies, and the model does not learn to ignore them — it learns to rely on them.
+
+Both checkpoints below are scored by the same harness on the same 1,492 held-out clips, through
+the serving path:
+
+| uploaded audio differs by | trained on clean audio | **shipped** |
+|---|--:|--:|
+| nothing — as recorded | 68.9% | **70.6%** |
+| a sixteenth of the volume | 68.9% | **70.6%** |
+| room noise at 20dB SNR | 58.2% | **71.0%** |
+| room noise at 10dB SNR | 42.6% | **66.1%** |
+
+Two separate fixes, because level and noise are different problems.
+
+**Level is preprocessing.** `speech.load_waveform` scales every clip to a fixed RMS, so a quiet
+recording is a quiet recording for exactly as long as it takes to load. Whisper's feature
+extractor does normalise its log-mel, but against each clip's own maximum, which does not rescue
+audio whose detail has sunk toward the floor: before this, a sixteenth-volume clip scored 25.3%
+against a 16.7% chance line. It is in the shared library rather than in this service, because
+both services and all four of their training and serving paths go through that one function.
+
+**Noise has to be learned**, since scaling a noisy clip scales its noise. Training adds white
+noise at 8–35dB SNR; validation and test stay clean, so the headline keeps meaning what it always
+meant.
+
+The cost is real and worth stating: on clean studio audio this checkpoint reads 0.7064 where the
+clean-trained one read 0.7225 under its own preprocessing. Losing 1.6 points on a recording
+booth to gain 24 on a noisy room is the right side of that trade for a service whose only human
+input is an upload.
+
+One consequence worth knowing: **changing the loader invalidates every checkpoint trained before
+it.** The old checkpoint, fed the normalised audio it never trained on, drops from 0.7225 to
+0.689 — which is why this was a retrain rather than a preprocessing patch.
+
+Held-out loss bottoms out early and climbs while training loss keeps falling, so this still
+overfits before the epoch cap. Served through the container on 30 held-out clips, `/predict` gets
+20 right, several at a confidence of 1.00.
 
 Two choices behind those numbers. The backbone is **whisper-tiny**, not -small: this service
 demonstrates a mechanism, and the mechanism is identical at any size, while whisper-small cost
