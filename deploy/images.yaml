@@ -17,7 +17,7 @@ backends:
   vector-search-retrieval:
     digest: sha256:14bd138d9252b290d00bfdad712d95670c7a2eee99850957bcf1232b17ba142a
   vit-classifier:
-    digest: sha256:d0d519b79c4e78078839fcd8cf714d77c3f172a4faa73132cdc857315758afda
+    digest: sha256:81f85a8d2addcfd73c4ad64d0fa434d072d6cef806e2a8e98a903f39c9bbecee
   vit-seq2seq:
     digest: sha256:c876bbd45a34eaa57bbdcabad33bad5b9fd95397f9f1782eaaa597a522732c72
   multimodal-captioning:
@@ -29,4 +29,4 @@ backends:
   rlhf-ppo:
     digest: sha256:b7fb33a999585f2df9c05bc89b66007866b6617d5e00d97211379f5aabd02a8c
 frontend:
-  digest: sha256:9f636bc17f8c661d13dce1823896d23e3a0bb2eb1f5c8e49e82a9170aa0dadc6
+  digest: sha256:91b84cde19a6aea2e745672a76ef5d903ed4f374d8965c00690a584fdcfc4402
