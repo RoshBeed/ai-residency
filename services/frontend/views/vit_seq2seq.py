@@ -11,6 +11,12 @@ from components import draw_patch_grid, render_digit_trace
 from shared import bytes_to_b64, canvas_to_png_bytes, service_page
 
 SERVICE = "vit-seq2seq"
+# The resolution the model was trained at, which the backend also reports as `img_size`
+# on `/models` and on the stream's `done` event. The grid is drawn before the request is
+# made, so it is named here as well -- and it has to match: the patch embedding is a
+# strided conv, so a grid drawn at a different size shows a patch layout the model does
+# not use.
+IMG_SIZE = 112
 
 
 def render() -> None:
@@ -46,8 +52,8 @@ def render() -> None:
 
         if seq_bytes is not None and st.button("Read the number", type="primary"):
             b64_seq = bytes_to_b64(seq_bytes)
-            st.caption("Input: 84x84px, 16x16 patches. Decoded autoregressively.")
-            st.image(draw_patch_grid(seq_bytes, 84, 16), width=260)
+            st.caption(f"Input: {IMG_SIZE}x{IMG_SIZE}px, 16x16 patches. Decoded autoregressively.")
+            st.image(draw_patch_grid(seq_bytes, IMG_SIZE, 16), width=260)
 
             st.caption("Live -- each digit below appears the moment the model emits it:")
             digit_display = st.empty()

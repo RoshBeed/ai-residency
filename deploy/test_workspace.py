@@ -349,6 +349,27 @@ def test_every_frontend_docs_path_resolves() -> None:
     assert not missing, "frontend docs_path values that do not resolve: " + ", ".join(missing)
 
 
+def test_the_frontend_draws_the_seq2seq_patch_grid_at_the_models_resolution() -> None:
+    """The frontend names the seq2seq input size itself, and it has to match the model.
+
+    It cannot import the service's `Config` -- nine services each define a top-level
+    `config` package, and the frontend depends on none of them -- so the number is
+    written out in `views/vit_seq2seq.py`. The patch embedding is a strided conv, so a
+    grid drawn at a different size shows a patch layout the model does not use: at 84px
+    with 16px patches it is 5x5, at 112px it is 7x7. The canvas moved from 84 to 112 once
+    already, and the view kept drawing 5x5 against a model reading 7x7.
+    """
+    arch = (ROOT / "services/vit-seq2seq/config/__init__.py").read_text()
+    view = (ROOT / "services/frontend/views/vit_seq2seq.py").read_text()
+    in_config = re.search(r"^    img_size: int = (\d+)$", arch, re.MULTILINE)
+    in_view = re.search(r"^IMG_SIZE = (\d+)$", view, re.MULTILINE)
+    assert in_config, "Seq2SeqArch.img_size is not where this test looks for it"
+    assert in_view, "views/vit_seq2seq.py declares no IMG_SIZE"
+    assert in_config.group(1) == in_view.group(1), (
+        f"the model reads {in_config.group(1)}px and the frontend draws {in_view.group(1)}px"
+    )
+
+
 def png_dpi(path: pathlib.Path) -> int | None:
     """The horizontal resolution a PNG declares, in dots per inch, or None.
 

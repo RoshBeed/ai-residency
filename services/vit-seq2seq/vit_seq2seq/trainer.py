@@ -29,7 +29,10 @@ from ai_residency_common import (
     init_tracking,
     log_metrics,
     push_checkpoint,
+    resume_from,
+    resume_path_for,
     save_checkpoint,
+    save_resume,
     set_seed,
 )
 from config import Config
@@ -46,6 +49,9 @@ __all__ = [
 ]
 
 logger = get_logger(__name__)
+
+# Cross-entropy's own default for "do not train on this position".
+_IGNORE_INDEX = -100
 
 
 class WarmupCosineScheduler:
@@ -109,13 +115,21 @@ def sequence_to_number(sequence: torch.Tensor, eos_token: int, start_token: int)
         start_token: Token the sequence was primed with.
 
     Returns:
-        The number, with leading zeros collapsed the same way the targets are built.
+        The number the digits spell, leading zeros collapsing naturally through the
+        arithmetic: `[0, 0, 7]` is 7 because `0 * 10 + 0` is still 0.
+
+    A digit of zero is a digit. This used to `continue` past every 0 rather than only
+    past START, which deleted interior zeros as well as leading ones -- so `[4, 0, 7]`
+    read as 47, and a prediction of `47` for a target of `407` was scored correct. Both
+    sides went through the same function, so the metric was self-consistent and
+    reproducible while being unable to tell 407 from 47, 100 from 1, or 500 from 5. A
+    test asserted the old behaviour, which is what made it look deliberate.
     """
     number = 0
     for token in sequence.tolist():
         if token == eos_token:
             break
-        if token in (0, start_token):
+        if token == start_token:
             continue
         number = number * 10 + int(token)
     return number
@@ -215,6 +229,12 @@ def train(config: Config) -> float:
         data_dir=config.data_dir,
         image_size=arch.img_size,
         max_digits=config.max_digits,
+        min_digits=config.min_digits,
+        digit_size=config.digit_size,
+        augment_probability=config.augment_probability,
+        rotation_degrees=config.augment_rotation_degrees,
+        shear_degrees=config.augment_shear_degrees,
+        scale_range=config.augment_scale_range,
         train_split=config.train_split,
         samples_per_class=config.samples_per_class,
         batch_size=config.batch_size,
@@ -246,14 +266,47 @@ def train(config: Config) -> float:
         total_steps=len(train_loader) * config.num_epochs,
     )
 
+    # What makes two runs the same run. `normalisation` is in here because it has
+    # already changed once: the composite used to be normalised twice, which put every
+    # stroke at roughly three times the amplitude serving produces, and a resume file
+    # from one of those runs would load cleanly into this one.
+    fingerprint = {
+        "arch": asdict(arch),
+        "max_digits": config.max_digits,
+        "min_digits": config.min_digits,
+        "digit_size": config.digit_size,
+        "augment_probability": config.augment_probability,
+        "augment_rotation_degrees": config.augment_rotation_degrees,
+        "augment_shear_degrees": config.augment_shear_degrees,
+        "augment_scale_range": list(config.augment_scale_range),
+        "samples_per_class": config.samples_per_class,
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "num_epochs": config.num_epochs,
+        "normalisation": "once, on the finished composite",
+    }
+    resume_path = resume_path_for(config.seq2seq_checkpoint_path)
+    resumed = resume_from(
+        resume_path,
+        model,
+        optimizer,
+        fingerprint=fingerprint,
+        default_best=0.0,
+        map_location=str(device),
+    )
+    # The scheduler steps once per batch, so a resumed run has to fast-forward it or
+    # it restarts its 4000-step warmup from zero on every restart.
+    for _ in range((resumed.start_epoch - 1) * len(train_loader)):
+        scheduler.step()
+
     init_tracking(
         config.wandb_project,
         config={"baseline_accuracy": baseline_accuracy, **asdict(config)},
         run_name="seq2seq",
     )
 
-    best_accuracy = 0.0
-    for epoch in range(1, config.num_epochs + 1):
+    best_accuracy = resumed.best_metric
+    for epoch in range(resumed.start_epoch, config.num_epochs + 1):
         model.train()
         epoch_loss = 0.0
         batches = 0
@@ -264,13 +317,22 @@ def train(config: Config) -> float:
             images, targets = images.to(device), targets.to(device)
 
             decoder_input = targets[:, :-1]
-            decoder_target = targets[:, 1:]
+            decoder_target = targets[:, 1:].clone()
+
+            # Sequences are padded with EOS to a common width, so every position after
+            # the first EOS is filler and must not be trained on. Without this the loss
+            # rewards predicting EOS repeatedly, which is a strong, easy signal that
+            # swamps the digits -- and with shorter numbers padded more, it would teach
+            # the model to favour short answers.
+            repeated_eos = (decoder_target == arch.eos_token).cumsum(dim=1) > 1
+            decoder_target[repeated_eos] = _IGNORE_INDEX
 
             logits = model(images, decoder_input)
             loss = F.cross_entropy(
                 logits.reshape(-1, logits.size(-1)),
                 decoder_target.reshape(-1),
                 label_smoothing=config.label_smoothing,
+                ignore_index=_IGNORE_INDEX,
             )
             # torch.autograd.backward rather than Tensor.backward: identical
             # behaviour, but Tensor.backward ships no annotations in torch 2.13, so
@@ -328,6 +390,18 @@ def train(config: Config) -> float:
             )
             if config.hf_repo_id is not None:
                 push_checkpoint(config.hf_repo_id, config.seq2seq_checkpoint_path)
+
+        # Every epoch, improvement or not: a run that dies after a worse epoch must
+        # not restart from the last better one and repeat the work in between.
+        save_resume(
+            resume_path,
+            model,
+            optimizer,
+            epoch=epoch,
+            best_metric=best_accuracy,
+            fingerprint=fingerprint,
+            metrics={"val_accuracy": val_accuracy, "train_loss": train_loss},
+        )
 
     test_accuracy = evaluate(model, test_loader, device, config, description="Testing")
     log_metrics({"test_accuracy": test_accuracy})

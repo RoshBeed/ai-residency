@@ -418,8 +418,8 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "title": "ViT Seq2Seq",
         "subtitle": "Encoder-decoder Vision Transformer reading multi-digit numbers",
         "description": (
-            "An encoder reads an image of three digits; a causal decoder generates the "
-            "number one digit at a time, until it decides it is finished."
+            "An encoder reads an image of one, two or three digits; a causal decoder "
+            "generates the number one digit at a time, and stops when it emits EOS."
         ),
         "techniques": ["Computer Vision", "Vision Transformer", "Seq2Seq", "Cross-Attention"],
         "papers": [
@@ -433,18 +433,23 @@ PROJECTS: dict[str, dict[str, Any]] = {
         "datasets": [("MNIST", "https://huggingface.co/datasets/mnist")],
         "model_links": [],
         "stats": [
-            ("Exact-sequence match", "68.0%"),
+            ("Exact-sequence match", "98.5%"),
             ("Random baseline", "0.10%"),
-            ("Held-out sequences", "500"),
+            ("Held-out sequences", "3,000"),
         ],
         "intro": (
             "Classifying one digit needs a single label. Reading a number needs an ordered "
             "sequence, of a length the model decides on, which is a different problem: the "
             "model has to know when it has finished.\n\n"
             "**Architecture.** The encoder is the same stack the classifier uses, over 16x16 "
-            "patches of an 84x84 composite. The decoder adds a start token, a causal mask so "
+            "patches of a 112x112 composite. The decoder adds a start token, a causal mask so "
             "each position only sees what came before it, cross-attention onto the encoded "
             "image, and an EOS token it emits when the number is done.\n\n"
+            "**Variable length.** Targets are one, two or three digits, balanced so that "
+            "every length is equally common, which is what makes stopping a decision rather "
+            "than a fixed count. Exact-sequence accuracy is 98.5% against 0.10% for a uniform "
+            "guess, EOS lands in the right place every time, and per digit, aligned by "
+            "position, it reads 99.3%.\n\n"
             "**Per-sequence termination.** Generation tracks completion per sequence within a "
             "batch. Stopping the whole batch at the first EOS silently truncates every other "
             "sequence still decoding — including inside the trainer's own evaluation loop, "

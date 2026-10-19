@@ -285,6 +285,18 @@ USER, so a mismatch produces a container that starts and then cannot write.
 actual request, not by inspecting code — a service that builds, starts and passes `/health` can
 still 500 on the first real call. Health checks are not verification.
 
+**One preprocessing path, or a test that the two agree.** Training builds its inputs in the
+dataset; serving builds them from whatever the caller posted. Where those are written twice they
+drift, and the drift is invisible: `vit-seq2seq` normalised its MNIST digits and then normalised
+the finished composite again, so training strokes arrived at ~3x the amplitude the API ever
+produces and the published accuracy was **97.93% on the loader's tensors against 64.23% on the
+API's**, measured on the same images. Share the function where one exists -- captioning uses
+`backbones.image_processor` on both paths, the speech services `load_model_and_processor`. Where
+it is hand-rolled, assert the round trip: recover pixels from a training tensor, encode the file a
+caller would send, push it through the service's own preprocessing and compare. Scoring a
+checkpoint on inputs no request can produce is the same error as ranking it on a loss from a
+different objective.
+
 **Read the error before forming a theory.** `word-embeddings` answered 503 from the published
 image and the first explanation reached for was a slow checkpoint download, so the README's curl
 retry budget got raised from 60 to 300 and then rewritten twice. None of it was the problem. The
@@ -559,7 +571,7 @@ much of the captioning gap more data actually closes.
 CI is one path-filtered workflow: lint, then per-member mypy and pytest, then build → smoke-test →
 publish (only the images that changed) gated behind a `PUBLISH_IMAGES` repository variable, then a
 Trivy scan of the published base whose results go to the job summary (SARIF upload needs Advanced
-Security, which a private repo does not have). 420 tests.
+Security, which a private repo does not have). 425 tests.
 
 Building images locally is for debugging, not delivery — CI is what publishes. `make base` and
 `make build` exist so a change to a Dockerfile can be exercised before it is pushed.
@@ -749,9 +761,92 @@ Status:
 - [x] `vit-classifier` -- already meaningful, no work needed. 91.78% on the 10,000-image
       MNIST test set against an 11.35% majority-class baseline, from a shipped checkpoint
       after one epoch from scratch.
-- [x] `vit-seq2seq` -- already meaningful, no work needed. 68.00% exact-sequence accuracy
-      on 500 held-out three-digit numbers against 0.10% for uniform guessing. Exact-sequence
-      is the strict metric: two correct digits out of three scores zero.
+- [x] `vit-seq2seq` -- variable-length sequences, so EOS is a decision rather than a
+      position. **98.53% exact-sequence accuracy on 3,000 held-out composites of one to
+      three digits**, against 3.33% for always answering the commonest number in the split
+      and 0.10% for a uniform guess over 0-999. Per length: 99.20% / 98.50% / 97.90%. **EOS
+      lands in the right place 100.00% of the time**, and per-digit accuracy is 99.27%, flat
+      across lengths (99.20% / 99.25% / 99.30%) -- exact-sequence falls with length only
+      because three independent reads all have to be right. `make evaluate` prints all of
+      it, including the per-digit figure, and `make evaluate-sampled` is the same scoring with
+      the decode rule flipped; neither existed before, and the old 68.00% came out of a
+      training run's validation pass.
+
+      Trained 15 epochs, best at epoch 14 (val 98.33%), so the schedule is spent rather
+      than cut short -- the last epoch was slightly worse.
+
+      **Decoding was sampling, and that was worth 21.5 points.** Both decode loops drew
+      each token with `torch.multinomial` at temperature 1. On the same checkpoint and
+      split, both arms out of `make evaluate`: sampled 77.03% exact / 90.23% EOS / 90.60%
+      per digit, greedy **98.53% / 100.00% / 99.27%**. For a task with one right answer,
+      sampling picks a low-probability token every so often and loses the sequence with it
+      -- one served request read a clear 206 as 22, with the second digit drawn at
+      probability 0.007. Greedy is the default now and `sample=True` is opt-in. The length
+      spread shows where it hurts: decoding 1,000 one-digit targets, sampling emits nothing
+      11 times and two digits 71 times, each one unlucky draw on a distribution the model
+      had right.
+
+      It hid because *both* sides agreed. The trainer's validation pass sampled too, so the
+      per-epoch number matched what `make evaluate` reported afterwards, and two agreeing
+      numbers read as a verified one. Same shape as the retrieval vocabulary bug: training
+      and evaluation shared the defect, and only a real request through the container showed
+      it -- the same image answered differently on consecutive calls.
+
+      **The training data was not the data the API produces, and that was worth 33.7
+      points.** `_load_base_mnist` applied `transforms.Normalize` to each MNIST digit and
+      `__getitem__` then normalised the finished composite again, while the API decodes a
+      PNG in [0, 1] and normalises once. Training inputs ran -1.80 to 8.73 against the
+      API's -0.42 to 2.82, so every stroke arrived at roughly a third of the amplitude the
+      model trained on and a composite's background sat at MNIST's mean rather than black.
+      Scored on the same 3,000 composites, the then-shipped checkpoint read **97.93%
+      exact-sequence on the loader's tensors and 64.23% on the tensors serving builds from
+      a faithful PNG of the same images**; correct length 100% against 66.27%. So the
+      published figure was measured on the wrong side of a 33.7-point gap, and nothing
+      structural could see it -- tests passed, `/health` was green, the loss fell.
+
+      Found the same way as the sampling bug: a real request. After greedy decoding was
+      fixed the container still read a clear 206 as `20`, and the local model agreed on the
+      same PNG, which ruled out the service and pointed at the image. The fix is
+      `transforms.ToTensor()` only when loading MNIST and one normalisation at the end, on
+      the finished composite, with the API's own mean and standard deviation -- and then a
+      retrain, because it changes the training distribution.
+
+      **The two paths are now measured against each other, not assumed equal.** On the same
+      3,000 composites, routing one copy through a real PNG encode and the service's
+      `preprocess_image`: identical exact-sequence, identical per-digit, the same answer on
+      all 3,000, largest per-pixel difference 0.006 (8-bit PNG quantisation).
+      `test_a_composite_survives_the_round_trip_the_api_puts_it_through` fails if that stops
+      being true -- it recovers pixels from the training tensor, encodes the PNG a caller
+      would post, pushes it through the real `preprocess_image` and compares. Swept the rest
+      of the workspace for the same class: captioning routes both paths through
+      `backbones.image_processor`, both speech services through `load_model_and_processor`,
+      `vit-classifier` normalises once on each side. This was the only hand-rolled
+      training/serving preprocessing pair.
+
+      **Three other things capped the old number.** First the EOS design: scored on the
+      variable-length task, greedy, the old checkpoint reads 23.20% exact-sequence and
+      **0.00% on both one-digit and two-digit targets**, getting the length right 33.33% of
+      the time, because `zfill(3)` pinned EOS to position 4 in every training example. It
+      emits three digits whatever it sees.
+
+      Second the metric. `sequence_to_number` folded tokens back into an integer *and*
+      skipped token 0, so `[4,0,7]` read as 47 and predicting `47` for `407` scored correct.
+      A unit test asserted that behaviour. The published 68.00% was never a sequence
+      accuracy.
+
+      Third geometry, which is the one that answers "this is MNIST, why is per-digit
+      accuracy 79%". The patch embedding is a strided conv, so at patch 16 an 84px canvas
+      yields a 5x5 grid covering 80px and silently drops columns 80-83. The third digit sat
+      at columns 56-83, so **14% of its width never reached the model**. 112px is 7x16.
+      `digit_size` was also `image_size // max_digits`, which forced `spacing` to 0 and so
+      `max_jitter = spacing // 2` to 0: the positional jitter the dataset advertised had
+      never moved anything.
+
+      **99.27% per digit against the sibling classifier's 91.78% on single clean digits** --
+      this model reads a sheared, rotated, rescaled, shifted digit better than the
+      classifier reads a clean one, because the classifier ships one epoch and this ran 15.
+      That makes `vit-classifier`'s epoch count the clearer lever of the two.
+
 - [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
       triples. **Recall@10 0.6728 against a 0.0020 chance floor and 0.0022 for untrained
       towers of the same shape**: 336x chance, recall@1 0.3778, median rank 3 of 5,000.
@@ -940,30 +1035,18 @@ Leads, strongest first, with what is already known:
   reference is the base model, so the penalty measures drift from the wrong thing). Also
   unmeasured: `OpenAssistant/reward-model-deberta-v3-base` is 3.5x cheaper in compute than
   the large-v2 currently used and inference-only, so it may not be the bottleneck at all.
-- **`vit-seq2seq`: variable-length sequences, because EOS is currently decorative.**
-  `multi_digit_dataset.py` builds its label with `str(number).zfill(max_digits)`, so every
-  training sequence is exactly three digits -- 7 is `007`, 42 is `042`. The EOS token is in
-  the vocabulary and appended, and `max_seq_length` is 5, but EOS always lands at position
-  4. The decoder learns "emit three, then stop" rather than "stop when the number ends",
-  and cannot produce a one- or two-digit answer. The root README advertises "per-sequence
-  EOS" as an architectural feature: the architecture supports it, the data never exercises
-  it.
+- **`vit-seq2seq`: closed.** 98.53% exact-sequence, 99.27% per digit, EOS correct on every
+  held-out sequence, and the served path scores identically to the loader's. The best epoch
+  is 14 of 15 and the 15th was worse, so longer training is spent; the 1.47% of sequences
+  left are single misread digits. Not worth an afternoon.
 
-  The canvas is also more memorizable than it looks. `digit_size = image_size //
-  max_digits` with even spacing puts every digit in one of three fixed cells, and
-  augmentation is mild -- rotation +/-10 degrees and scale 0.9-1.1 applied to **30%** of
-  digits, plus jitter bounded by `spacing // 2`. No shear, no real translation.
-
-  So: sample lengths 1-3, and augment with scale, translation, rotation and skew, so the
-  encoder has to localise digits instead of reading three known slots. The architecture
-  does not change -- encoder-decoder ViT, cross-attention, causal mask and the EOS
-  vocabulary all stay.
-
-  **Expect 68.00% to fall, and do not report that as a regression.** It is
-  exact-sequence accuracy on fixed-length, fixed-cell composites, which is an easier
-  question than the one variable length asks. Report per-length accuracy (1, 2 and 3
-  digits) plus whether EOS lands in the right place, with the current checkpoint scored
-  the same way as the baseline.
+  **Check the decode rule before the model, in any service that generates.** Sampling at
+  temperature 1 cost this service 21.5 points of exact-sequence accuracy, and the
+  train/serve normalisation skew cost another 33.7 -- between them more than every other
+  fix here put together, and the first was one `argmax` away. `multimodal-captioning` already
+  decodes greedily and measured `no_repeat_ngram_size=3` as a wash; `rlhf-ppo` reports both
+  greedy and seeded-sampled reward on purpose. This was the one place a sampled decode was
+  being read as a deterministic answer.
 - **`vit-classifier`: epochs.** Ships a checkpoint from *one* epoch from scratch at 91.78%
   against an 11.35% majority-class baseline. The cheapest lever in the repo and nothing
   about the architecture changes.

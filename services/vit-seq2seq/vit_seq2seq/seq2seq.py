@@ -19,7 +19,7 @@ __all__ = ["Seq2SeqVisionTransformer"]
 
 
 class Seq2SeqVisionTransformer(nn.Module):
-    """Encodes an 84x84 three-digit composite and decodes the digits one at a time.
+    """Encodes a 112x112 one- to three-digit composite and decodes the digits one at a time.
 
     There is no [CLS] token here, unlike the single-digit classifier: the decoder
     cross-attends over the whole patch sequence, so there is nothing for a single
@@ -199,12 +199,47 @@ class Seq2SeqVisionTransformer(nn.Module):
 
         return self.decode(self.encode(images), target_sequences, target_mask)
 
+    def _next_token(
+        self,
+        logits: torch.Tensor,
+        temperature: float,
+        sample: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Choose the next token from the decoder's logits.
+
+        Greedy by default, because there is one right answer. An image of 206 depicts
+        206 and nothing else, so sampling at temperature 1 trades accuracy for variety
+        the task has no use for: it draws a low-probability token every so often and
+        the whole sequence is wrong. Both decode loops used `multinomial`, which made
+        every reported number a sampled one and the served answer a different draw per
+        request.
+
+        Args:
+            logits: Decoder output of shape `(batch, position, vocab)`.
+            temperature: Divides the logits before the softmax, when sampling.
+            sample: Draw from the softmax instead of taking the argmax.
+
+        Returns:
+            The chosen token ids, shape `(batch, 1)`, and the probabilities they were
+            chosen from, shape `(batch, vocab)`. The probabilities are the untempered
+            softmax when decoding greedily, so a streamed confidence means the model's
+            own probability rather than one rescaled by a temperature that did not
+            apply.
+        """
+        next_token_logits = logits[:, -1, :]
+        if sample:
+            probs = F.softmax(next_token_logits / temperature, dim=-1)
+            return torch.multinomial(probs, num_samples=1), probs
+        probs = F.softmax(next_token_logits, dim=-1)
+        return probs.argmax(dim=-1, keepdim=True), probs
+
     def generate(
         self,
         images: torch.Tensor,
         start_token: int,
         max_length: int,
         temperature: float = 1.0,
+        sample: bool = False,
     ) -> torch.Tensor:
         """Autoregressively generate a token sequence per image.
 
@@ -212,7 +247,9 @@ class Seq2SeqVisionTransformer(nn.Module):
             images: Shape `(batch, in_channels, img_size, img_size)`.
             start_token: Token the sequence is primed with.
             max_length: Maximum sequence length including the start token.
-            temperature: Sampling temperature.
+            temperature: Sampling temperature. Only applies when `sample` is True.
+            sample: Draw each token from the softmax instead of taking the argmax.
+                Off by default -- see `_next_token`.
 
         Returns:
             Token ids of shape `(batch, generated_len)`, where `generated_len` is at
@@ -234,9 +271,7 @@ class Seq2SeqVisionTransformer(nn.Module):
 
         for _ in range(max_length - 1):
             logits = self.decode(encoder_output, generated)
-            next_token_logits = logits[:, -1, :] / temperature
-            probs = F.softmax(next_token_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
+            next_token, _ = self._next_token(logits, temperature, sample)
 
             # Finished sequences keep emitting EOS rather than sampling and drifting.
             next_token = torch.where(
@@ -259,6 +294,7 @@ class Seq2SeqVisionTransformer(nn.Module):
         start_token: int,
         max_length: int,
         temperature: float = 1.0,
+        sample: bool = False,
         on_digit: Callable[[int, str, float], None] | None = None,
     ) -> torch.Tensor:
         """Autoregressively generate, calling `on_digit(step, digit_str, prob)` per token.
@@ -270,7 +306,9 @@ class Seq2SeqVisionTransformer(nn.Module):
             images: Shape `(batch, in_channels, img_size, img_size)`.
             start_token: Token the sequence is primed with.
             max_length: Maximum sequence length including the start token.
-            temperature: Sampling temperature.
+            temperature: Sampling temperature. Only applies when `sample` is True.
+            sample: Draw each token from the softmax instead of taking the argmax.
+                Off by default -- see `_next_token`.
             on_digit: Called per generated token as `on_digit(step, digit_str, prob)`
                 with *step* zero-indexed. May be None.
 
@@ -286,9 +324,7 @@ class Seq2SeqVisionTransformer(nn.Module):
 
         for step in range(max_length - 1):
             logits = self.decode(encoder_output, generated)
-            next_token_logits = logits[:, -1, :] / temperature
-            probs = F.softmax(next_token_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
+            next_token, probs = self._next_token(logits, temperature, sample)
 
             next_token = torch.where(
                 finished.unsqueeze(1),

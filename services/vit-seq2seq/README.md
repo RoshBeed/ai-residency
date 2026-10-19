@@ -3,10 +3,13 @@
 ## TL;DR
 
 - **What it is:** an encoder–decoder Vision Transformer written from scratch in raw PyTorch. The
-  encoder reads an image of three digits side by side; the decoder generates the number one digit
-  at a time, autoregressively, with a causal mask and cross-attention.
-- **Result:** 68.00% exact-sequence accuracy on 500 held-out three-digit numbers, against 0.10%
-  for guessing uniformly.
+  encoder reads an image holding one, two or three handwritten digits; the decoder generates the
+  number one digit at a time, autoregressively, with a causal mask and cross-attention, and stops
+  when it emits EOS.
+- **Result:** **98.53% exact-sequence accuracy** on 3,000 held-out composites of one to three
+  digits, against 3.33% for always answering the commonest number in the split and 0.10% for
+  guessing uniformly over 0–999. EOS lands in the right place 100% of the time, and the number
+  the API returns is the same number: the two paths answer identically on all 3,000.
 
 Classifying one digit needs a single label. Reading a number needs an ordered sequence, of a length
 the model decides on, which is a different problem: the model has to know when it has finished. That
@@ -55,7 +58,7 @@ The encoder is the same stack the classifier uses, from the shared library. What
 is the decoder half: a causal mask, cross-attention onto the encoded image, and a generation loop
 that terminates per sequence.
 
-**Figure 2.** From an image of three digits to the number, and where each piece lives.
+**Figure 2.** From an image of digits to the number, and where each piece lives.
 ```mermaid
 flowchart TD
     subgraph lib["libs/vision-transformer (shared with vit-classifier)"]
@@ -68,7 +71,7 @@ flowchart TD
     subgraph svc["services/vit-seq2seq"]
         model["Seq2SeqVisionTransformer<br/>encoder-decoder, vocab 12"]
         trainer["vit_seq2seq/trainer.py"]
-        data["datasets/multi_digit_dataset.py<br/>three digits composited per sample"]
+        data["datasets/multi_digit_dataset.py<br/>one to three digits composited per sample"]
         api["serving/api.py<br/>POST /predict, /predict/stream"]
     end
 
@@ -109,7 +112,7 @@ learned `START` (10) and `EOS` (11) tokens.
 ![Encoder-decoder architecture for the sequence task: a 3-digit image goes through linear projection of flattened patches and encoder blocks to produce a 16x64 encoder output; in parallel, the target tokens <start> 7 7 6 9 are tokenized and embedded (5x11), pass through decoder blocks with cross-attention (Q/K/V formulas shown) to the encoder output, and are projected via nn.Linear(11,13) into next-token logits over the digit/start/finish/pad vocabulary, producing 7 7 6 9 <finish>](assets/seq2seq_slide_architecture.png)
 
 `vit_seq2seq/seq2seq.py` implements this pipeline. On the left, a patch-embedding encoder
-(`Conv2d(k=16,s=16)` → 25×256 for this repo's real 84×84 three-digit images, larger than the
+(`Conv2d(k=16,s=16)` → 49×256 for this repo's real 112×112 composites, larger than the
 figure's illustrative 16×64). On the right, a tokenizer/embedding stage over a 12-token vocabulary
 — digits 0–9 plus learned `START`/`EOS` tokens, the figure's `<start>`/`<finish>`/`<pad>` table.
 The two feed masked self-attention and cross-attention decoder blocks
@@ -123,6 +126,33 @@ the decoder at once, with a causal mask so position *i* can't see positions afte
 [1]). At inference, `generate()` runs the same decoder autoregressively instead — no target
 sequence to see, so it starts from `[START]` and feeds each predicted token back in to produce the
 next one, one forward pass per digit, until `EOS` (`<finish>`) is produced.
+
+### 3.3 The data has to exercise the EOS token
+
+An architecture that supports a variable-length answer only demonstrates one if the training data
+asks for one. Labels are the number's own digits, so `7` is one token long and `407` is three, and
+each length contributes the same number of training examples.
+
+That balance is deliberate. There are 10 one-digit numbers, 90 two-digit and 900 three-digit, so
+drawing uniformly from `range(1000)` would make 90% of examples three digits long and "stop after
+the third digit" would be the right answer almost always. Stopping has to cost something to get
+wrong before it measures anything.
+
+Padding is EOS repeated rather than a new `PAD` id. A pad token would widen the decoder's output
+head and make every earlier checkpoint unloadable, which would destroy the before/after
+comparison. The trainer masks every position after the first EOS out of the loss, so the repeats
+are never trained against.
+
+Each digit is pasted at MNIST's native 28px and then warped: rotation up to ±15°, shear up to
+±12°, scale 0.75–1.15, plus a sub-cell translation, applied to every digit rather than a fraction
+of them. The whole group is offset within whatever slack a shorter number leaves, so a two-digit
+number is not always flush left. Without that the three cells of an evenly divided canvas are
+memorisable, and the encoder can learn each cell's appearance instead of finding a glyph.
+
+The canvas is 112px, which is 7×16. The patch embedding is a strided convolution, so any canvas
+that is not a multiple of the patch size silently drops the remainder: at 84px the 5×5 grid covers
+80 pixels and the last four columns never reach the model at all. 112px keeps every pixel inside a
+patch, at 49 patch tokens instead of 25.
 
 ## 4. Implementation
 
@@ -139,8 +169,8 @@ services/vit-seq2seq/
 │   │                        with cross-attention, and autoregressive generate()
 │   └── trainer.py           Training loop with teacher forcing, warmup, label smoothing
 ├── datasets/
-│   └── multi_digit_dataset.py  Composites three random MNIST digits onto an 84x84 canvas per
-│                            sample, with jitter and random affine augmentation, on the fly
+│   └── multi_digit_dataset.py  Composites one to three random MNIST digits onto a 112x112
+│                            canvas per sample, each digit warped and jittered, on the fly
 ├── serving/api.py           FastAPI app: /predict, /predict/stream (per-digit SSE), /health
 └── tests/                   Generation tests, including the regression test for batch-wide
                              EOS truncation, plus shape checks
@@ -148,14 +178,18 @@ services/vit-seq2seq/
 
 ## 5. Usage
 
-Figure 3 ([Section 2](#2-system-architecture)) shows the end-to-end flow. Pretrained checkpoints
-for both models are committed under `checkpoints/`, so serving works without training anything
-first. A `Makefile` wraps every stage below with a consistent set of targets; the raw command each
+Figure 3 ([Section 2](#2-system-architecture)) shows the end-to-end flow. Trained checkpoints
+live on the Hugging Face Hub and are pulled on first use, so serving works without training
+anything first and nothing large is committed here. A `Makefile` wraps every stage below with a consistent set of targets; the raw command each
 target actually runs is kept underneath it, since that's what's really executing.
 
 ```bash
 make install   # what this runs: uv sync   (installs from pyproject.toml + committed uv.lock)
 make serve SERVICE=vit-seq2seq     # what this runs: uv run python -m serving.api   (FastAPI on :8000)
+make -C services/vit-seq2seq evaluate   # what this runs: uv run python -m vit_seq2seq.evaluate
+                                        # every number in Section 6, from the shipped checkpoint
+make -C services/vit-seq2seq evaluate-sampled   # the same, decoding by sampling
+                                        # what the greedy decode rule is worth, 21.5 points
 make check     # lint + type check + tests
 ```
 
@@ -167,19 +201,20 @@ make train SERVICE=vit-seq2seq-classifier  # what this runs:
                         # trains on MNIST, saves to checkpoints/
 make train SERVICE=vit-seq2seq-seq2seq     # what this runs:
                         #   uv run python -m vit_seq2seq.trainer
-                        # trains on composited multi-digit images, ~85min on M1 Max/MPS
+                        # trains on composited multi-digit images, ~10min an epoch on M1 Max/MPS
 ```
 
 `make train SERVICE=vit-seq2seq` is an alias for `make train SERVICE=vit-seq2seq-classifier` (the faster of the two).
 
-A `notebooks/walkthrough.ipynb` runs the happy path end to end — loading both committed
-checkpoints and running real inference — without retraining anything. Its first cell chdirs back
+A `notebooks/walkthrough.ipynb` runs the happy path end to end — pulling both checkpoints from
+the Hub and running real inference — without retraining anything. Its first cell chdirs back
 to the repo root so relative paths (checkpoints, MNIST cache) resolve the same way `make serve SERVICE=vit-seq2seq`'s
 do; the package itself is installed, so nothing needs to be put on the import path.
 
-**Docker Compose (Linux/CUDA servers):** two single-purpose Dockerfiles, both
-`FROM roshb/ai-residency-base-serve` — `Dockerfile.serve` (the FastAPI inference container) and
-`Dockerfile.train` (the training image, defaulting to the classifier). `uv.lock` already pins
+**Docker Compose (Linux/CUDA servers):** one `Dockerfile.serve` and one `Dockerfile.train` at the
+repository root, parameterised by `--build-arg SERVICE=`, so this service has no Dockerfile of its
+own. The serving image builds `FROM roshb/ai-residency-base-serve` and the training image from the
+CUDA base. `uv.lock` already pins
 `torch`/`torchvision` to the CPU-only PyTorch wheel index, which otherwise resolves an unpinned
 `torch` to a multi-GB CUDA build on `linux/arm64` — a real GPU host would need its own
 CUDA-enabled lockfile rather than overriding this one at build time.
@@ -210,23 +245,106 @@ make -C deploy down             # what this runs: docker compose down
 
 ## 6. Experimental Results
 
-Generation tracks completion per sequence within a batch, so shorter and longer targets in the same
-batch each run to their own `EOS` independently. That is worth stating precisely because the
-alternative — stopping the whole batch at the first `EOS` — silently truncates every other sequence
+Generation tracks completion per sequence within a batch, so shorter and longer targets in the
+same batch each run to their own `EOS` independently. That is worth stating precisely because the
+alternative, stopping the whole batch at the first `EOS`, silently truncates every other sequence
 still decoding, including inside the trainer's own evaluation loop, which makes the reported
 accuracy wrong rather than merely noisy.
 
-A fresh run over 500 held-out three-digit numbers the model has never seen (seeded, reproducible)
-gets **68.00% exact-sequence accuracy (340 / 500)**, against a random-chance baseline of 0.10% for
-guessing uniformly over the 1,000 possible three-digit numbers.
+`make evaluate` scores the shipped checkpoint on 3,000 held-out composites, balanced across one,
+two and three digits, with freshly composed handwriting.
 
-Real transcript, matches from that run:
+| metric | result |
+|---|--:|
+| **exact-sequence accuracy** | **98.53%** |
+| commonest-number baseline | 3.33% |
+| uniform guess over 0–999 | 0.10% |
+| one digit | 99.20% |
+| two digits | 98.50% |
+| three digits | 97.90% |
+| EOS in the right place | 100.00% |
+| per-digit, aligned by position | 99.27% |
+
+Exact-sequence is the strict metric: two correct digits out of three scores zero. Sequences are
+compared digit by digit rather than read back as an integer, because an integer comparison cannot
+tell a dropped zero from a correct answer. Composites are generated per access, so a second pass
+scores a different draw of handwriting and the figure moves by about two tenths of a point.
+
+Per-digit accuracy is 99.27% and flat across lengths (99.20% on one-digit targets, 99.25% on two,
+99.30% on three), so a third digit is read as well as a lone one. That is the figure to read first:
+it says the encoder is finding and reading glyphs rather than reading three known slots, with
+rotation, shear, scale and translation applied to every digit. Exact-sequence falls with length
+only because three independent reads have to all be right at once.
+
+Every sequence stops in the right place, so what is left is a misread digit rather than a decoder
+that cannot count.
+
+### What the decode rule was worth
+
+Both decode loops drew each token from the softmax with `torch.multinomial`. For a task with one
+right answer that trades accuracy for variety nothing wants: an image of 206 depicts 206, and
+sampling at temperature 1 picks a low-probability token every so often, losing the whole sequence
+with it. Greedy decoding is the default now, and `sample=True` is opt-in.
+
+| decode rule | exact-sequence | EOS correct | per-digit |
+|---|--:|--:|--:|
+| sampled, temperature 1 | 77.03% | 90.23% | 90.60% |
+| **greedy** | **98.53%** | **100.00%** | **99.27%** |
+
+Same checkpoint, same split, 21.5 points — `make evaluate-sampled` is the first row and
+`make evaluate` the second, so both are reproducible from one command. The trainer's own
+validation pass sampled as well, so the number it reported each epoch agreed with the number
+`make evaluate` reported afterwards, and two agreeing numbers look like a verified one.
+
+EOS is where sampling does most of its damage, and the length spread says how: decoding 1,000
+one-digit targets, sampling emits nothing 11 times, two digits 71 times and three digits 3 times.
+Each of those is one unlucky draw on a distribution the model got right.
+
+### The number above is the number the service returns
+
+Training builds a composite in memory; the API decodes a PNG someone posted. Those are two
+preprocessing paths for one model, and a model is only as good as the worse one. Scored on the
+same 3,000 composites, routing one copy through a real PNG encode and the service's own
+`preprocess_image`:
+
+| path | exact-sequence | correct length | per-digit |
+|---|--:|--:|--:|
+| the loader's tensors | 98.23% | 100.00% | 99.12% |
+| re-encoded as PNG and preprocessed as the API does | 98.23% | 100.00% | 99.12% |
+
+Not close — identical, with the same answer on all 3,000 and a largest per-pixel difference of
+0.006, which is 8-bit PNG quantisation. The dataset normalises once, on the finished composite,
+with the same mean and standard deviation the API applies, and
+`test_a_composite_survives_the_round_trip_the_api_puts_it_through` fails if that stops being
+true. (Both figures here are one draw of handwriting below the table above; composites are
+generated per access.)
+
+Verified through the published image rather than only in-process: one held-out composite per digit
+count, posted to `/predict/seq2seq`, reads `0`, `55` and `206` with per-digit confidence around
+0.92, and the same request five times running returns the same answer five times.
+
+### Against the fixed-length predecessor
+
+The previous checkpoint trained on labels built with `str(number).zfill(3)`, so every target was
+three digits and EOS always landed at position 4. Scored on the variable-length task, greedy, the
+same way:
+
+| | exact-sequence | one digit | two digits | three digits | correct length |
+|---|--:|--:|--:|--:|--:|
+| fixed-length, 84px | 23.20% | 0.00% | 0.00% | 69.60% | 33.33% |
+| **this checkpoint** | **98.53%** | **99.20%** | **98.50%** | **97.90%** | **100.00%** |
+
+Zero on one- and two-digit numbers is not a perception failure. It emits three digits whatever it
+sees, because that is the only thing its training data ever asked for.
+
+Real transcript from the shipped checkpoint:
 
 ```
-target 544 -> generated  544   MATCH
-target 948 -> generated  948   MATCH
-target 346 -> generated  346   MATCH
-target 049 -> generated  049   MATCH
+target   2 -> generated   2   MATCH
+target  72 -> generated  72   MATCH
+target 313 -> generated 313   MATCH
+target 767 -> generated 769   miss
+target  30 -> generated  90   miss
 ```
 
 ## 7. Related Work
@@ -234,8 +352,8 @@ target 049 -> generated  049   MATCH
 - [the dual-encoder retrieval project](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) —
   the self-attention-free encoder, superseded here by a from-scratch transformer.
 - [the image captioning project](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) —
-  the same encoder-decoder ViT pattern from Section 3.5, applied to natural-language captions
-  instead of 3-digit sequences.
+  the same encoder-decoder ViT pattern from [Section 3.2](#32-sequence-decoding-encoderdecoder-vit),
+  applied to natural-language captions instead of digit sequences.
 
 ## References
 

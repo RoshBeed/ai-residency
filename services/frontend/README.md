@@ -30,10 +30,11 @@ flowchart LR
 | [Word embeddings](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) | CBOW word2vec with negative sampling, trained from scratch | Real unsupervised structure in the trained vectors (t-SNE clusters, analogy/similarity checks) |
 | [Content scoring](https://github.com/RoshBeed/ai-residency/tree/main/services/content-scoring) | Regression head over frozen CBOW embeddings | Trained end-to-end on real Hacker News post data |
 | [Dual-encoder retrieval](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), in-batch negatives | Trained towers served via Redis/RediSearch ANN search |
-| [Vision Transformer](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) | From-scratch ViT — single-digit classifier and a seq2seq multi-digit variant | 95% classifier accuracy, 68% seq2seq exact-match |
+| [ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) | From-scratch encoder-only ViT over 4x4 patches | 91.78% on the MNIST test set against an 11.35% majority-class baseline |
+| [ViT seq2seq](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) | From-scratch encoder-decoder ViT, causal decoder and per-sequence EOS | 98.53% exact-sequence on one- to three-digit composites against 0.10% for a uniform guess |
 | [Image captioning](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Full pipeline trained and serving captions end-to-end |
-| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning) | Whisper fine-tuning with emotion-token support | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
-| [RLHF / PPO](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against Qwen3-0.6B-Base |
+| [Whisper fine-tuning](https://github.com/RoshBeed/ai-residency/tree/main/services/whisper-fine-tuning) | Whisper fine-tuned live, per request | Fine-tuning and data pipeline running end-to-end, served via FastAPI |
+| [RLHF / PPO](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo) | From-scratch PPO — generation, KL penalty, reward, advantage, policy/value updates | Full PPO step runs end-to-end against a real preference-trained reward model |
 
 ## The write-ups
 

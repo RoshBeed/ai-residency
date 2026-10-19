@@ -8,15 +8,17 @@ accuracy was wrong rather than merely noisy.
 
 import base64
 import io
+from functools import partial
 
+import numpy as np
 import pytest
 import torch
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from config import Config, Seq2SeqArch
-from datasets.multi_digit_dataset import MultiDigitMNISTDataset
-from serving.api import app
+from datasets.multi_digit_dataset import MultiDigitDataset, MultiDigitMNISTDataset
+from serving.api import MNIST_MEAN, MNIST_STD, app, preprocess_image
 from vit_seq2seq.seq2seq import Seq2SeqVisionTransformer
 from vit_seq2seq.trainer import sequence_to_number
 
@@ -97,6 +99,82 @@ def test_generate_does_not_truncate_slower_sequences() -> None:
         assert sequence_to_number(generated[row], arch.eos_token, arch.start_token) == 123
 
 
+class _SkewedDecoderModel(Seq2SeqVisionTransformer):
+    """A decoder whose argmax is token 7 but which keeps mass on everything else.
+
+    The margin is deliberately small, so sampling lands on something other than 7
+    often enough that a handful of steps is a reliable test rather than a flaky one.
+    """
+
+    def decode(
+        self,
+        encoder_output: torch.Tensor,
+        target_sequence: torch.Tensor,
+        target_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        batch_size, step = target_sequence.size()
+        logits = torch.zeros((batch_size, step, self.vocab_size))
+        logits[:, -1, 7] = 1.0
+        logits[:, -1, self.eos_token] = -50.0
+        return logits
+
+
+def test_generate_takes_the_argmax_rather_than_sampling() -> None:
+    """Reading a number has one right answer, so the decode rule must be greedy.
+
+    Both decode loops used `torch.multinomial`, which costs 21.5 points of
+    exact-sequence accuracy on the shipped checkpoint -- 77.03% against 98.53%, both out
+    of `make evaluate` -- and made the served answer a different draw per request: one
+    call read a clear 206 as 22, with the second digit drawn at probability 0.007. It
+    stayed hidden because the trainer's own validation pass sampled as well, so the
+    number it reported agreed with the number `make evaluate` reported, and two agreeing
+    numbers read as a verified one.
+    """
+    arch = _tiny_seq2seq_arch()
+    model = _SkewedDecoderModel(arch)
+    model.eval()
+
+    images = torch.randn(2, arch.in_channels, arch.img_size, arch.img_size)
+    with torch.no_grad():
+        greedy = model.generate(images, start_token=arch.start_token, max_length=6)
+
+    # Every generated position is the argmax, run to run, with no seed anywhere.
+    assert bool((greedy[:, 1:] == 7).all()), greedy
+
+    # Sampling is still reachable, and on this distribution it does something else.
+    torch.manual_seed(0)
+    with torch.no_grad():
+        sampled = model.generate(images, start_token=arch.start_token, max_length=6, sample=True)
+    assert not bool((sampled[:, 1:] == 7).all()), sampled
+
+
+def test_streamed_generation_takes_the_argmax_too() -> None:
+    """The SSE path is a second copy of the loop, and it had the same sampling call.
+
+    The streamed confidence must also be the model's own probability for the token it
+    chose, not one rescaled by a temperature that does not apply to a greedy decode.
+    """
+    arch = _tiny_seq2seq_arch()
+    model = _SkewedDecoderModel(arch)
+    model.eval()
+
+    seen: list[tuple[int, str, float]] = []
+    images = torch.randn(1, arch.in_channels, arch.img_size, arch.img_size)
+    with torch.no_grad():
+        generated = model.generate_with_callback(
+            images,
+            start_token=arch.start_token,
+            max_length=4,
+            on_digit=lambda step, digit, prob: seen.append((step, digit, prob)),
+        )
+
+    assert bool((generated[:, 1:] == 7).all()), generated
+    assert [digit for _, digit, _ in seen] == ["7", "7", "7"]
+    expected = float(torch.softmax(torch.tensor([1.0] + [0.0] * (arch.vocab_size - 2)), 0)[0])
+    for _, _, prob in seen:
+        assert prob == pytest.approx(expected, abs=1e-6)
+
+
 def test_generate_runs_to_max_length_when_nothing_emits_eos() -> None:
     """With EOS unreachable no row can finish, so the loop must use every step."""
     arch = _tiny_seq2seq_arch()
@@ -118,14 +196,41 @@ def test_generate_runs_to_max_length_when_nothing_emits_eos() -> None:
 
 def test_sequence_to_number_stops_at_eos() -> None:
     sequence = torch.tensor([10, 4, 0, 7, 11, 3])
-    assert sequence_to_number(sequence, eos_token=11, start_token=10) == 47
+    assert sequence_to_number(sequence, eos_token=11, start_token=10) == 407
+
+
+def test_an_interior_zero_is_a_digit() -> None:
+    """407 is not 47, and the metric used to say it was.
+
+    `sequence_to_number` skipped every 0 rather than only START, so interior zeros
+    vanished. Prediction and target both went through it, which made the accuracy
+    reproducible and wrong: a model that dropped a zero scored a hit.
+    """
+    read = partial(sequence_to_number, eos_token=11, start_token=10)
+    assert read(torch.tensor([10, 4, 0, 7, 11])) != read(torch.tensor([10, 4, 7, 11]))
+    assert read(torch.tensor([10, 1, 0, 0, 11])) == 100
+    assert read(torch.tensor([10, 5, 0, 0, 11])) == 500
+    # Leading zeros still collapse, which is what zero-padded targets require.
+    assert read(torch.tensor([10, 0, 0, 7, 11])) == 7
 
 
 def test_checkpoint_names_follow_the_architecture() -> None:
-    config = Config()
-    assert config.seq2seq_checkpoint_path.name == (
-        "vit_seq2seq_84x84_patch16_d256_enc6_dec6_heads8_best.pth"
+    """The name has to track the architecture, which is why it is derived here.
+
+    Asserting a literal meant every legitimate size change failed this test and the
+    literal got updated, which checks nothing. What matters is that two models with
+    different input sizes cannot share a filename and silently overwrite each other --
+    the canvas went from 84px to 112px precisely so no pixel falls outside the patch
+    grid, and the two checkpoints must stay distinguishable.
+    """
+    arch = Config().seq2seq_arch
+    expected = (
+        f"vit_seq2seq_{arch.img_size}x{arch.img_size}_patch{arch.patch_size}"
+        f"_d{arch.d_model}_enc{arch.num_encoder_layers}_dec{arch.num_decoder_layers}"
+        f"_heads{arch.heads}_best.pth"
     )
+    assert Config().seq2seq_checkpoint_path.name == expected
+    assert f"{arch.img_size}x{arch.img_size}" in expected
 
 
 def test_multi_digit_composites_match_the_requested_size() -> None:
@@ -147,6 +252,56 @@ def test_multi_digit_composites_match_the_requested_size() -> None:
     assert targets.shape[1] == 5
     assert bool((targets[:, 0] == 10).all())
     assert bool((targets[:, -1] == 11).all())
+
+
+def test_a_composite_survives_the_round_trip_the_api_puts_it_through() -> None:
+    """The tensor the loader trains on and the tensor the API serves must agree.
+
+    This is the test the service did not have. `_load_base_mnist` applied
+    `transforms.Normalize` and then `__getitem__` normalised the finished composite
+    again, so training inputs ran from -1.80 to 8.73 while `preprocess_image` -- which
+    decodes a PNG in [0, 1] and normalises once -- produced -0.42 to 2.82 for the same
+    picture. Nothing errored and every structural check passed. The cost was 33.7 points
+    of exact-sequence accuracy: the checkpoint shipped at the time read 97.93% on the
+    loader's own tensors and 64.23% on the tensors the API builds from a faithful PNG of
+    the same 3,000 composites. After the fix and a retrain the two paths agree on all
+    3,000 of them.
+
+    The check is the round trip rather than the arithmetic: recover pixels from the
+    training tensor, encode them as the PNG a caller would send, and push that through
+    the real serving path. A tensor whose pixels do not fit [0, 1] cannot survive it,
+    which is what makes a second normalisation visible here.
+    """
+    config = Config()
+    arch = config.seq2seq_arch
+    rng = np.random.default_rng(0)
+    digit_images = {
+        digit: [torch.from_numpy(rng.random((1, 28, 28)).astype("float32"))] for digit in range(10)
+    }
+    dataset = MultiDigitDataset(
+        digit_images=digit_images,
+        numbers=[407],
+        image_size=arch.img_size,
+        max_digits=config.max_digits,
+        digit_size=config.digit_size,
+        augment_probability=0.0,
+    )
+    trained, _ = dataset[0]
+
+    pixels = trained.squeeze(0).numpy() * MNIST_STD + MNIST_MEAN
+    assert pixels.min() >= -1e-6 and pixels.max() <= 1 + 1e-6, (
+        f"training pixels land outside [0, 1] ({pixels.min():.3f} to {pixels.max():.3f}), "
+        "so the composite is normalised more than once"
+    )
+
+    buffer = io.BytesIO()
+    Image.fromarray(np.round(pixels * 255).astype("uint8"), mode="L").save(buffer, format="PNG")
+    served = preprocess_image(base64.b64encode(buffer.getvalue()).decode(), arch.img_size)
+
+    assert served.shape == trained.unsqueeze(0).shape
+    # One 8-bit step, converted into normalised units -- the only loss a PNG imposes.
+    tolerance = (1.0 / 255) / MNIST_STD
+    assert torch.allclose(served.cpu(), trained.unsqueeze(0), atol=tolerance)
 
 
 def test_root_endpoint_reports_the_model() -> None:

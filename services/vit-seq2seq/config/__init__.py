@@ -40,7 +40,12 @@ class Seq2SeqArch:
         max_seq_length: Longest sequence the decoder handles, START and EOS included.
     """
 
-    img_size: int = 84
+    # 112, not 84, because the patch embedding is a strided conv: at patch 16 an 84px
+    # canvas yields a 5x5 grid covering only 80px, and the strided conv silently drops
+    # columns and rows 80-83. The third digit sat at columns 56-83, so 14% of its width
+    # was never seen by the model -- a permanent handicap on the last digit. 112 is 7x16,
+    # so every pixel lands inside a patch.
+    img_size: int = 112
     patch_size: int = 16
     in_channels: int = 1
     d_model: int = 256
@@ -83,7 +88,13 @@ class Config(BaseConfig):
         warmup_steps: Linear warmup steps for the learning-rate schedule.
         label_smoothing: Label smoothing applied to the decoder's cross-entropy.
         train_split: Fraction of composites used for training.
-        max_digits: Digits per composite image.
+        max_digits: Most digits per composite image.
+        min_digits: Fewest digits per composite image.
+        digit_size: Side length each MNIST digit is pasted at.
+        augment_probability: Share of digits given a random affine warp.
+        augment_rotation_degrees: Rotation range, plus or minus.
+        augment_shear_degrees: Shear range, plus or minus.
+        augment_scale_range: Scale range as (low, high).
         samples_per_class: MNIST digits sampled per class when building composites.
         num_workers: DataLoader worker processes.
         api_host: Interface the FastAPI service binds to.
@@ -105,6 +116,23 @@ class Config(BaseConfig):
 
     train_split: float = 0.8
     max_digits: int = 3
+    # Shortest composite. 3 reproduces the original fixed-length task, where every label
+    # was `str(number).zfill(3)` and so EOS always landed at the same position -- the
+    # decoder learned "emit three, then stop" and could never answer with one or two
+    # digits, while the write-up advertised per-sequence EOS. 1 makes the stop a decision.
+    min_digits: int = 1
+    # Explicit rather than `img_size // max_digits`, which forced
+    # `spacing = (img_size - max_digits * digit_size) // (max_digits + 1)` to 0 and so
+    # made `max_jitter = spacing // 2` zero too -- the positional jitter the dataset
+    # advertised had never moved anything. 28 is MNIST's native size, so digits are
+    # pasted without resampling and the slack becomes real: at 112px, spacing is 7.
+    digit_size: int = 28
+    # Augmentation applied to every digit rather than 30% of them, and wide enough that
+    # the three evenly-spaced cells of the original canvas stop being memorisable.
+    augment_probability: float = 1.0
+    augment_rotation_degrees: float = 15.0
+    augment_shear_degrees: float = 12.0
+    augment_scale_range: tuple[float, float] = (0.75, 1.15)
     samples_per_class: int = 100
     num_workers: int = 4
 

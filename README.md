@@ -176,7 +176,7 @@ working interface generated from its own OpenAPI schema.
 |---|--:|---|
 | `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically. recall@10 0.6728 vs 0.0020 chance |
 | `vit-classifier` | 0.45 GB | Draw a digit, see the real patch grid |
-| `vit-seq2seq` | 0.45 GB | Multi-digit, streams tokens as it decodes |
+| `vit-seq2seq` | 0.45 GB | Multi-digit, streams tokens as it decodes. 98.53% exact-sequence vs 0.10% uniform |
 | `content-scoring` | 1.3 GB | |
 | `whisper-fine-tuning` | 1.8 GB | Fine-tunes live, per request |
 | `word-embeddings` | 2.3 GB | Nearest neighbours and analogies |
@@ -264,7 +264,7 @@ Each links to its own write-up — architecture, method, results and references.
 | [Content scoring](services/content-scoring) | Regression head over frozen CBOW embeddings | Transfer learning onto an encoder this repo produced itself; the head is the only thing trained |
 | [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), in-batch negatives | The offline/online split a real retrieval system has: documents encoded once into an ANN index, queries encoded per request — recall@10 0.6728 against 0.0020 chance, and 0.3047 for triplet loss on the same data |
 | [ViT classifier](services/vit-classifier) | Encoder-only ViT: patch embedding, self-attention, encoder blocks | Attention written out rather than called — no `nn.TransformerEncoderLayer` anywhere |
-| [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | The decoder half — causal masking and cross-attention — sharing one encoder with the classifier through `libs/vision-transformer` |
+| [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | The decoder half — causal masking and cross-attention — sharing one encoder with the classifier through `libs/vision-transformer`; one to three digits per image, so EOS is a decision the model takes — 98.53% exact-sequence against 0.10% uniform, and EOS placed correctly on every held-out sequence |
 | [Image captioning](services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Late fusion across two frozen pretrained backbones, with only the projection adapter trained, and tokens streamed to the browser as they are generated |
 | [Whisper fine-tuning](services/whisper-fine-tuning) | Whisper fine-tuned live, per request | A training loop as an HTTP endpoint: gradient steps streamed as they happen, with what overfitting one clip costs on other speech measured beside it (WER 0.1642 to 0.2687 over five steps) |
 | [Speech emotion recognition](services/speech-emotion-recognition) | Emotion as a token Whisper's decoder emits | Extending a pretrained tokenizer with new tokens instead of bolting a classifier head onto the encoder |

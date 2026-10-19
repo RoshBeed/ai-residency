@@ -2,7 +2,7 @@
 
 | Module | What it is |
 | --- | --- |
-| `seq2seq.py` | `Seq2SeqVisionTransformer` — encoder-decoder, an 84×84 three-digit composite in, a digit sequence out. No `[CLS]` token: the decoder cross-attends over the whole patch sequence, so a single pooled summary has nothing to do. |
+| `seq2seq.py` | `Seq2SeqVisionTransformer` — encoder-decoder, a 112×112 composite of one to three digits in, a digit sequence out. No `[CLS]` token: the decoder cross-attends over the whole patch sequence, so a single pooled summary has nothing to do. |
 | `trainer.py` | Training loop for the above: `python -m vit_seq2seq.trainer` |
 
 Assembled from the blocks in [`libs/vision-transformer`](../../../libs/vision-transformer) and
