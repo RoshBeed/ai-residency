@@ -682,7 +682,8 @@ PROJECTS: dict[str, dict[str, Any]] = {
             ("Base model", "SmolLM2-135M + LoRA"),
             ("Reward model", "OpenAssistant DeBERTa-v3"),
             ("Pipeline", "12 stages per step"),
-            ("Checkpoints", "Policy + value persist across restarts"),
+            ("60-step loop", "reward -0.04 greedy, +0.09 sampled"),
+            ("Policy movement", "1.26e-04 of the base weights"),
         ],
         "intro": (
             "A modular, from-scratch implementation of Proximal Policy Optimization for "
@@ -700,6 +701,14 @@ PROJECTS: dict[str, dict[str, Any]] = {
             "difference error, GAE advantage estimation with λ-return, rewards-to-go, "
             "value function MSE loss, and the PPO-clip objective on the policy. Four "
             "models coexist per step: policy, reference, reward, and value.\n\n"
+            "**What a real loop produces.** `make train-loop` runs 60 PPO steps on real "
+            "TL;DR prompts and reports mean reward on 16 held-out prompts before and "
+            "after. Greedy decoding moves it -0.04 and seeded sampling +0.09 — the two "
+            "disagree about the sign, because the LoRA adapter shifted the policy by "
+            "1.26e-04 of the weights it is added to, about a hundredth of a percent. "
+            "Neither direction is a finding at that magnitude. Scaling the update 1000x "
+            "makes reward monotonically worse, so a larger learning rate is ruled out "
+            "rather than untried.\n\n"
             "**Approach.** Each of the 12 stages is an independently testable module, "
             "making the full PPO algorithm inspectable step by step. The pipeline traces "
             "every intermediate quantity per token — log-probabilities, KL divergence, "

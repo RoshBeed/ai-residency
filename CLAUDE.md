@@ -774,12 +774,42 @@ Status:
       half of that mismatch is an honest 503; the *triples* half is worse and has no
       symptom at all -- stale ids index documents against a vocabulary the towers never
       saw, and nothing errors.
-- [ ] `rlhf-ppo` -- the mechanics are verified and tested, but the service reports no
-      result: its own TL;DR says "what I'd do next: run a real multi-epoch PPO loop and
-      measure reward before/after". That before/after mean reward *is* the missing number,
-      and it is the cheapest one -- the reward model is inference-only, the policy is
-      already SmolLM2-135M with LoRA, so a short run on a slice is enough to show reward
-      moving. Log the pre-PPO mean reward as the baseline beside it.
+- [x] `rlhf-ppo` -- `make train-loop` exists and the before/after is reported. 60 PPO
+      steps on real `CarperAI/openai_summarize_tldr` prompts, 16 held-out prompts never
+      trained on, baseline before any gradient step, fresh adapter:
+
+      | | greedy | sampled (4x, seeded) | policy drift |
+      |---|--:|--:|--:|
+      | pre-PPO | -3.4202 | -5.0505 | 0 |
+      | after 60 steps | -3.4585 | -4.9640 | 1.26e-04 |
+
+      **The two metrics disagree about the sign and that is the result** -- greedy -0.04,
+      sampled +0.09, on a policy whose weights moved a hundredth of a percent. Neither
+      direction is a finding at that magnitude, and quoting one alone would invent one.
+
+      **A bigger learning rate is ruled out, not untried.** Scaling the trained adapter's
+      B matrices scales the drift without retraining, and reward falls monotonically:
+      greedy -3.4585 at the actual 1.26e-04, -3.7579 at 1.26e-03, -4.9454 at 1.26e-02,
+      -5.6364 at 1.26e-01. So the metric is not blind (it responds sharply from 1e-03 up,
+      meaning the flat reward really is a policy that did not move), and travelling
+      further in *this* direction is worse. Larger steps would find a different direction,
+      so this kills the cheap explanation rather than the whole idea; the suspects left
+      are advantages from 4-prompt batches, 10-token completions, and the missing SFT
+      reference.
+
+      **Three bugs, none visible to a passing test.** `_load_ckpt` had never loaded a
+      checkpoint: `load_checkpoint` returns the saved *record* and it was passed whole to
+      `load_state_dict(strict=False)`, so none of the five wrapper keys matched, nothing
+      loaded, and it logged `Loaded policy LoRA checkpoint (513 missing, 5 unexpected)`.
+      The 5 was the whole story. Fixing it then made the loop resume its own previous
+      adapter and call it "pre-PPO", so `run_loop` passes `load_adapters=False` and checks
+      baseline drift is 0. And §6 claimed the reward model was an untrained Qwen3 head when
+      it is `OpenAssistant/reward-model-deberta-v3-large-v2`, inference-only.
+
+      Log a magnitude beside a metric that did not move. "Reward did not change" and "the
+      metric cannot see the change" are indistinguishable without one, and greedy decoding
+      reported the identical reward to four decimal places at iterations 10, 20, 30 and 40
+      because an argmax has to flip before it says anything.
 - [x] `whisper-fine-tuning` -- meaningful by its own design and needs no training run. It
       fine-tunes on a single clip so the effect of a gradient step is visible rather than
       statistical: `"My name is Roosh."` becomes `"My name is Rosh"`, with the base model's

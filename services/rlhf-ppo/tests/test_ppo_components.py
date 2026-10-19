@@ -8,6 +8,7 @@ test would load 135M parameters four times over for each of a dozen tests.
 import math
 from collections.abc import Iterator
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 import torch
@@ -454,3 +455,52 @@ def test_empty_prompts_are_422_not_400() -> None:
     with TestClient(app) as client:
         assert client.post("/generate", json={"prompt": "   "}).status_code == 422
         assert client.post("/ppo_step", json={"prompts": ["  "]}).status_code == 422
+
+
+def test_a_saved_adapter_is_actually_loaded_back(
+    tmp_path: Path, base_setup: BaseModelSetup
+) -> None:
+    """A checkpoint round trip has to move the weights, not just log that it did.
+
+    `save_checkpoint` wraps the tensors in a record alongside `optimizer_state_dict`,
+    `epoch`, `metrics` and `extra`. `_load_ckpt` passed that whole record to
+    `load_state_dict(strict=False)`, which matched none of the model's parameters,
+    loaded nothing, and reported "5 unexpected" -- those five wrapper keys -- under a
+    log line beginning "Loaded". Every run therefore started from a fresh adapter no
+    matter how many checkpoints had been written, and the only symptom was a resumed
+    policy behaving like an untrained one.
+    """
+    from ai_residency_common import load_checkpoint, save_checkpoint
+
+    policy_model = PolicyModel(base_setup).to(DEVICE)
+    path = tmp_path / "policy_lora.pth"
+
+    # LoRA's B matrices start at zero, so writing into one makes "did the load apply?"
+    # a question with an unambiguous answer.
+    state = policy_model.state_dict()
+    b_keys = [key for key in state if "lora_B" in key]
+    assert b_keys, "the policy is expected to be LoRA-adapted"
+    marked = {key: torch.full_like(state[key], 0.5) for key in b_keys}
+    save_checkpoint(path, policy_model, state_dict={**state, **marked})
+
+    record = load_checkpoint(path, map_location="cpu")
+    assert set(record) >= {"model_state_dict", "epoch", "metrics"}, (
+        "the saved record wraps the tensors; this test exists because that was missed"
+    )
+
+    # Handing the record straight to load_state_dict is the bug: nothing matches.
+    fresh = policy_model.state_dict()
+    unmatched = sum(1 for key in record if key in fresh)
+    assert unmatched == 0, "the wrapper keys must not look like parameter names"
+
+    # Unwrapping it is the fix.
+    tensors = record["model_state_dict"]
+    applied = sum(1 for key in tensors if key in fresh)
+    assert applied == len(fresh), "every parameter in the file should match the model"
+
+    _, unexpected = policy_model.load_state_dict(tensors, strict=False)
+    assert not unexpected
+    reloaded = policy_model.state_dict()
+    assert all(
+        torch.allclose(reloaded[key], torch.full_like(reloaded[key], 0.5)) for key in b_keys
+    ), "the marked B matrices did not survive the round trip"

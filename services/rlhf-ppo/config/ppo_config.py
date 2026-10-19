@@ -94,6 +94,12 @@ class PPOConfig(BaseConfig):
     prompt_batch_size: int = 4
     eval_prompts: int = 16
     eval_every: int = 10
+    # Completions per held-out prompt for the sampled reward. Greedy decode only moves
+    # when a change flips an argmax, which a 60-step run at lr=1e-5 never did -- it
+    # reported the identical reward four times while the policy weights moved 8.2e-5.
+    # Averaging sampled completions from a fixed seed responds to a shift in the
+    # distribution instead of only to a change of its mode.
+    eval_samples: int = 4
 
     # The step does update the policy's LoRA weights, so there is an artifact worth
     # persisting -- but be clear about what it is. One step against a reward model

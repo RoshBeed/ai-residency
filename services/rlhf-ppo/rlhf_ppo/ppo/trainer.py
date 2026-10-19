@@ -62,6 +62,8 @@ class PPOTrainer:
         self,
         config: PPOConfig,
         on_progress: Callable[[str], None] | None = None,
+        *,
+        load_adapters: bool = True,
     ) -> None:
         """Build the three base-model copies, the reward scorer, and every pipeline stage.
 
@@ -71,6 +73,12 @@ class PPOTrainer:
                 model load, etc.) so a caller watching a long first call -- the
                 model loads take a while -- can show what is happening rather than
                 leaving the client in silence.
+            load_adapters: Restore saved LoRA adapters from `checkpoint_dir`. True is
+                right for serving, where a pod should pick up where the last one left
+                off. `run_ppo_loop` passes False: it measures a *pre-PPO* baseline, and
+                a trainer that silently resumed someone else's adapter would label a
+                partly-trained policy as the starting point and report the remaining
+                improvement as the whole of it.
         """
         self.config = config
 
@@ -104,7 +112,10 @@ class PPOTrainer:
         progress("Loading value model...")
         self.value_model = ValueModel(self.base_setup).to(self.device)
 
-        self._load_ckpt()
+        if load_adapters:
+            self._load_ckpt()
+        else:
+            logger.info("Starting from freshly initialised adapters (load_adapters=False)")
 
         progress("Building pipeline stages...")
         self.token_attribution = TokenAttribution(self.base_setup.tokenizer)
@@ -135,7 +146,15 @@ class PPOTrainer:
         self.step_count = 0
 
     def _load_ckpt(self) -> None:
-        """Load persisted LoRA adapters if they exist from a previous pod lifetime."""
+        """Load persisted LoRA adapters if they exist from a previous pod lifetime.
+
+        `load_checkpoint` returns the whole saved record -- `model_state_dict`,
+        `optimizer_state_dict`, `epoch`, `metrics`, `extra` -- not the tensors. Handing
+        that straight to `load_state_dict(strict=False)` matched nothing and loaded
+        nothing, while reporting "5 unexpected" (those five keys) and logging the word
+        "Loaded". Every run started from a fresh adapter however many were saved, and the
+        only visible symptom was that a resumed policy behaved like an untrained one.
+        """
         for label, model, path in [
             ("policy LoRA", self.policy_model, self.config.checkpoint_dir / "policy_lora.pth"),
             ("value model", self.value_model, self.config.checkpoint_dir / "value_model.pth"),
@@ -146,14 +165,32 @@ class PPOTrainer:
                 state = load_checkpoint(path, map_location="cpu")
             except FileNotFoundError:
                 continue
-            if state is not None:
-                missing, unexpected = model.load_state_dict(state, strict=False)
-                logger.info(
-                    "Loaded %s checkpoint (%d missing, %d unexpected)",
+            # `save_checkpoint` wraps the tensors; a bare state dict is accepted too, so
+            # an adapter saved by hand or by an older version still loads.
+            tensors = state.get("model_state_dict", state)
+            expected = set(model.state_dict())
+            applied = sum(1 for key in tensors if key in expected)
+            missing, unexpected = model.load_state_dict(tensors, strict=False)
+
+            # A checkpoint that matches nothing is the failure this method used to have,
+            # and it has to be louder than an info line with "Loaded" in it.
+            if applied == 0:
+                logger.error(
+                    "%s checkpoint at %s matched none of the model's parameters "
+                    "(%d keys in the file, %d unexpected) -- continuing from a fresh adapter",
                     label,
-                    len(missing),
+                    path,
+                    len(tensors),
                     len(unexpected),
                 )
+                continue
+            logger.info(
+                "Loaded %s checkpoint: %d parameters applied (%d missing, %d unexpected)",
+                label,
+                applied,
+                len(missing),
+                len(unexpected),
+            )
 
     def _save_ckpt(self) -> None:
         """Persist LoRA adapter weights so repeated calls compound across pod restarts."""

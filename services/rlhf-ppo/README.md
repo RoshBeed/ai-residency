@@ -4,7 +4,15 @@
 
 - **What it is:** a from-scratch, modular PPO implementation (generation, KL penalty, reward, advantage, policy/value updates) with LoRA, running end to end against a real pretrained reward model.
 - **What it demonstrates:** every PPO mechanic — generation, KL penalty, GAE advantage, clipped policy and value losses — verified correct with real gradient steps and a full test suite.
-- **What I'd do next:** run a real multi-epoch PPO loop on a GPU (the Terraform AWS path exists) and measure reward before/after.
+- **Result:** 60 PPO steps on real TL;DR prompts move held-out mean reward by **-0.04 under greedy
+  decoding and +0.09 under seeded sampling** — the two metrics disagree about the sign, because the
+  policy barely moved: the LoRA adapter's effective update is 1.26e-04 of the weights it is added
+  to. The loop runs end to end on real data; 60 steps at `learning_rate=1e-5` is not enough to
+  change what the policy writes (§6).
+- **What I'd do next:** not a bigger learning rate — scaling the update 1000x makes reward
+  monotonically worse (§6), so that is ruled out rather than untried. The suspects left are in the
+  signal: advantage estimates from 4-prompt batches, 10-token completions, and an SFT stage so the
+  KL penalty measures drift from a supervised checkpoint rather than from the base model.
 
 I built a modular, from-scratch implementation of Proximal Policy Optimization (PPO) [1] for fine-tuning a
 language model against a learned reward model: the RLHF training loop [2, 3] used to align GPT-3
@@ -348,10 +356,87 @@ test asserts it. That's the invariant that matters most here: it confirms `old_l
 `new_logprobs` are genuinely comparable, both computed via a real, correctly-masked forward pass
 rather than `generate()`'s own sampling-time scores (see [Section 3.2](#32-the-ppo-step)).
 
-`RewardModel` and `SFTModel` are both fresh LoRA-initialized copies of Qwen3-0.6B-Base — neither
-has gone through a separate reward-model or SFT training stage yet, so a PPO run today scores
-generations against an untrained head rather than a real preference model. Training either is the
-natural next step, using the `PPOTrainer`/`ModelTrainer` machinery already in place.
+### A real loop, and what 60 steps actually buy
+
+`make train-loop` runs PPO on real prompts from `CarperAI/openai_summarize_tldr` and reports mean
+reward before and after on held-out prompts. It is built so it cannot flatter itself: the 16
+evaluation prompts come from the front of the split and the training prompts strictly after it, so
+the two sets cannot overlap; the baseline is taken before a single gradient step; and the trainer
+starts from a freshly initialised adapter rather than resuming one.
+
+| | greedy | sampled (4x, seeded) | policy drift |
+|---|--:|--:|--:|
+| pre-PPO, 16 held-out prompts | -3.4202 | -5.0505 | 0 |
+| after 60 PPO steps | -3.4585 | -4.9640 | 1.26e-04 |
+| change | **-0.0383** | **+0.0865** | |
+
+**The two metrics disagree about the sign**, and that is the result. Greedy reward falls by 0.04 and
+sampled reward rises by 0.09, which is what a measurement looks like when the thing being measured
+has barely moved: `policy_drift` — the adapter's effective update as a fraction of the weights it is
+added to — comes out at **1.26e-04**. The policy shifted by about a hundredth of a percent. Neither
+sign is a finding at that magnitude, and reporting one of them alone would have invented a direction
+the run does not support.
+
+What the run does establish is that the loop works end to end on real data, and what it costs to
+move a policy: 60 steps at `learning_rate=1e-5` is not enough to change what this policy writes.
+
+That measurement exists because the alternative was ambiguous. Greedy decoding at iterations 10, 20,
+30 and 40 returned **-3.4202 every time, to four decimal places** — greedy output only changes when
+a change flips an argmax, and across 160 token decisions none flipped. Without a drift number,
+"reward did not move" and "the metric cannot see that the policy moved" look identical. So the loop
+reports both, plus a seeded-sampling reward that responds to a shift in the output distribution
+rather than only to a change of its mode.
+
+**A bigger learning rate is not the fix, and that was tested rather than assumed.** The obvious
+response to "the policy barely moved" is to move it further. LoRA's update is `(alpha/r) * B @ A`,
+so multiplying every B matrix by k multiplies the drift by k without retraining anything — which
+makes the question cheap to answer:
+
+| policy drift | greedy reward | sampled reward |
+|--:|--:|--:|
+| 1.26e-04 (what 60 steps produced) | -3.4585 | -4.9640 |
+| 1.26e-03 | -3.7579 | -4.9146 |
+| 1.26e-02 | -4.9454 | -5.6183 |
+| 1.26e-01 | -5.6364 | -5.4824 |
+
+Two things fall out. The metric is **not** blind — it responds sharply from 1e-03 upward, so the flat
+reward at 1.26e-04 is genuinely a policy that did not move rather than an instrument that could not
+see. And travelling further in the direction these 60 steps found makes reward monotonically
+**worse**, by 2.2 under greedy decoding at 1000x. Turning up the learning rate would not have
+produced a better number; it would have produced a worse one with more confidence.
+
+This is a statement about *this* direction, not about larger steps in general: PPO with a bigger
+learning rate would compute different advantages and find a different direction. What it rules out
+is the cheap explanation. The remaining suspects are in the signal rather than the step size —
+advantage estimates from 4-prompt batches, 10-token completions, and a KL reference that is the base
+model rather than an SFT checkpoint.
+
+Two bugs came out of chasing that, and both were invisible to every passing test:
+
+**`_load_ckpt` had never loaded a checkpoint.** `load_checkpoint` returns the whole saved record —
+`model_state_dict`, `optimizer_state_dict`, `epoch`, `metrics`, `extra` — and the loader passed that
+straight to `load_state_dict(strict=False)`. None of those five keys is a parameter name, so nothing
+matched and nothing loaded, under a log line reading `Loaded policy LoRA checkpoint (513 missing, 5
+unexpected)`. The 5 was the whole story. It is 240 parameters applied, 0 unexpected now, and a
+checkpoint matching nothing is an error naming the file.
+
+**Then the loop had to opt out of it.** A working loader means the next run resumes the last run's
+adapter and calls it "pre-PPO", so `run_loop` passes `load_adapters=False` and checks that baseline
+drift is 0 before trusting its own baseline.
+
+**Also worth knowing: MPS cannot finish a step here.** A PPO step holds activations for four model
+roles across twelve stages, and on MPS that accumulates past the backend's high-watermark ceiling
+and dies with `MPS backend out of memory (MPS allocated: 42.45 GiB, max allowed: 42.43 GiB)` — after
+252-413s in the value update alone. The same step on CPU completes in **70s**, value update 17.3s
+and policy update 22.0s, so `make train-loop` pins `AI_RESIDENCY_DEVICE=cpu`.
+
+**What is and is not a real model here.** The reward model is real: `OpenAssistant/reward-model-deberta-v3-large-v2`,
+preference-trained by someone else and used inference-only, so the reward signal is not something
+this repo invented. The policy is SmolLM2-135M-Instruct with LoRA. `SFTModel` is the gap — a full
+RLHF pipeline initialises the policy from a supervised fine-tuned checkpoint and penalises KL
+against *that*, and no SFT stage exists here, so it is a second copy of the base model. The KL
+penalty works exactly as written; it measures drift from the base model rather than from an SFT
+model.
 
 ## 7. Related Work
 
