@@ -443,7 +443,7 @@ model.
 - [the image captioning project](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) —
   both projects load Qwen3 explicitly in float32, since a bf16-by-default checkpoint isn't
   compatible with the float32 heads either one adds on top.
-- [the vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — the same
+- [the ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) — the same
   "break it into small, independently-testable modules" approach applied here to a training loop
   (generation, KL, reward, advantage, policy/value updates) rather than a model's forward pass.
 

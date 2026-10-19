@@ -517,7 +517,7 @@ and document pool, so it should not be expected to.
 
 - [The word-embeddings/score-prediction project](https://github.com/RoshBeed/ai-residency/tree/main/services/word-embeddings) — the
   CBOW embedding training reused here as the frozen input representation for both towers.
-- [The vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — self-attention
+- [The ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) — self-attention
   implemented from scratch, a natural upgrade path for the tower encoders in place of a GRU.
 
 ## References

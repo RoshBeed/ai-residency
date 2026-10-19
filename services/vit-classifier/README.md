@@ -50,7 +50,7 @@ MNIST is the smallest honest test of that claim. A 28x28 digit becomes 49 patche
 
 **Figure 1.** Recognizing one digit — the task this service solves. Its sibling,
 [vit-seq2seq](../vit-seq2seq), handles the multi-digit case on the right.
-![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder mapping a 3-digit image through a decoder seeded with <start> to the token sequence 0 2 3 1](assets/task_overview.png)
+![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder reading 112x112 composites of one, two and three digits through a decoder seeded with <start> into 0, 5 5 and 2 0 6, each ending at <eos>](assets/task_overview.png)
 
 ## 2. System Architecture
 

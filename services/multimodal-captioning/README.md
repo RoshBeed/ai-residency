@@ -47,7 +47,7 @@ Checkpoints are resolved locally first, then from the Hugging Face Hub, so servi
 
 ## 1. Introduction
 
-[The vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) built a Vision Transformer from
+[The ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) built a Vision Transformer from
 scratch and trained the whole thing end to end on MNIST. That works when the target task is small
 and cheap to supervise. It doesn't work when the target task is "describe any photo in fluent
 English": there's no dataset large enough to teach both vision and language from scratch cheaply,
@@ -131,7 +131,7 @@ The two notebooks import and call the package rather than defining anything them
 ### 3.1 Two Ways to Bridge a Vision Encoder to a Language Model
 
 There are two established patterns. The original Transformer decoder [2] — and this repo's own
-[the vision transformer project's seq2seq model](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — uses **cross-attention**:
+[the ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) — uses **cross-attention**:
 a dedicated attention layer inside the decoder that attends to the encoder's output at every
 generation step. LLaVA [4] and PaLiGemma [3] use something simpler: project the image into the
 language model's embedding space and **concatenate** it as if it were just another token, then let
@@ -486,7 +486,7 @@ project's GRU tower and the vision transformer project's classifier trainer are 
 
 ## 7. Related Work
 
-- [The vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — the
+- [The ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) — the
   from-scratch encoder-decoder ViT that motivates Section 3.1's cross-attention comparison, and
   the source of the frozen vision-encoder pattern reused here.
 - [The dual-encoder retrieval project](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) —

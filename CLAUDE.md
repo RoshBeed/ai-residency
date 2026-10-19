@@ -536,6 +536,15 @@ Service READMEs are the write-up *and* the GitHub landing page, and the frontend
   em-dash use. Never cut the *why* behind a technique — that reasoning is the point.
 - Real numbers only, always next to their baseline. Cite papers; course material needs no citation.
 - Explain a shared thing once, in the library that owns it, and link to it.
+- **A figure nobody can redraw is a figure that goes stale.** Both ViT figures were slide
+  exports and both drifted away from the model with nothing noticing: Figure 1 showed a
+  four-digit composite laid out two-by-two, and the architecture figure claimed 16 patch
+  tokens, `nn.Linear(11, 13)` and a `<pad>` id the model does not have. The prose had started
+  apologising for them in line rather than fixing them. They come out of
+  `vit_seq2seq/report.py` now -- `make -C services/vit-seq2seq figures` -- with every shape
+  read off `Seq2SeqArch` and a real forward pass, and every decoded sequence a real `generate`
+  call. `content-scoring` and `word-embeddings` already had a `report.py`; that is the pattern.
+  A figure shared by two services is written by one run to both paths, so they cannot disagree.
 - **Every figure is written at `ai_residency_common.figures.DPI`.** Nine services drew their own
   charts and the committed assets came out at 110, 140, 150, 200, 300 and 600, which a reader sees
   as figures that will not line up. Charts go through `figures.save_figure`; a screenshot or a slide

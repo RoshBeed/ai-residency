@@ -21,9 +21,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq"
 Repository = "https://github.com/RoshBeed/ai-residency.git"
-"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers/issues"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/issues"
 
 [dependency-groups]
 dev = [

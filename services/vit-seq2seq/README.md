@@ -50,7 +50,7 @@ when the number is done. The encoder underneath is the same one the classifier u
 difference between the two services is entirely in what reads its output.
 
 **Figure 1.** Recognizing several digits — the task this service solves, on the right.
-![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder mapping a 3-digit image through a decoder seeded with <start> to the token sequence 0 2 3 1](assets/task_overview.png)
+![The two tasks: a single encoder mapping a 28x28 digit image to the label 4, and an encoder-decoder reading 112x112 composites of one, two and three digits through a decoder seeded with <start> into 0, 5 5 and 2 0 6, each ending at <eos>](assets/task_overview.png)
 
 ## 2. System Architecture
 
@@ -109,23 +109,23 @@ patch-embedding encoder with a transformer decoder over a 12-token vocabulary: d
 learned `START` (10) and `EOS` (11) tokens.
 
 **Figure 6.** Encoder–decoder ViT for multi-digit sequence generation.
-![Encoder-decoder architecture for the sequence task: a 3-digit image goes through linear projection of flattened patches and encoder blocks to produce a 16x64 encoder output; in parallel, the target tokens <start> 7 7 6 9 are tokenized and embedded (5x11), pass through decoder blocks with cross-attention (Q/K/V formulas shown) to the encoder output, and are projected via nn.Linear(11,13) into next-token logits over the digit/start/finish/pad vocabulary, producing 7 7 6 9 <finish>](assets/seq2seq_slide_architecture.png)
+![Encoder-decoder architecture for the sequence task: a 1x112x112 composite is cut into 7x7 patches of 16x16, linearly projected and passed through six encoder blocks to a 49x256 encoder output; in parallel the target tokens <start> 2 0 6 are embedded to 4x256 and passed through six decoder blocks whose cross-attention takes Q from the decoder and K, V from the encoder output, then projected by nn.Linear(256, 12) into 4x12 next-token logits producing 2 0 6 <eos>, over a 12-token vocabulary of the ten digits plus start and eos and no pad id](assets/seq2seq_slide_architecture.png)
 
-`vit_seq2seq/seq2seq.py` implements this pipeline. On the left, a patch-embedding encoder
-(`Conv2d(k=16,s=16)` → 49×256 for this repo's real 112×112 composites, larger than the
-figure's illustrative 16×64). On the right, a tokenizer/embedding stage over a 12-token vocabulary
-— digits 0–9 plus learned `START`/`EOS` tokens, the figure's `<start>`/`<finish>`/`<pad>` table.
-The two feed masked self-attention and cross-attention decoder blocks
-(`torch.matmul(Q, K.transpose(-2,-1))` per block, matching the figure's `Q`/`Kᵀ`/`A` derivation)
-that project back out to next-token logits.
+`vit_seq2seq/seq2seq.py` implements this pipeline, and every shape in the figure is read off
+`Seq2SeqArch` and a real forward pass. On the left, a patch-embedding encoder
+(`Conv2d(k=16, s=16)`) turns a 112×112 composite into 49 patch tokens at `d_model` 256. On the
+right, an embedding over the 12-token vocabulary turns `<start> 2 0 6` into 4×256. The two feed
+masked self-attention and cross-attention decoder blocks — `torch.matmul(Q, K.transpose(-2, -1))`
+per block, with `Q` from the decoder and `K`, `V` from the encoder output — and
+`nn.Linear(256, 12)` projects back out to next-token logits.
 
-The figure's worked example — feeding in `<start> 7 7 6 9` and reading out `7 7 6 9 <finish>` — is
-the same teacher-forced training setup `seq2seq/trainer.py` uses: the whole target sequence goes to
+The figure's worked example — feeding in `<start> 2 0 6` and reading out `2 0 6 <eos>` — is
+the same teacher-forced training setup `vit_seq2seq/trainer.py` uses: the whole target sequence goes to
 the decoder at once, with a causal mask so position *i* can't see positions after it
 (`create_causal_mask`, matching the "Masked Multi-Head Attention" block in the original decoder
 [1]). At inference, `generate()` runs the same decoder autoregressively instead — no target
-sequence to see, so it starts from `[START]` and feeds each predicted token back in to produce the
-next one, one forward pass per digit, until `EOS` (`<finish>`) is produced.
+sequence to see, so it starts from `START` and feeds each predicted token back in to produce the
+next one, one forward pass per digit, until `EOS` is produced.
 
 ### 3.3 The data has to exercise the EOS token
 

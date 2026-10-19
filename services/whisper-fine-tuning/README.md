@@ -51,7 +51,7 @@ A Fourier Transform decomposes a signal into how much each frequency contributes
 in short overlapping windows across a clip produces a spectrogram: frequency on one axis, time on
 the other, intensity as the value. That's a 2D array, the same shape a small stack of convolutions
 (and then a transformer) can consume. This is also, not coincidentally, close to how the
-[vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) treats images: turn
+[ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) treats images: turn
 the input into patches/tokens a transformer encoder can attend over.
 
 Once the audio is a spectrogram, the actual task ("what words are these" or "what emotion is
@@ -88,7 +88,7 @@ Whisper [1] is an encoder-decoder transformer trained on 680,000 hours of multil
 multitask audio-text data. The encoder side turns a log-Mel spectrogram into a sequence of hidden
 states; the decoder side autoregressively generates text tokens, cross-attending to those hidden
 states. That's the same encoder-decoder-with-cross-attention pattern as the original Transformer
-[2] and the [vision transformer project's seq2seq model](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers)'s own decoder.
+[2] and the [ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq)'s own decoder.
 
 **Figure 3.** Whisper's architecture — the "Sequence-to-sequence learning" panel of Figure 1 from
 the original paper (Radford et al. [1], arXiv:2212.04356).
@@ -264,7 +264,7 @@ transcript differs while no word does — counting that would report damage that
 
 ## 7. Related Work
 
-- [The vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — the same
+- [The ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) — the same
   encoder-decoder-with-cross-attention pattern (Figure 3), and the same "turn the input into a 2D
   array a transformer can consume" move (Figure 1) applied to images instead of audio.
 - [The image captioning project](https://github.com/RoshBeed/ai-residency/tree/main/services/multimodal-captioning) —

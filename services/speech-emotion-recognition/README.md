@@ -100,7 +100,7 @@ Whisper [1] is an encoder-decoder transformer trained on 680,000 hours of multil
 multitask audio-text data. The encoder side turns a log-Mel spectrogram into a sequence of hidden
 states; the decoder side autoregressively generates text tokens, cross-attending to those hidden
 states. That's the same encoder-decoder-with-cross-attention pattern as the original Transformer
-[2] and the [vision transformer project's seq2seq model](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers)'s own decoder.
+[2] and the [ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq)'s own decoder.
 
 **Figure 3.** Whisper's architecture — the "Sequence-to-sequence learning" panel of Figure 1 from
 the original paper (Radford et al. [1], arXiv:2212.04356).

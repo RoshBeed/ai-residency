@@ -17,9 +17,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning"
+Homepage = "https://github.com/RoshBeed/ai-residency/tree/main/services/whisper-fine-tuning"
 Repository = "https://github.com/RoshBeed/ai-residency.git"
-"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/tree/main/services/audio-fine-tuning/issues"
+"Bug Tracker" = "https://github.com/RoshBeed/ai-residency/issues"
 
 [dependency-groups]
 dev = [

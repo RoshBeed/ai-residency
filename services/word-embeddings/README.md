@@ -429,7 +429,7 @@ bidirectional sequence, GPT predicts the next token causally.
 ![Three panels side by side: word2vec predicting the masked "name" from context; BERT predicting two masked tokens ("Hello" and "name") from the full bidirectional sequence; GPT predicting the next token "Bes" causally from <s> Hello my name is](assets/fig12-word2vec-bert-gpt.png)
 
 I implement self-attention itself separately; see the
-[vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) for a from-scratch implementation.
+[ViT classifier](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-classifier) for a from-scratch implementation.
 
 ## 3. Architecture
 
@@ -603,7 +603,7 @@ the [Quickstart](#quickstart) for running both from Docker.
 - [the dual-encoder retrieval project](https://github.com/RoshBeed/ai-residency/tree/main/services/vector-search-retrieval) —
   recurrent (GRU) query/document towers trained with in-batch negatives, an alternative to
   average-pooled embeddings for sequence representation.
-- [the vision transformer project](https://github.com/RoshBeed/ai-residency/tree/main/services/vision-transformers) — self-attention and transformer encoder/decoder
+- [the ViT seq2seq service](https://github.com/RoshBeed/ai-residency/tree/main/services/vit-seq2seq) — self-attention and transformer encoder/decoder
   implemented from scratch.
 - [the RLHF/PPO project](https://github.com/RoshBeed/ai-residency/tree/main/services/rlhf-ppo) — reward modeling and policy optimization; the same
   scalar-head-over-frozen-embeddings shape, trained on human preferences instead of raw counts.
