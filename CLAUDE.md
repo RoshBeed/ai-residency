@@ -753,47 +753,67 @@ Status:
       on 500 held-out three-digit numbers against 0.10% for uniform guessing. Exact-sequence
       is the strict metric: two correct digits out of three scores zero.
 - [x] `vector-search-retrieval` -- trained with in-batch negatives on 88,523 MS MARCO
-      triples. **Recall@10 0.3983 against a 0.0020 chance floor and 0.0028 for untrained
-      towers of the same shape**: 199x chance, recall@1 0.1774, median rank 26 of 5,000.
-      The untrained control sits a little above chance rather than on it, because the CBOW
-      embeddings under the random GRU are trained and carry real word similarity; it is
-      seeded now, so it is the same number every run rather than drifting per invocation.
-      Triplet loss on the same triples, same ten
-      epochs, same frozen embeddings reaches 0.1250, so the notebook's threefold claim
-      reproduces (3.19x here against its 3.06x, both arms higher on the larger corpus).
-      `make evaluate` prints all of it from the shipped checkpoint, and the towers are on
-      the Hub.
+      triples. **Recall@10 0.6728 against a 0.0020 chance floor and 0.0022 for untrained
+      towers of the same shape**: 336x chance, recall@1 0.3778, median rank 3 of 5,000.
+      Verified through the container against the 105,052-document index compose builds,
+      not only in-process. `make evaluate` prints all of it from the shipped checkpoint.
 
-      **Triplet's final loss is a hundred times lower than in-batch's and its retrieval is
-      three times worse** -- 0.0108 from an untrained 0.2004, against 1.0827 from an
-      untrained 5.0689. A satisfied margin contributes exactly zero, so an easy negative
+      | loss | recall@10 | recall@1 | median rank | best loss |
+      |---|--:|--:|--:|--:|
+      | triplet | 0.3047 | 0.0846 | 35 | 0.0025 |
+      | **in-batch** | **0.6728** | **0.3778** | **3** | 0.4054 |
+
+      **Triplet's final loss is 159x lower than in-batch's and its retrieval is less than
+      half as good.** A satisfied margin contributes exactly zero, so an easy negative
       drives triplet's loss toward nothing while teaching the towers nothing. Never rank
       checkpoints on a loss compared across objectives. Same lesson as captioning's, from
-      the opposite direction.
+      the opposite direction. Pairwise accuracy nearly hid the whole effect too: 0.9770
+      against 0.9690, on a metric whose chance is 0.5.
 
-      **Pairwise accuracy nearly hid the whole effect**: 0.9470 against 0.9037, on a metric
-      whose chance is 0.5. Recall@K against a fixed pool is what separated them, which is
-      why the harness builds a 5,000-document pool with exactly one right answer per query.
+      The published post's 3.06x reproduces as 2.21x here -- direction and order of
+      magnitude, not the exact ratio, on a different corpus and pool. Do not quote "3x".
 
-      **The vocabulary is the next ceiling, and that is measured too.** 1,506 of the 5,034
-      held-out queries contain a word the text8-trained vocabulary never saw, and they
-      score **0.2477 recall@10 against 0.4626** for the 3,528 it covers -- median rank 76
-      against 15. `tokenize_text` maps an unknown word to token 0, which is also the
-      padding id, so an out-of-vocabulary word reaches the GRU indistinguishable from
-      padding. Every sampled miss is one missing content word (`walgreens`, `furuncle`,
-      `urinalysis`) and in each case it is the most discriminative word in the query. That
-      is a bigger lever than anything left in the loss, and it points at subword
-      tokenization or a vocabulary built from the corpus being searched -- the
-      representation, which is where content-scoring also found its ceiling.
-      `make evaluate` reports the split, so the README cannot drift from it.
+      **The vocabulary is the next ceiling, and it is a property of the representation.**
+      1,506 of 5,034 held-out queries contain a word the text8-trained vocabulary never
+      saw, and they score **0.4309 recall@10 against 0.7761** for the 3,528 it covers --
+      median rank 20 against 2. Under triplet loss the same split is 0.3679 against
+      0.1567, so **changing the objective moved both columns and closed none of the gap**.
+      `tokenize_text` maps an unknown word to token 0, which is also the padding id, so an
+      out-of-vocabulary word reaches the GRU indistinguishable from padding. Subword
+      tokenization, or a vocabulary built from the corpus being searched.
 
-      Three artifacts that have to ship together were not: the vocabulary, the CBOW
+      **The result above is the second attempt, and the first one was wrong.** The first
+      run tokenized the triples *before* rebuilding the vocabulary, so
+      `tokenized_triples.json` carried ids from the old 7,692-word mapping (max id 7,688)
+      while the frozen CBOW matrix the towers index was built for 63,642 words. Every
+      embedding lookup returned a different word's vector.
+
+      It was invisible everywhere it was checked. Training and evaluation read the same
+      wrong mapping, so the loss fell, recall@10 reproduced at 0.3983 across separate
+      runs, `make evaluate` agreed with itself, 31 unit tests passed and `make check` was
+      green. **Only serving broke**, because `/query` tokenizes text live and therefore
+      used the *right* mapping: in a container the correct document for "where was movie
+      the birds filmed" sat in the index scoring cosine 0.049 against its own query while
+      unrelated passages ranked above it. Health checks said `checkpoint_loaded: true`
+      throughout. Verify by running, and verify the artifacts agree with *each other* --
+      "it pulled what I published" is not the same as "what I published is consistent".
+
+      Fixing it was worth 40% of the achievable recall: 0.3983 to 0.6728.
+
+      The guard is exact, because a bound does not work: the stale ids all ran below 7,692
+      and so fitted inside the larger vocabulary perfectly while naming different words.
+      The file keeps each document's text beside its ids, so verification recomputes them
+      -- 200 sampled documents, compared, and it raises rather than warns. Checked against
+      the real stale file (rejected, 200/200 disagreed) and the rebuilt one (accepted).
+      New files also record a `vocabulary_fingerprint`. Same bug class as the
+      word-embeddings `word_to_index` / `word_to_lemma_index` mismatch already noted above;
+      it recurred because nothing tied the ids to the mapping that made them.
+
+      Three artifacts have to ship together and did not: the vocabulary, the CBOW
       embedding matrix and the towers. The tokenizer and tokenize stages wrote their
       outputs locally and uploaded nothing, so a rebuild left the Hub holding a 63,642-row
-      CBOW checkpoint beside a 7,692-word vocabulary. Both stages publish now. The tower
-      half of that mismatch is an honest 503; the *triples* half is worse and has no
-      symptom at all -- stale ids index documents against a vocabulary the towers never
-      saw, and nothing errors.
+      CBOW checkpoint beside a 7,692-word vocabulary. Both stages publish now.
+
 - [x] `rlhf-ppo` -- `make train-loop` exists and the before/after is reported. 60 PPO
       steps on real `CarperAI/openai_summarize_tldr` prompts, 16 held-out prompts never
       trained on, baseline before any gradient step, fresh adapter:
@@ -881,8 +901,9 @@ wasted afternoon and a wrong write-up.
 Leads, strongest first, with what is already known:
 
 - **`vector-search-retrieval`: the vocabulary, measured.** 1,506 of 5,034 held-out queries
-  contain a word the text8-trained vocabulary never saw, and they score **0.2477 recall@10
-  against 0.4626** for the 3,528 it covers. `tokenize_text` maps an unknown word to token
+  contain a word the text8-trained vocabulary never saw, and they score **0.4309 recall@10
+  against 0.7761** for the 3,528 it covers -- median rank 20 against 2, and swapping the
+  loss function moved both columns without closing the gap. `tokenize_text` maps an unknown word to token
   0, which is also the padding id, so the most discriminative word in a query arrives
   indistinguishable from padding. Subword tokenization, or building the vocabulary from MS
   MARCO rather than from Wikipedia. The towers do not change. Biggest known lever in the

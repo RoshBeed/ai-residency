@@ -174,7 +174,7 @@ working interface generated from its own OpenAPI schema.
 
 | Service | Resident once loaded | Notes |
 |---|--:|---|
-| `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically. recall@10 0.3983 vs 0.0020 chance |
+| `vector-search-retrieval` | 0.3 GB | Lightest. Pulls in Redis automatically. recall@10 0.6728 vs 0.0020 chance |
 | `vit-classifier` | 0.45 GB | Draw a digit, see the real patch grid |
 | `vit-seq2seq` | 0.45 GB | Multi-digit, streams tokens as it decodes |
 | `content-scoring` | 1.3 GB | |
@@ -262,7 +262,7 @@ Each links to its own write-up — architecture, method, results and references.
 |---|---|---|
 | [Word embeddings](services/word-embeddings) | CBOW and skip-gram word2vec with negative sampling, from scratch | The whole unsupervised loop written directly — vocabulary, subsampling, negative sampling, training — with no `gensim` and no pretrained vectors |
 | [Content scoring](services/content-scoring) | Regression head over frozen CBOW embeddings | Transfer learning onto an encoder this repo produced itself; the head is the only thing trained |
-| [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), in-batch negatives | The offline/online split a real retrieval system has: documents encoded once into an ANN index, queries encoded per request — recall@10 0.3983 against 0.0020 chance, and 0.1250 for triplet loss on the same data |
+| [Dual-encoder retrieval](services/vector-search-retrieval) | Two-tower retrieval (CBOW + GRU encoders), in-batch negatives | The offline/online split a real retrieval system has: documents encoded once into an ANN index, queries encoded per request — recall@10 0.6728 against 0.0020 chance, and 0.3047 for triplet loss on the same data |
 | [ViT classifier](services/vit-classifier) | Encoder-only ViT: patch embedding, self-attention, encoder blocks | Attention written out rather than called — no `nn.TransformerEncoderLayer` anywhere |
 | [ViT seq2seq](services/vit-seq2seq) | Encoder–decoder ViT: causal decoder, cross-attention, per-sequence EOS | The decoder half — causal masking and cross-attention — sharing one encoder with the classifier through `libs/vision-transformer` |
 | [Image captioning](services/multimodal-captioning) | CLIP vision encoder → adapter → Qwen3 decoder | Late fusion across two frozen pretrained backbones, with only the projection adapter trained, and tokens streamed to the browser as they are generated |

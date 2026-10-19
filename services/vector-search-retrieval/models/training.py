@@ -42,7 +42,11 @@ from ai_residency_common import (
     save_resume,
     set_seed,
 )
-from cbow.vocabulary import build_embedding_layer
+from cbow.vocabulary import (
+    build_embedding_layer,
+    check_tokenized_against_vocabulary,
+    load_words_to_ids,
+)
 from config import Config
 from data_prep.tokenize_triples import Triple
 from models.losses import in_batch_loss, triplet_batch_loss
@@ -102,7 +106,16 @@ def load_triples(config: Config) -> dict[str, list[Triple]]:
             f"{path} not found. Build the triples first with `make train-triples`."
         )
     with path.open() as handle:
-        triples: dict[str, list[Triple]] = json.load(handle)
+        payload = json.load(handle)
+
+    # Verified, not assumed. These ids index the frozen CBOW embedding matrix, so a file
+    # built against a different vocabulary trains the towers on a different word at every
+    # position -- and converges anyway, which is why this has to raise rather than warn.
+    check_tokenized_against_vocabulary(payload, load_words_to_ids(config), str(path))
+
+    triples: dict[str, list[Triple]] = {
+        split: rows for split, rows in payload.items() if isinstance(rows, list)
+    }
     return triples
 
 

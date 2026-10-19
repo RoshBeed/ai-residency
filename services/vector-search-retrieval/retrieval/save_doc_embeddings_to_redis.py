@@ -15,7 +15,11 @@ import torch
 from tqdm import tqdm
 
 from ai_residency_common import get_logger, load_model, resolve_required
-from cbow.vocabulary import build_embedding_placeholder
+from cbow.vocabulary import (
+    build_embedding_placeholder,
+    check_tokenized_against_vocabulary,
+    load_words_to_ids,
+)
 from config import Config
 from models.towers import GruTower, encode
 from retrieval.query_engine import (
@@ -76,7 +80,14 @@ def unique_documents(config: Config) -> list[tuple[list[int], str]]:
     )
 
     with path.open() as handle:
-        triples = json.load(handle)
+        payload = json.load(handle)
+
+    # The index is only searchable if its vectors and the live query encoding share a
+    # vocabulary. They did not: documents were embedded from ids built against a
+    # 7,692-word vocabulary while `/query` tokenized text against a 63,642-word one, so
+    # every search ranked the wrong things and nothing errored.
+    check_tokenized_against_vocabulary(payload, load_words_to_ids(config), str(path))
+    triples = {split: rows for split, rows in payload.items() if isinstance(rows, list)}
 
     seen: set[tuple[int, ...]] = set()
     documents: list[tuple[list[int], str]] = []

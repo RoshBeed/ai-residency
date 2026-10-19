@@ -12,7 +12,7 @@ from typing import Any
 from tqdm import tqdm
 
 from ai_residency_common import get_logger, push_checkpoint
-from cbow.vocabulary import load_words_to_ids
+from cbow.vocabulary import load_words_to_ids, vocabulary_fingerprint
 from config import Config
 from data_prep.generate_triples import SPLITS
 
@@ -51,6 +51,9 @@ def tokenize_triples(config: Config) -> dict[str, list[Triple]]:
     with config.triples_path.open() as handle:
         triples = json.load(handle)
 
+    fingerprint = vocabulary_fingerprint(words_to_ids)
+    logger.info("Tokenizing against vocabulary %s (%d words)", fingerprint, len(words_to_ids))
+
     tokenized: dict[str, list[Triple]] = {split: [] for split in SPLITS}
     for split in SPLITS:
         for triple in tqdm(triples[split], desc=f"Tokenizing {split}"):
@@ -67,8 +70,16 @@ def tokenize_triples(config: Config) -> dict[str, list[Triple]]:
         logger.info("%s: %d tokenized triples", split, len(tokenized[split]))
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
+    # The fingerprint travels with the ids. Without it a stale file is undetectable:
+    # these ids were once written against a 7,692-word vocabulary and then read against
+    # a 63,642-word one, so every embedding lookup returned a different word's vector.
+    # Training still converged and recall@10 still reproduced, because training and
+    # evaluation shared the same wrong mapping -- the only thing that broke was serving,
+    # which tokenizes query text live and therefore used the *right* mapping.
+    payload: dict[str, Any] = dict(tokenized)
+    payload["vocabulary_fingerprint"] = fingerprint
     with config.tokenized_triples_path.open("w") as handle:
-        json.dump(tokenized, handle, indent=2)
+        json.dump(payload, handle, indent=2)
     logger.info("Wrote %s", config.tokenized_triples_path)
 
     # Published for the same reason the vocabulary is: these token ids only mean

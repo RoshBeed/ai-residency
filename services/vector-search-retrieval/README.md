@@ -5,17 +5,19 @@
 - **What it is:** a dual-encoder retrieval system — a query tower and a document tower trained
   end-to-end with in-batch negatives, with every passage embedded once and indexed for approximate
   nearest-neighbour search.
-- **Result:** **recall@10 of 0.3983** against a 5,000-document pool, where chance is 0.0020 and
-  untrained towers score 0.0018 — 199x chance, on 88,523 MS MARCO triples. Trained with triplet
-  loss instead, the same towers on the same data for the same ten epochs reach 0.1250 (§6).
+- **Result:** **recall@10 of 0.6728** against a 5,000-document pool, where chance is 0.0020 and
+  untrained towers score 0.0022 — 336x chance, on 88,523 MS MARCO triples, with the median query's
+  own document coming back third. Trained with triplet loss instead, the same towers on the same
+  data for the same ten epochs reach 0.3047 (§6). Verified through the container against a
+  105,052-document index, not only in-process.
 - **Built:** the full offline/online split — CBOW embeddings, both training objectives behind one
   config field, a recall@K harness against a fixed document pool, and Redis/RediSearch HNSW
   indexing for live queries.
 - **What I'd do next:** fix the vocabulary, not the loss. 30% of real queries contain a word the
-  text8-trained vocabulary never saw, and those score 0.2477 recall@10 against 0.4626 for queries
-  it covers (§6) — a bigger lever than anything left in the objective. Then report Recall@K/MRR
-  against a BM25 baseline, which is the comparison that says whether any of this beats term
-  matching.
+  text8-trained vocabulary never saw, and those score 0.4309 recall@10 against 0.7761 for queries
+  it covers (§6) — and swapping the objective moved both columns without closing the gap, so it is
+  a property of the representation. Then report Recall@K/MRR against a BM25 baseline, which is the
+  comparison that says whether any of this beats term matching.
 
 This repo builds a neural document retrieval system: given a search query, find the most relevant
 passage in a corpus. I trained a query tower and a document tower on real search queries
@@ -404,55 +406,56 @@ The shipped checkpoint trains on **88,523 MS MARCO triples** for ten epochs and 
 | | recall@10 | recall@1 | median rank | pairwise accuracy |
 |---|--:|--:|--:|--:|
 | chance | 0.0020 | 0.0002 | 2,500 | 0.5000 |
-| untrained towers, same shape | 0.0028 | 0.0006 | 2,573 | 0.4960 |
-| **shipped (in-batch negatives)** | **0.3983** | **0.1774** | **26** | **0.9470** |
+| untrained towers, same shape | 0.0022 | 0.0004 | 2,471 | 0.5240 |
+| **shipped (in-batch negatives)** | **0.6728** | **0.3778** | **3** | **0.9770** |
 
 Recall@10 is the metric that matters, and the pool is what makes it mean anything. Each held-out
 query is ranked against 5,000 distinct documents with exactly one correct answer among them, so
-chance is 10/5000 = 0.0020 and the shipped towers are 199x it.
+chance is 10/5000 = 0.0020 and the shipped towers are **336x** it. The median query's own document
+comes back third.
 
 The untrained row is the control that makes the number readable: the same architecture over the
-same frozen CBOW embeddings, with only the GRU weights random. It lands at 0.0028 against a 0.0020
+same frozen CBOW embeddings, with only the GRU weights random. It lands at 0.0022 against a 0.0020
 chance floor — a touch above chance rather than exactly on it, because the embeddings underneath
 are trained and carry real word similarity even when the recurrence on top is noise. Those towers
 are seeded, so that floor is the same number on every run.
 
 **Pairwise accuracy would have hidden most of this.** Asking only whether a query is closer to its
 positive than to its one sampled negative starts at 50% chance, and on that metric the two
-objectives below are 0.9470 and 0.9037 — nearly tied. Against a real pool they differ threefold.
-A retrieval metric has to make the model pick its answer out of a crowd.
+objectives below are 0.9770 and 0.9690 — a gap of 0.008. Against a real pool one finds its answer
+in the top ten twice as often as the other, and first place four times as often. A retrieval metric
+has to make the model pick its answer out of a crowd.
 
-### What 0.3983 looks like
+### What 0.6728 looks like
 
-An aggregate hides the shape of the result, so here is the rank every held-out query's own
-document actually reaches, and two queries from each end. Both examples below are chosen to match
-the measured hit rate rather than picked — the first four queries in dataset order happen to be
-four misses, which understates the model as much as four hits would flatter it.
+An aggregate hides the shape of a result, so here is where every held-out query's own document
+actually lands, and one query from each end:
 
 | | share of 5,034 held-out queries |
 |---|--:|
-| rank 1 (recall@1 0.1774) | 893 |
-| ranks 1–10 (recall@10 0.3983) | 2,005 |
-| ranks 11–100 | 1,375 |
-| past rank 100 | 1,654 |
+| rank 1 (recall@1 0.3778) | 1,902 |
+| ranks 1–10 (recall@10 0.6728) | 3,387 |
+| past rank 100 | 791 |
 
-Median rank is 26 of 5,000.
+Median rank is 3 of 5,000.
+
+Verified through the container rather than only in-process, against the **105,052**-document index
+the compose stack builds — twenty times the evaluation pool:
 
 ```
-query: "where was movie the birds filmed"        (its own document ranks 1 of 5,000)
-  1. 0.5105  "The Birds filming location: the Schoolhouse: Bodega Lane, Bodega, Northern..."  <- correct
-  2. 0.4683  "The First Battle of Bull Run was the First major battle of the Civil War..."
-  3. 0.4592  "On July 31, 2014, scientists reported details of the evolution of birds..."
+query: "where was movie the birds filmed"
+  1. 0.2956  "Batman is a fictional superhero appearing in American comic books..."
+  2. 0.2980  "The movie is being shot in Detroit, where the Argo star has been..."
+  3. 0.3062  "The Birds filming location: the Schoolhouse: Bodega Lane, Bodega..."  <- correct
 
-query: "walgreens store sales average"            (its own document ranks 784 of 5,000)
-  1. 0.3891  "Employees of Air India are likely to undergo another round of pay cuts..."
-  2. 0.3793  "Best Answer: Hourly rate at Verizon is between $11 and $14 for basic Sales Reps..."
-  3. 0.3711  "Typically a mobile notary goes to anywhere from one to eight places per day..."
+query: "what can urinalysis detect"
+  1. 0.4469  "A thermocouple produces a voltage when the temperature of one..."
+  2. 0.4991  "Clean the filter and turn the thermostat up to try the heater again..."
 ```
 
-The miss is the informative one. Every document it returned is about pay, so the towers found the
-*topic* and not the answer — and the reason is visible in the query: `walgreens` is not in the
-vocabulary.
+Those are Redis cosine *distances*, so lower ranks first. The first query finds its answer third out
+of 105,052. The second finds nothing related, and the reason is in the next section: `urinalysis` is
+not in the vocabulary, so the query that reached the tower was effectively "what can detect".
 
 ### The vocabulary is the next ceiling, not the objective
 
@@ -461,31 +464,32 @@ traffic. `tokenize_text` maps an unknown word to token 0, which is also the padd
 out-of-vocabulary word does not merely lose its meaning — it arrives at the GRU indistinguishable
 from padding. Splitting the held-out queries on whether that happens:
 
-| | queries | recall@10 | recall@1 | median rank |
-|---|--:|--:|--:|--:|
-| every word in the vocabulary | 3,528 | **0.4626** | 0.2194 | 15 |
-| one or more words unknown | 1,506 | **0.2477** | 0.0790 | 76 |
+| | queries | recall@10 | median rank |
+|---|--:|--:|--:|
+| every word in the vocabulary | 3,528 | **0.7761** | **2** |
+| one or more words unknown | 1,506 | **0.4309** | **20** |
 
-**Thirty percent of real queries contain a word text8 never used, and those score barely half as
-well.** The three sampled misses above are each a single missing content word — `walgreens`,
-`furuncle`, `urinalysis` — and in each case it is the most discriminative word in the query.
+**Thirty percent of real queries contain a word text8 never used, and those find their answer
+little more than half as often.** Median rank 2 against 20 is the sharper way to see it. The same
+split under triplet loss is 0.3679 against 0.1567, so it is a property of the representation rather
+than of the objective — changing the loss moved both columns and closed none of the gap.
 
 That is a bigger lever than anything left in the loss function, and it points somewhere specific:
 subword tokenization, or building the vocabulary from the corpus being searched rather than from
 Wikipedia. Both are changes to the *representation*, which is where `content-scoring` also found
 its ceiling after exhausting its architecture.
 
-### In-batch negatives beat triplet loss threefold
+### In-batch negatives beat triplet loss two to one
 
 Both objectives are in `models/losses.py` behind one config field, and the towers are untouched
 between them, so the comparison changes only where the negatives come from. Same 88,523 triples,
 same ten epochs, same frozen embeddings, same held-out split, both scored by the same
 `make evaluate`:
 
-| loss | recall@10 | against chance | pairwise |
-|---|--:|--:|--:|
-| triplet, one sampled negative | 0.1250 | 62.5x | 0.9037 |
-| **in-batch negatives** | **0.3983** | **199x** | **0.9470** |
+| loss | recall@10 | recall@1 | median rank | pairwise |
+|---|--:|--:|--:|--:|
+| triplet, one sampled negative | 0.3047 | 0.0846 | 35 | 0.9690 |
+| **in-batch negatives** | **0.6728** | **0.3778** | **3** | **0.9770** |
 
 Triplet loss scores one sampled negative per query, so most of a batch does no work. In-batch
 negatives treat every other document in the batch as a negative for one extra matrix multiply:
@@ -493,18 +497,21 @@ with a batch of 64 each query is compared against 63 wrong answers instead of on
 similarities goes straight into a cross-entropy. The gradient sees which wrong answers were nearly
 chosen, which is the information triplet loss throws away by sampling.
 
-**The loss numbers point the opposite way, and that is the lesson.** Triplet converges to 0.0108
-from an untrained 0.2004, while in-batch sits at 1.0827 from an untrained 5.0689 — triplet's final
-loss is a hundred times lower, and its retrieval is three times worse. The two losses are not on a
-common scale, so neither one ranks the other: a margin that is already satisfied contributes
+Twice the recall@10, and **4.5x the recall@1** — 0.3778 against 0.0846. The median query's own
+document comes back 3rd under in-batch negatives and 35th under triplet.
+
+**The loss numbers point the opposite way, and that is the lesson.** Triplet converges to 0.0025
+from an untrained 0.2025, while in-batch sits at 0.4054 from an untrained 5.0983 — triplet's final
+loss is **159 times lower** and its retrieval is less than half as good. The two losses are not on
+a common scale, so neither one ranks the other: a margin that is already satisfied contributes
 exactly zero, which is why a well-separated easy negative drives triplet's loss toward nothing
 while teaching the towers nothing. Rank checkpoints on the retrieval metric, never on a loss
 compared across objectives.
 
-This reproduces the [published
-post](https://roshbeed.com/posts/2026-06-15-two-tower-search/), which measured 0.2856 against
-0.0932 on 78,964 pairs — a 3.06x ratio against the 3.19x here. Both arms score higher on this
-run's larger corpus and rebuilt vocabulary; the effect is the same size.
+The [published post](https://roshbeed.com/posts/2026-06-15-two-tower-search/) measured 0.2856
+against 0.0932 on 78,964 pairs, a 3.06x ratio where this run gets 2.21x. The direction and the
+order of magnitude reproduce; the exact ratio does not, and it is a different corpus, vocabulary
+and document pool, so it should not be expected to.
 
 ## 7. Related Work
 
