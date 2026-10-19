@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
 from ai_residency_common import get_logger
@@ -34,6 +34,9 @@ class MNISTDataset:
         num_workers: int = 4,
         download: bool = True,
         seed: int = 42,
+        augment_translate: float = 0.25,
+        augment_scale: tuple[float, float] = (0.6, 1.4),
+        augment_degrees: float = 12.0,
     ) -> None:
         """Load MNIST and build the loaders.
 
@@ -45,6 +48,10 @@ class MNISTDataset:
             num_workers: DataLoader worker processes.
             download: Fetch MNIST if the cache is empty.
             seed: Seed for the train/validation split.
+            augment_translate: Largest shift, as a fraction of the frame, applied to
+                training digits.
+            augment_scale: Scale range applied to training digits.
+            augment_degrees: Rotation range, plus or minus, applied to training digits.
         """
         self.data_dir = Path(data_dir)
         self.image_size = image_size
@@ -55,9 +62,34 @@ class MNISTDataset:
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
+        # Validation and test see MNIST as it ships, so the headline number stays
+        # comparable with every published MNIST result.
         self.transform = transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,)),
+            ]
+        )
+
+        # Training does not. **MNIST is size-normalised and centred by centre of mass**:
+        # every digit's ink is scaled into a 20x20 box inside the 28x28 frame and moved
+        # so its mass sits in the middle. Nothing a person draws has either property.
+        # `serving/api.py` plain-resizes whatever arrives, so a digit drawn off-centre
+        # reaches a model that has never seen one -- measured on the checkpoint trained
+        # without this, at 60% fill: 96.5% centred, 66.5% a quarter of the way to a
+        # corner, **24.5% halfway**, 29.0% pushed to the top. Position was not a
+        # nuisance the model had learned to ignore; it was a constant it had learned to
+        # rely on.
+        self.train_transform = transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.RandomAffine(
+                    degrees=augment_degrees,
+                    translate=(augment_translate, augment_translate),
+                    scale=augment_scale,
+                    fill=0,
+                ),
                 transforms.ToTensor(),
                 transforms.Normalize((0.1307,), (0.3081,)),
             ]
@@ -67,22 +99,28 @@ class MNISTDataset:
         self._create_data_loaders()
 
     def _load_datasets(self, download: bool) -> None:
-        """Load MNIST and split the training set."""
-        full_train_dataset = datasets.MNIST(
+        """Load MNIST and split the training set.
+
+        The same underlying images are opened twice, under the two transforms, and the
+        split indexes into whichever copy that half should see -- `random_split` cannot
+        do this, because it hands both halves one dataset and so one transform. The
+        indices come from a seeded permutation, so the split is identical between a
+        training run and a later evaluation however the global RNG has been used.
+        """
+        augmented = datasets.MNIST(
+            str(self.data_dir), train=True, download=download, transform=self.train_transform
+        )
+        plain = datasets.MNIST(
             str(self.data_dir), train=True, download=download, transform=self.transform
         )
         self.test_dataset = datasets.MNIST(
             str(self.data_dir), train=False, download=download, transform=self.transform
         )
 
-        train_size = int(self.train_split * len(full_train_dataset))
-        val_size = len(full_train_dataset) - train_size
-
-        self.train_dataset, self.val_dataset = random_split(
-            full_train_dataset,
-            [train_size, val_size],
-            generator=torch.Generator().manual_seed(self.seed),
-        )
+        train_size = int(self.train_split * len(augmented))
+        order = torch.randperm(len(augmented), generator=torch.Generator().manual_seed(self.seed))
+        self.train_dataset = Subset(augmented, order[:train_size].tolist())
+        self.val_dataset = Subset(plain, order[train_size:].tolist())
         self.test_size: int = len(self.test_dataset)
 
         logger.info(

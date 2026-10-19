@@ -5,8 +5,10 @@
 - **What it is:** an encoder-only Vision Transformer — patch embedding, multi-head self-attention,
   transformer encoder blocks — written from scratch in raw PyTorch, with no
   `torch.nn.Transformer` shortcuts, classifying a single MNIST digit.
-- **Result:** **98.86% on the held-out MNIST test set** (9,886 of 10,000), against 11.35% for
-  always guessing the most common digit. Trained from scratch, no pretraining.
+- **Result:** **99.52% on the held-out MNIST test set**, against 11.35% for always guessing the
+  most common digit. Trained from scratch, no pretraining — and it reads a digit drawn anywhere
+  on the frontend's canvas, at any size, which the previous checkpoint did not: that one scored
+  **24.5% on a digit drawn halfway to a corner** (§6).
 
 An image is not a sequence, so the first thing a Vision Transformer has to do is invent one: cut
 the image into fixed-size patches, project each into a vector, and hand the transformer a sequence
@@ -191,30 +193,56 @@ make -C deploy down             # what this runs: docker compose down
 The numbers below come from loading the shipped checkpoint and running real inference on the MNIST
 test set, not from re-describing the training script.
 
-The shipped checkpoint is the best of 55 epochs, early-stopped after 15 without improvement
-against a 100-epoch cap. Validation accuracy peaks at epoch 40:
-
-| epoch | train loss | train acc | val loss | val acc |
-|---|--:|--:|--:|--:|
-| 1 | 1.1621 | 62.33% | 0.4421 | 89.01% |
-| 10 | 0.0542 | 98.29% | 0.0811 | 97.78% |
-| 20 | 0.0216 | 99.33% | 0.0715 | 98.42% |
-| **40** | 0.0064 | 99.81% | 0.0727 | **98.85%** |
-| 55 | 0.0028 | 99.93% | 0.0845 | 98.85% |
+The shipped checkpoint is the best of 97 epochs, early-stopped after 15 without improvement
+against a 100-epoch cap. Training digits are randomly translated, scaled and rotated; validation
+and test see MNIST exactly as it ships, so the headline stays comparable with every published
+MNIST number.
 
 Against the actual MNIST **test** set — 10,000 held-out images, never seen during training — that
-checkpoint gets **98.86% accuracy (9,886 / 10,000)**.
+checkpoint gets **99.52% accuracy**. Training accuracy stays near 98.6% because the training
+digits are the warped ones; the model is scored on the clean set it never saw.
 
 The baseline matters for reading that. Always guessing the most common digit in the same test set
-(digit 1, 1,135 of 10,000) gets 11.35%, so the classifier clears it by 8.7x. The more useful
-comparison is against itself one epoch in: 89.01% validation at epoch 1 against 98.85% at epoch
-40 is an error rate of 10.99% down to 1.15%, for 51 minutes of training on an M1 Max — 56 seconds
-an epoch over 1.19M parameters.
+(digit 1, 1,135 of 10,000) gets 11.35%, so the classifier clears it by 8.8x. Two other comparisons
+are more useful. Against itself one epoch in, the error rate goes from about 11% to 0.48%. And
+against the previous checkpoint, trained on MNIST as it ships: 98.86%, which sounds close until
+you draw something.
 
-Validation loss bottoms at epoch 23 and drifts up while accuracy keeps improving to epoch 40,
-which is the usual story of a model getting more confident about what it already has right and
-more wrong about the rest. Accuracy is what ranks the checkpoint here, so that drift costs nothing;
-it does mean loss is the wrong thing to early-stop on for this service.
+### MNIST is centred and size-normalised. Nothing a person draws is.
+
+Every MNIST digit has its ink scaled into a 20x20 box and shifted so its centre of mass sits in
+the middle of the 28x28 frame. The frontend offers a 280x280 canvas, and `serving/api.py`
+plain-resizes whatever arrives — no re-centring, no size normalisation. So position and scale,
+which are constants in the training set, are free variables in the only input a person produces.
+
+A model trained on MNIST as it ships does not learn to ignore them. It learns to rely on them.
+Taking real MNIST **test** digits, cropping each to its ink and redrawing it on a 280px canvas, so
+the only thing that changes is where and how large it was drawn:
+
+| drawn at 60% fill | before | after |
+|---|--:|--:|
+| centred | 96.5% | 99.8% |
+| 25% toward a corner | 66.5% | 99.8% |
+| **50% toward a corner** | **24.5%** | **100.0%** |
+| pushed left | 51.0% | 99.0% |
+| pushed up | 29.0% | 99.5% |
+
+| ink fills this much of the canvas | before | after |
+|---|--:|--:|
+| 45% | 84.0% | 99.0% |
+| 60% | 96.5% | 99.8% |
+| 71% — MNIST's own 20-in-28 ratio | 95.8% | 100.0% |
+| 90% | 93.8% | 99.8% |
+| 98% | 89.2% | 100.0% |
+
+The fix is a `RandomAffine` on the training transform — translate up to 25% of the frame, scale
+0.6 to 1.4, rotate plus or minus 12 degrees — and it is free: the clean test number went **up**,
+98.86% to 99.52%, because augmentation regularises as well as generalises.
+
+One implementation note, because it is easy to get wrong: `random_split` hands both halves of a
+split one dataset and therefore one transform, so validation would have been augmented too. MNIST
+is opened twice here, once under each transform, and a seeded permutation indexes into whichever
+copy that half should see.
 
 The 114 errors are not concentrated anywhere interesting:
 

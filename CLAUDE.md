@@ -795,11 +795,25 @@ Status:
       naturally lower than over Qwen3's 151,936, so the only number that means anything
       across a decoder swap is agreement.
 
-- [x] `vit-classifier` -- **98.86% on the 10,000-image MNIST test set** (9,886 correct)
-      against an 11.35% majority-class baseline, 8.7x. Was 91.78% from a checkpoint trained
-      for *one* epoch, which nobody had ever followed up: the config already said 100
-      epochs with patience 15 and the run simply had not been done. 55 epochs, early-stopped,
-      best at 40, 51 minutes on an M1 Max at 56s an epoch. Error rate 10.99% to 1.15%.
+- [x] `vit-classifier` -- **99.52% on the 10,000-image MNIST test set** against an 11.35%
+      majority-class baseline. Two separate lifts. First, 91.78% to 98.86% by running the
+      training the config already specified: it said 100 epochs with patience 15 and the
+      shipped checkpoint came from a one-epoch smoke run nobody followed up. Then 98.86% to
+      99.52% by augmenting position and scale, which was done for robustness and improved
+      the clean benchmark as a side effect.
+
+      **MNIST is centred by centre of mass and size-normalised into a 20x20 ink box; nothing
+      a person draws is either.** `serving/api.py` plain-resizes whatever the 280x280 canvas
+      sends, so position and scale are constants in training and free variables in the only
+      input a human produces -- and the model had learned to rely on them rather than ignore
+      them. Real MNIST test digits cropped to their ink and redrawn on the canvas, at 60%
+      fill: centred 96.5%, a quarter of the way to a corner 66.5%, **halfway 24.5%**, pushed
+      up 29.0%. After a `RandomAffine` on the training transform (translate 25%, scale
+      0.6-1.4, rotate 12 degrees): 99.8% / 99.8% / **100.0%** / 99.5%.
+
+      `random_split` hands both halves of a split one dataset and so one transform, which
+      would have augmented validation too. MNIST is opened twice, once per transform, and a
+      seeded permutation indexes into whichever copy each half should see.
 
       Two things had to be fixed before the run was worth starting. It had no resume, on a
       machine that dies on OOM -- it uses `resume_from` / `save_resume` / `resume_path_for`
@@ -898,7 +912,7 @@ Status:
       `max_jitter = spacing // 2` to 0: the positional jitter the dataset advertised had
       never moved anything.
 
-      96.53% per digit against the sibling classifier's 98.86% on single clean digits. The
+      96.53% per digit against the sibling classifier's 99.52% on single clean digits. The
       two share an encoder; this one reads glyphs that are sheared, rotated, rescaled and
       placed anywhere on the canvas at any size, which is a harder problem than a clean
       centred 28x28, and the gap is the price of that range.
@@ -1168,12 +1182,13 @@ Leads, strongest first, with what is already known:
   decodes greedily and measured `no_repeat_ngram_size=3` as a wash; `rlhf-ppo` reports both
   greedy and seeded-sampled reward on purpose. This was the one place a sampled decode was
   being read as a deterministic answer.
-- **`vit-classifier`: done.** It was the cheapest lever in the repo and it paid: one epoch
-  at 91.78% to 55 epochs at **98.86%**, an error rate of 8.22% down to 1.14%, for 51 minutes
-  and no change to the architecture. The lever was not a hyperparameter at all -- the config
-  already specified 100 epochs with patience 15, and the shipped checkpoint came from a
-  one-epoch smoke run that was never followed up. **Check what the config already says
-  before tuning it.**
+- **`vit-classifier`: done, twice.** One epoch at 91.78% to **99.52%**, with no change to
+  the architecture. The first lever was not a hyperparameter at all -- the config already
+  specified 100 epochs with patience 15, and the shipped checkpoint came from a one-epoch
+  smoke run that was never followed up, so **check what the config already says before
+  tuning it.** The second was position and scale augmentation, taken on for robustness
+  against hand-drawn input and worth +0.66 on the clean benchmark as well: a digit drawn
+  halfway to a corner went 24.5% to 100.0%.
 - **`whisper-fine-tuning`: done.** `serve_num_steps` is 3. The full curve at one through
   five steps says five was the only count doing real damage, and three scores *below* the
   base model's WER while keeping a streamed trajectory. See the status entry above.
