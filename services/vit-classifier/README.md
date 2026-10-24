@@ -17,6 +17,26 @@ the transformer architecture applied unchanged to a new modality.
 
 ## Quickstart
 
+No clone, no build, no credentials. The published image pulls its own checkpoint from the
+Hugging Face Hub at startup:
+
+```bash
+docker run --rm -d --pull always --name vit-classifier -p 8000:8000 \
+  roshb/ai-residency-vit-classifier-serve
+
+# /ready answers 503 until the weights are loaded, so retry rather than sleep
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors http://localhost:8000/ready
+
+open http://localhost:8000/docs   # the request shapes, and a form to post them
+
+docker rm -f vit-classifier
+```
+
+To run it with its Streamlit page instead, see
+[With the UI](../../README.md#with-the-ui) -- same image, one more container.
+
+From the source, with the workspace installed:
+
 ```bash
 # one venv for the whole workspace
 make install

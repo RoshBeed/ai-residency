@@ -11,6 +11,19 @@ Kubernetes).
 Every image is public and every checkpoint resolves from the Hugging Face Hub at startup, so
 none of this needs credentials, a GPU, or a build.
 
+Four ways in, each adding a tool only where it earns one:
+
+| what you want | what it takes | where |
+|---|---|---|
+| one API, one request | `docker run` + `curl` | [below](#run-one-right-now) |
+| one system with its UI | `docker run` ×2 on a Docker network | [below](#with-the-ui) |
+| all nine behind the hub | clone + Docker Compose | [below](#run-all-of-them-behind-the-ui) |
+| all nine on Kubernetes | clone + Helm | [`deploy/`](deploy/README.md#kubernetes-helm) |
+
+Native macOS is the fifth, and it is for *training* rather than serving: Docker on a Mac has no
+path to Metal, so a container is CPU-only here by construction. `make train SERVICE=<name>` runs
+on the host and gets real MPS acceleration — see [Or build it yourself](#or-build-it-yourself).
+
 ## Run one, right now
 
 No clone, no build, no credentials. This pulls a published image, waits for it to report ready,
@@ -38,74 +51,81 @@ docker rmi roshb/ai-residency-word-embeddings-serve
 
 ### With the UI
 
-Any of the nine, plus its Streamlit page. No clone — compose reads its file from stdin.
-Pick one:
+Any of the nine, plus its Streamlit page. Two containers on a private network: the backend,
+and the one image that holds the UI. Still no clone, and nothing to install beyond Docker
+itself — pick a service and paste the block.
 
 ```bash
-export AI_RESIDENCY_PAGES=word-embeddings
-```
+SERVICE=vit-seq2seq                                      # any name from the list below
+URL_VAR=$(echo "$SERVICE" | tr 'a-z-' 'A-Z_')_API_URL    # e.g. VIT_SEQ2SEQ_API_URL
 
-```bash
-export AI_RESIDENCY_PAGES=content-scoring
-```
+docker network create ai-residency
 
-```bash
-export AI_RESIDENCY_PAGES=vector-search-retrieval
-```
+docker run --rm -d --pull always --network ai-residency --name "$SERVICE" \
+  "roshb/ai-residency-$SERVICE-serve"
 
-```bash
-export AI_RESIDENCY_PAGES=vit-classifier
-```
-
-```bash
-export AI_RESIDENCY_PAGES=vit-seq2seq
-```
-
-```bash
-export AI_RESIDENCY_PAGES=multimodal-captioning
-```
-
-```bash
-export AI_RESIDENCY_PAGES=whisper-fine-tuning
-```
-
-```bash
-export AI_RESIDENCY_PAGES=speech-emotion-recognition
-```
-
-```bash
-export AI_RESIDENCY_PAGES=rlhf-ppo
-```
-
-Then:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/RoshBeed/ai-residency/main/deploy/compose/docker-compose.yml \
-  | docker compose -f - -p ai-residency up -d --wait \
-      --pull always frontend $AI_RESIDENCY_PAGES
+docker run --rm -d --pull always --network ai-residency --name ai-residency-ui \
+  -p 8500:8501 \
+  -e AI_RESIDENCY_PAGES="$SERVICE" \
+  -e "$URL_VAR=http://$SERVICE:8000" \
+  roshb/ai-residency-frontend
 
 open http://localhost:8500
 ```
 
 ```bash
-docker compose -p ai-residency down
+docker rm -f ai-residency-ui "$SERVICE"
+docker network rm ai-residency
 ```
 
-The container starts with an empty disk and fetches its own checkpoint from the Hugging Face Hub.
-`/ready` answers **503** until the weights are loaded, hence the retry rather than a sleep.
-`--pull always` because `docker run` otherwise reuses a cached `latest` without re-checking it.
+If that second `docker run` reports `Bind for 0.0.0.0:8500 failed`, something else already holds
+the port — most often an earlier run of this same stack, or a Helm release of this chart whose
+`LoadBalancer` Service claims it even with its pods scaled to zero. Change the left half of
+`-p 8500:8501`, or free it with `docker rm -f` / `make -C deploy helm-uninstall`.
 
-Swap the image name for any other system — every one is independently deployable and answers plain
-HTTP on `:8000`:
+The network is the whole trick: Docker resolves a container's name to its address on a
+user-created network, so the UI reaches the backend at `http://vit-seq2seq:8000` and nothing but
+port 8500 is exposed to the host. `AI_RESIDENCY_PAGES` tells the frontend which page to show —
+the same image is the one-system UI or the nine-system hub, and no backend contains any UI.
+
+`vector-search-retrieval` is the one service that needs more than one container: Redis for the
+index, and a one-shot job to fill it. Same pattern, two commands longer:
+
+```bash
+docker run --rm -d --network ai-residency --name redis \
+  redis/redis-stack-server:7.4.0-v3 redis-stack-server --save "" --appendonly no
+
+docker run --rm --network ai-residency -e REDIS_HOST=redis \
+  roshb/ai-residency-vector-search-retrieval-serve \
+  python -m retrieval.save_doc_embeddings_to_redis      # 104,808 documents, one encode each
+```
+
+Then the two commands above with `SERVICE=vector-search-retrieval` and `-e REDIS_HOST=redis` on
+the backend. Running it without the index is not an error — `/query` returns no results and says
+so, which is the honest answer for an empty index.
+
+**Two `docker run` lines rather than a piped Compose file, deliberately.** The obvious
+alternative is `curl … | docker compose -f -`, and it asks a reader trying one demo for three
+things: the Compose plugin, which ships separately from Docker Engine on Linux; a file fetched
+from the internet and run unread; and trust that the file does nothing beyond what was
+advertised. The last one is not free even here — `docker compose config` on this repo's own
+file mounts `rlhf-ppo`'s `$HOME/.cache/huggingface` read-write, which is right in a clone and
+not something to inherit from a pipe. Everything the commands above do is on the screen.
+Compose earns its place further down, where there are ten containers to order and pin.
+
+**The nine service names.** Every image is `roshb/ai-residency-<name>-serve`, so one name is all
+either block above needs — each system is independently deployable and answers plain HTTP on
+`:8000`:
 
 ```
-roshb/ai-residency-content-scoring-serve            roshb/ai-residency-vit-classifier-serve
-roshb/ai-residency-vector-search-retrieval-serve    roshb/ai-residency-vit-seq2seq-serve
-roshb/ai-residency-whisper-fine-tuning-serve        roshb/ai-residency-multimodal-captioning-serve
-roshb/ai-residency-speech-emotion-recognition-serve roshb/ai-residency-rlhf-ppo-serve
+word-embeddings            vit-classifier          whisper-fine-tuning
+content-scoring            vit-seq2seq             speech-emotion-recognition
+vector-search-retrieval    multimodal-captioning   rlhf-ppo
 ```
 
-`GET /openapi.json` on any of them lists its endpoints and request shapes.
+`GET /openapi.json` on any of them lists its endpoints and request shapes, and `/docs` renders
+the same thing as a form you can post from — which is the easiest way in for the five that take
+an image or an audio clip rather than JSON.
 
 Images are published for **`linux/amd64` and `linux/arm64`**, so that runs natively on an Apple
 Silicon Mac as well as on a cloud box.
@@ -129,10 +149,13 @@ images are the faster way in.
 
 ## Run all of them, behind the UI
 
-Leave `AI_RESIDENCY_PAGES` unset and the UI is the nine-system hub instead of one page. This
-one clones, because `images.env` pins every image by digest and that file has to be on disk —
-the stdin form above starts all nine too, it just resolves `:latest`. Nothing is built either
-way; compose pulls the same published images.
+Ten containers with a start order, a Redis dependency and every image pinned by digest. That is
+what Compose is for, and it is the first rung that asks you to install it — the single-service
+runs above deliberately do not.
+
+Leave `AI_RESIDENCY_PAGES` unset and the UI is the nine-system hub instead of one page. This one
+clones, because `images.env` pins every image by digest and that file has to be on disk. Nothing
+is built; compose pulls the same published images the `docker run` commands above do.
 
 ```bash
 git clone https://github.com/RoshBeed/ai-residency && cd ai-residency/deploy/compose

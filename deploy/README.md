@@ -95,13 +95,24 @@ falls back to pulling weights from the Hugging Face Hub when the mount is empty 
 ## Quickstart
 
 ```bash
-docker compose pull       # pull every image from Docker Hub (once pushed)
-docker compose up -d
+make up                   # docker compose --env-file images.env up -d, from compose/
+make status               # /health and /ready across all nine ports
+make down
 ```
+
+`--env-file images.env` is what pins every image to the digest in `images.yaml`; a plain
+`docker compose up -d` from `compose/` resolves `:latest` instead, which is a different set of
+bytes than the manifest describes. `make up SERVICES="word-embeddings vit-classifier"` starts a
+subset with a UI for just those.
+
+**Compose is for the whole stack.** For one service, with or without its page, plain `docker run`
+on a user-created network needs no Compose plugin and nothing fetched from the internet — the
+root README's [Run one, right now](../README.md#run-one-right-now) and
+[With the UI](../README.md#with-the-ui) are the two commands each.
 
 Then open http://localhost:8500. Each backend is also reachable directly for debugging:
 word-embeddings `:8001`, content-scoring `:8007`, then vector-search-retrieval `:8002` … rlhf-ppo `:8006`.
-`make status` curls each one's `/health`, which all seven expose.
+`make status` curls each one's `/health`, which all nine expose.
 
 **vector-search-retrieval's index builds itself.** This stack runs its own Redis, ephemeral and
 starting empty, so `/query` had nothing to retrieve until someone ran the indexer by hand. A
@@ -110,7 +121,7 @@ starting empty, so `/query` had nothing to retrieve until someone ran the indexe
 remember. It swallows its own failure, so an unreachable Hub leaves you with an empty index
 rather than no service. `make index-retrieval` re-runs it against a stack that is already up.
 
-All seven backends answering `/health` under compose, and the frontend serving the portfolio
+All nine backends answering `/health` under compose, and the frontend serving the portfolio
 at `:8500`:
 
 ![The portfolio frontend, one card per system, served by the docker-compose stack](assets/compose-frontend.png)
@@ -142,7 +153,7 @@ Then open http://localhost:8500 — Docker Desktop's Kubernetes auto-binds `Load
 localhost, so the frontend Service is reachable with no port-forward needed. The backends are
 deliberately `ClusterIP`-only (mirrors the real shape: only the frontend talks to them directly) —
 reach one directly for debugging with `kubectl port-forward -n ai-residency svc/word-embeddings 8001:8000`
-(repeat per backend, ports 8001–8007 to match compose's numbering). The index builds itself here too — `bootstrapCommand`
+(repeat per backend, ports 8001–8009 to match compose's numbering). The index builds itself here too — `bootstrapCommand`
 in `values.yaml` runs the indexer as an init container, which is what compose's
 `vector-search-retrieval-index` service mirrors. `make helm-index-retrieval` re-runs it.
 

@@ -26,29 +26,29 @@ story.
 The model and the UI, on a clean machine, in two commands. Safe to paste more than once.
 
 ```bash
-docker rm -f content-scoring frontend >/dev/null 2>&1
-docker network create hn >/dev/null 2>&1
+docker rm -f content-scoring ai-residency-ui >/dev/null 2>&1
+docker network create ai-residency >/dev/null 2>&1
 
-docker run --rm -d --name content-scoring --network hn -p 8000:8000 \
+docker run --rm -d --name content-scoring --network ai-residency -p 8000:8000 \
   roshb/ai-residency-content-scoring-serve
 
-docker run --rm -d --name frontend --network hn -p 8501:8501 \
+docker run --rm -d --name ai-residency-ui --network ai-residency -p 8500:8501 \
   -e AI_RESIDENCY_PAGES=content-scoring \
   -e CONTENT_SCORING_API_URL=http://content-scoring:8000 \
   roshb/ai-residency-frontend
 
 curl -fsS --retry 60 --retry-delay 1 --retry-all-errors \
-  http://localhost:8000/ready >/dev/null && echo "ready: http://localhost:8501"
+  http://localhost:8000/ready >/dev/null && echo "ready: http://localhost:8500"
 ```
 
 The first run pulls 210MB of word vectors and four trained models from the Hugging Face Hub, so
-give it about half a minute. Then open **http://localhost:8501** and keep it beside this page —
+give it about half a minute. Then open **http://localhost:8500** and keep it beside this page —
 every claim below has a tab that lets you check it on a post you choose.
 
 When you are done:
 
 ```bash
-docker rm -f content-scoring frontend && docker network rm hn
+docker rm -f content-scoring ai-residency-ui && docker network rm ai-residency
 ```
 
 Or straight to the API:
