@@ -16,12 +16,13 @@ import torch
 from fastapi.testclient import TestClient
 from torch import nn
 
-from ai_residency_common import load_checkpoint
+from ai_residency_common import load_checkpoint, save_checkpoint
 from cbow.vocabulary import (
     build_embedding_layer,
     build_embedding_placeholder,
     latest_cbow_checkpoint,
     load_words_to_ids,
+    vocabulary_fingerprint,
 )
 from config import Config
 from models.towers import GruTower, encode, encode_batch
@@ -472,3 +473,94 @@ def test_top_k_is_bounded() -> None:
     assert client.post("/query", json={"text": "x", "top_k": MAX_TOP_K + 1}).status_code == 422
     for bad in (0, -1):
         assert client.post("/query", json={"text": "x", "top_k": bad}).status_code == 422
+
+
+def _publishable_set(config: Config, vocabulary: dict[str, int]) -> None:
+    """Make the six-file set on disk agree: train the towers and stamp the triples.
+
+    `make publish` refuses to send a set whose parts index different vocabularies, so
+    the fixtures have to produce an agreeing one before a rejection test means anything.
+    The `triples` fixture deliberately writes no `vocabulary_fingerprint` -- a file built
+    before that field existed is one of the cases the guard has to reject -- so this adds
+    it.
+    """
+    train(config)
+    with config.tokenized_triples_path.open() as handle:
+        payload = json.load(handle)
+    payload["vocabulary_fingerprint"] = vocabulary_fingerprint(vocabulary)
+    with config.tokenized_triples_path.open("w") as handle:
+        json.dump(payload, handle)
+
+
+def test_publishing_accepts_a_set_that_agrees(
+    config: Config, cbow_checkpoint: Path, triples: Path, vocabulary: dict[str, int]
+) -> None:
+    """The positive case, so a rejection test cannot pass by rejecting everything."""
+    from data_prep.publish import check_consistent
+
+    _publishable_set(config, vocabulary)
+    assert check_consistent(config) == len(vocabulary)
+
+
+def test_publishing_refuses_triples_built_against_another_vocabulary(
+    config: Config, cbow_checkpoint: Path, triples: Path, vocabulary: dict[str, int]
+) -> None:
+    """The failure that broke the deployed index, reproduced.
+
+    Five of the six artifacts were published and `tokenized_triples.json` was not, so
+    the Hub held triples whose ids named words in the old 63,642-word mapping while
+    everything else had moved to 88,114. `/query` still worked -- it tokenizes live --
+    and the index was empty, because the indexing job is the only stage that reads those
+    ids. Nothing should be publishable in that state.
+    """
+    from data_prep.publish import check_consistent
+
+    _publishable_set(config, vocabulary)
+    with config.tokenized_triples_path.open() as handle:
+        payload = json.load(handle)
+    payload["vocabulary_fingerprint"] = "0000000000000000"
+    with config.tokenized_triples_path.open("w") as handle:
+        json.dump(payload, handle)
+
+    with pytest.raises(ValueError, match="make train-triples"):
+        check_consistent(config)
+
+
+def test_publishing_refuses_a_cbow_matrix_of_the_wrong_height(
+    config: Config, cbow_checkpoint: Path, triples: Path, vocabulary: dict[str, int]
+) -> None:
+    """The first failure: a 63,642-row matrix beside a 7,692-word vocabulary.
+
+    A row count is the one disagreement that is cheap to check exactly, and it is
+    checked exactly rather than bounded -- the stale ids in the real incident all fitted
+    inside the larger vocabulary while naming different words.
+    """
+    from cbow.model import build_cbow
+    from data_prep.publish import check_consistent
+
+    _publishable_set(config, vocabulary)
+    save_checkpoint(
+        config.cbow_checkpoint_dir / "2026_01_02__00_00_00.1.cbow.pth",
+        build_cbow(len(vocabulary) + 5, config.embedding_dim),
+        epoch=1,
+        metrics={"cbow_loss": 1.0},
+    )
+
+    with pytest.raises(ValueError, match="make train-cbow"):
+        check_consistent(config)
+
+
+def test_publishing_refuses_a_tower_that_embeds_another_vocabulary(
+    config: Config, cbow_checkpoint: Path, triples: Path, vocabulary: dict[str, int]
+) -> None:
+    """A tower carries the CBOW matrix frozen inside it, so its width is the vocabulary."""
+    from data_prep.publish import check_consistent
+
+    _publishable_set(config, vocabulary)
+    payload = load_checkpoint(config.document_tower_path)
+    state = payload["model_state_dict"]
+    state["embedding.weight"] = torch.zeros(len(vocabulary) + 5, config.embedding_dim)
+    torch.save(payload, config.document_tower_path)
+
+    with pytest.raises(ValueError, match="make train-encoder"):
+        check_consistent(config)

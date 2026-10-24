@@ -1056,10 +1056,30 @@ Status:
       word-embeddings `word_to_index` / `word_to_lemma_index` mismatch already noted above;
       it recurred because nothing tied the ids to the mapping that made them.
 
-      Three artifacts have to ship together and did not: the vocabulary, the CBOW
-      embedding matrix and the towers. The tokenizer and tokenize stages wrote their
-      outputs locally and uploaded nothing, so a rebuild left the Hub holding a 63,642-row
-      CBOW checkpoint beside a 7,692-word vocabulary. Both stages publish now.
+      **Six files are one artifact set, and partial publication has now broken serving
+      twice.** They are `words_to_ids.json`, `ids_to_words.json`, the CBOW matrix, the two
+      towers and `tokenized_triples.json` -- the vocabulary maps words to row numbers, the
+      matrix has one row per word, each tower carries that matrix frozen inside it, and the
+      triples hold ids that index the same mapping. The first failure was the tokenizer and
+      tokenize stages writing their outputs locally and uploading nothing, so a rebuild left
+      the Hub holding a 63,642-row CBOW checkpoint beside a 7,692-word vocabulary. The
+      second was the vocabulary extension: five of the six were published and the triples
+      were not, because the tokenize stage had been run with
+      `AI_RESIDENCY_HF_DATASET_REPO_ID=` to skip a 317MB upload. **That one looked like
+      success from every angle a check was pointed at** -- `/query` answered, every word
+      came back known, the embedding norm was healthy -- because `/query` tokenizes live
+      and so used the right mapping. What was empty was the *index*: the guard correctly
+      refused to build it against stale ids, and compose's `|| echo "index: skipped"`
+      swallowed the message. `results: []` for every query, with nothing anywhere saying
+      why.
+
+      `make publish` (`data_prep/publish.py`) is the fix: one command that verifies the
+      CBOW row count, both towers' embedding widths and the triples' recorded
+      `vocabulary_fingerprint` all agree with the vocabulary on disk, and pushes nothing
+      unless they do. Compose's failure message now names the artifact-set cause rather
+      than blaming an unreachable Hub. **A guard that raises is worth nothing if the
+      caller discards its output** -- the `||` branch was swallowing the one line that
+      explained a silently broken deployment.
 
 - [x] `rlhf-ppo` -- `make train-loop` exists and the before/after is reported. 60 PPO
       steps on real `CarperAI/openai_summarize_tldr` prompts, 16 held-out prompts never

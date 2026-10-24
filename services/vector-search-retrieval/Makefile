@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: evaluate train-cbow extend-vocab train-triples train-encoder train index query serve redis test help
+.PHONY: evaluate train-cbow extend-vocab train-triples train-encoder train publish index query serve redis test help
 
 # Note on train-* vs docker-train: the local targets pick up Apple Silicon's MPS backend
 # where it helps, which for this repo means the CBOW stage only (~3.7x faster than CPU on
@@ -26,6 +26,9 @@ evaluate:  ## Score the saved towers: recall@K against untrained towers and chan
 	uv run python -m models.evaluate
 
 train: train-cbow extend-vocab train-triples train-encoder  ## Run the full offline pipeline in order
+
+publish:  ## Check the vocabulary, embeddings, towers and triples agree, then push all of them
+	uv run python -m data_prep.publish
 
 index:  ## Embed the corpus with the trained doc tower and index it in Redis
 	uv run python -m retrieval.save_doc_embeddings_to_redis

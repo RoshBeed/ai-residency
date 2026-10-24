@@ -32,6 +32,29 @@ search.
 
 ## Quickstart
 
+No clone, no build, no credentials. The published image pulls its own checkpoint from the
+Hugging Face Hub at startup:
+
+```bash
+docker run --rm -d --pull always --name vector-search-retrieval -p 8000:8000 \
+  roshb/ai-residency-vector-search-retrieval-serve
+
+# /ready answers 503 until the weights are loaded, so retry rather than sleep
+curl -fsS --retry 60 --retry-delay 1 --retry-all-errors http://localhost:8000/ready
+
+open http://localhost:8000/docs   # the request shapes, and a form to post them
+
+docker rm -f vector-search-retrieval
+```
+
+`/query` needs Redis and a filled index, which is two more containers -- the root README's
+[With the UI](../../README.md#with-the-ui) section has the three commands.
+
+To run it with its Streamlit page instead, see
+[With the UI](../../README.md#with-the-ui) -- same image, one more container.
+
+From the source, with the workspace installed:
+
 ```bash
 # one venv for the whole workspace
 make install
@@ -352,9 +375,18 @@ all five in order.
 ```bash
 make install   # uv sync
 make train SERVICE=vector-search-retrieval     # train-cbow && extend-vocab && train-triples && train-encoder
+make -C services/vector-search-retrieval publish   # check the set agrees, then push all six files
 make serve SERVICE=vector-search-retrieval     # the FastAPI query service (needs Redis already running)
 make test SERVICE=vector-search-retrieval      # pytest
 ```
+
+**Six files make up one artifact set, and they only mean anything together.** The
+vocabulary maps words to row numbers, the CBOW matrix has one row per word, each tower
+carries that matrix frozen inside it, and `tokenized_triples.json` holds ids that index
+the same mapping. Publish five of the six and the Hub serves a set that disagrees with
+itself: the index job refuses to build, and `/query` -- which tokenizes live -- answers
+against an index that was never filled. `make publish` checks all six agree before it
+sends anything, and `--check-only` runs the check alone.
 
 The interactive query CLI is `python -m retrieval.query_redis_ann` (a local-only loop, not a
 server). The browser UI is the unified Streamlit frontend in `services/frontend`, which calls
@@ -389,10 +421,13 @@ uv run python -m data_prep.tokenize_triples
 # 4. Train the dual encoder (GRU towers)
 uv run python -m models.training
 
-# 5. Index the document corpus in Redis
+# 5. Publish the set, checked for self-consistency first
+uv run python -m data_prep.publish
+
+# 6. Index the document corpus in Redis
 uv run python -m retrieval.save_doc_embeddings_to_redis
 
-# 6. Query it interactively (CLI), or call the FastAPI service
+# 7. Query it interactively (CLI), or call the FastAPI service
 uv run python -m retrieval.query_redis_ann
 uv run python -m serving.api
 ```

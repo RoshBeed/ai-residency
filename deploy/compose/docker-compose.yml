@@ -144,8 +144,17 @@ services:
       - sh
       - -c
       - |
-        python -m retrieval.save_doc_embeddings_to_redis ||
-          echo "index: skipped, artifacts unavailable -- /query will return no results"
+        python -m retrieval.save_doc_embeddings_to_redis || {
+          echo "=============================================================="
+          echo "index: FAILED -- /query will return no results."
+          echo "The error above is the reason. The usual one is not an"
+          echo "unreachable Hub but a published artifact set that disagrees"
+          echo "with itself: the vocabulary, the CBOW matrix, the two towers"
+          echo "and tokenized_triples.json are one set and must be published"
+          echo "together, or the guard rejects the triples and nothing is"
+          echo "indexed."
+          echo "=============================================================="
+        }
     # Not `restart: unless-stopped` like the backends: this exits as soon as the index is
     # built, and a restart policy would read that as a crash and loop it forever.
     restart: "no"
