@@ -17,20 +17,23 @@ def render() -> None:
     with service_page(SERVICE):
         col_record, col_upload = st.columns(2)
         with col_record:
+            # No `st.audio` beside this one: `st.audio_input` renders its own player as
+            # soon as a recording exists, so a second one gave the page two players and a
+            # mic button for a single clip.
             audio = st.audio_input("Record audio")
-            if audio is not None:
-                st.audio(audio)
         with col_upload:
             audio_file = st.file_uploader(
                 "Upload audio",
                 type=["mp3", "wav", "m4a", "aiff", "flac"],
                 label_visibility="collapsed",
             )
-            if audio_file is not None:
-                st.audio(audio_file)
 
         audio_source = audio or audio_file
         audio_bytes: bytes | None = audio_source.getvalue() if audio_source else None
+        # Bytes, not the handle: a widget that has already read the file leaves its
+        # position at EOF, and the next reader gets a short clip or nothing.
+        if audio_file is not None and audio is None and audio_bytes is not None:
+            st.audio(audio_bytes)
 
         target_text = st.text_input(
             "Fine-tune target text",

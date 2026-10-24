@@ -1,5 +1,9 @@
 """Speech emotion recognition over Whisper features."""
 
+import contextlib
+import io
+import wave
+
 import streamlit as st
 
 from client import call
@@ -7,6 +11,27 @@ from components import render_probability_bars
 from shared import bytes_to_b64, service_page, show
 
 SERVICE = "speech-emotion-recognition"
+
+
+def _describe(clip_bytes: bytes) -> str:
+    """Say how long the clip is and at what rate, from the bytes about to be sent.
+
+    The widgets above show whatever the browser produced. This reads the payload the API
+    will actually receive, so a recording that lost its opening or a section in the
+    middle is something a reader can see rather than something they have to suspect.
+
+    Deliberately the standard library's `wave` rather than `soundfile`: the frontend
+    image does not install the torch or audio stack, and a readout is not worth putting
+    libsndfile in it. `st.audio_input` writes WAV, which is the case worth describing; an
+    uploaded mp3 falls through to its size, which is still more than nothing.
+    """
+    with contextlib.suppress(Exception), wave.open(io.BytesIO(clip_bytes)) as handle:
+        seconds = handle.getnframes() / handle.getframerate()
+        return (
+            f"Sending {len(clip_bytes) / 1024:.0f} KB — {seconds:.1f}s at "
+            f"{handle.getframerate() / 1000:.1f} kHz, {handle.getnchannels()} channel(s)"
+        )
+    return f"Sending {len(clip_bytes) / 1024:.0f} KB"
 
 
 def render() -> None:
@@ -25,16 +50,30 @@ def render() -> None:
         # A recording wins when both are present: it is the thing just produced, and the
         # uploader keeps its file across reruns.
         clip = recorded or emotion_upload
-        if clip is not None:
-            st.audio(clip)
+        clip_bytes = clip.getvalue() if clip is not None else None
 
-        if clip is not None and st.button("Predict emotion", type="primary"):
+        # `st.audio_input` renders its own player as soon as a recording exists, so adding
+        # another one here gave the page two players and a mic button for one clip. The
+        # uploader has no player of its own, so that is the only case that needs one -- and
+        # it is handed bytes rather than the file object, because a widget that has already
+        # read the handle leaves its position at EOF and the second reader gets a short
+        # clip or none at all.
+        if clip is emotion_upload and clip_bytes is not None:
+            st.audio(clip_bytes)
+
+        if clip_bytes is not None:
+            # What the service will actually receive, decoded the way it decodes it. A clip
+            # that arrives truncated is invisible otherwise: the player shows the file the
+            # browser wrote, not the audio the model scores.
+            st.caption(_describe(clip_bytes))
+
+        if clip_bytes is not None and st.button("Predict emotion", type="primary"):
             # 120s: this one loads Whisper and runs it per request.
             result = show(
                 call(
                     SERVICE,
                     "/predict",
-                    {"audio_data": bytes_to_b64(clip.getvalue())},
+                    {"audio_data": bytes_to_b64(clip_bytes)},
                     timeout=120,
                 )
             )

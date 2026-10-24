@@ -140,7 +140,7 @@ def preprocess_image(image_data: str, img_size: int) -> torch.Tensor:
     it just makes the served model wrong.
 
     `img_size` is required rather than defaulted because the two models take
-    different resolutions: 28 for the classifier, 84 for the seq2seq model. Sending a
+    different resolutions: 28 for the classifier, 112 for the seq2seq model. Sending a
     28x28 image to the seq2seq model does not raise — its patch convolution
     (kernel 16, stride 16) just reads one corner and silently returns noise — so
     getting this wrong is invisible unless the caller is forced to state the size.
