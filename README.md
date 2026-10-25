@@ -97,12 +97,14 @@ docker run --rm -d --network ai-residency --name redis \
 
 docker run --rm --network ai-residency -e REDIS_HOST=redis \
   roshb/ai-residency-vector-search-retrieval-serve \
-  python -m retrieval.save_doc_embeddings_to_redis      # 104,808 documents, one encode each
+  python -m retrieval.save_doc_embeddings_to_redis      # 104,808 documents, ~23 min
 ```
 
 Then the two commands above with `SERVICE=vector-search-retrieval` and `-e REDIS_HOST=redis` on
-the backend. Running it without the index is not an error — `/query` returns no results and says
-so, which is the honest answer for an empty index.
+the backend. The index is one document-tower encode per passage and runs at about 75/s on an M1
+Max, so it is the one step here worth starting and walking away from; Compose and the Helm chart
+build the same index the same way and take the same time. Skipping it is not an error — `/query`
+returns no results and says so, which is the honest answer for an empty index.
 
 **Two `docker run` lines rather than a piped Compose file, deliberately.** The obvious
 alternative is `curl … | docker compose -f -`, and it asks a reader trying one demo for three
