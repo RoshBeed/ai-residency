@@ -17,7 +17,7 @@
 
 # Pinned by digest for the same reason Dockerfile.base is: the tag is rebuilt on every
 # base-OS patch, so an unpinned tag makes two builds of one commit differ.
-FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0
+FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 WORKDIR /app
 RUN pip install --no-cache-dir uv
